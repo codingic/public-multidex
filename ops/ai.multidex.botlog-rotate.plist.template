@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.multidex.botlog-rotate</string>
+
+  <!-- Caps the bot fleet's launchd log at 10 MiB, keeping 3 gzipped
+       generations. launchd never rotates its own StandardOutPath, and
+       macOS newsyslog needs root — so this runs as a user agent. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>scripts/rotate_log.sh</string>
+    <string>__HOME__/Library/Logs/mdex-bots.log</string>
+    <string>10485760</string>
+    <string>3</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__PROJECT_DIR__</string>
+
+  <!-- Hourly. The fleet writes a stats line every ~8s (~150 bytes), so
+       10 MiB is roughly 2 months of output — the cap is a backstop, not a
+       routine event. -->
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>

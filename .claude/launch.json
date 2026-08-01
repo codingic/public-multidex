@@ -1,0 +1,45 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "frontend-dev",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "export PATH=\"$HOME/.local/bin:$PATH\" && exec npx vite --port \"${PORT:-3100}\" --strictPort"],
+      "port": 3100,
+      "autoPort": true
+    },
+    {
+      "name": "frontend-static",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "export PATH=\"$HOME/.local/bin:$PATH\" && python3 -m http.server 8080 --directory dist"],
+      "port": 8080
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "export PATH=\"$HOME/.local/bin:$PATH\" && (curl -sf --max-time 2 http://127.0.0.1:8000/api/v2/status > /dev/null || icp network start --background) && exec sleep 86400"
+      ],
+      "port": 8000,
+      "autoPort": false,
+      "url": "http://frontend.local.localhost:8000/"
+    },
+    {
+      "name": "preview-gw",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "exec sleep 86400"],
+      "port": 8091,
+      "autoPort": false,
+      "url": "http://frontend.local.localhost:8000/"
+    },
+    {
+      "name": "preview-gw2",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "exec sleep 86400"],
+      "port": 8092,
+      "autoPort": false,
+      "url": "http://frontend.local.localhost:8000/"
+    }
+  ]
+}

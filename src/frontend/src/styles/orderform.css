@@ -1,0 +1,454 @@
+/* ── Order Form ──────────────────────────────────────────────────── */
+.order-type-toggle, .order-side-toggle {
+  display: flex;
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  margin-bottom: 12px;
+}
+/* Match the Limit/Market → side-toggle gap to the Spot/Margin → Limit/Market
+   gap above it (.order-mode-toggle's 8px). The side toggle keeps 12px to the
+   form below. */
+.order-type-toggle { margin-bottom: 8px; }
+.order-type-btn, .side-btn {
+  flex: 1;
+  padding: 6px 8px;   /* slightly shorter rows — frees vertical room in the box */
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+/* Glacier (info accent) fill — Limit/Market is the execution-mechanics choice,
+   sitting between the amber mode toggle and the mint/clay side toggle; it needs
+   equal visual weight, in a hue that belongs to neither neighbour.
+   Active states: lighter weight (600 → 520) compensated by DARKER on-colour
+   text (≈45% darker than the --*-text tokens, hue kept) — thinner strokes stay
+   crisp against the colour fill. Scoped here; the global tokens are unchanged. */
+.order-type-btn.active { background: var(--glacier); color: #020C10; font-weight: 480; }
+.side-btn.buy.active { background: var(--green); color: #020B07; font-weight: 480; }
+.side-btn.sell.active { background: var(--red); color: #0D0302; font-weight: 480; }
+
+/* ── Spot | Margin mode toggle ─────────────────────────────────────
+   Top-level switch on the Place Order box: Spot trades the Wallet, Margin
+   opens a leveraged/short position in a pool. Accent-tinted active state so it
+   reads as a distinct control from the Limit/Market type toggle below it. */
+.order-mode-toggle {
+  display: flex;
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  margin-bottom: 8px;
+}
+.order-mode-btn {
+  flex: 1;
+  padding: 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 480;  /* lighter (was 600); active compensates w/ darker text */
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+.order-mode-btn.active { background: var(--accent); color: #010B0F; }
+
+/* Margin-only controls (pool + leverage), shown in Margin mode. The row needs
+   its own class: the legacy .margin-row (Earn-card rows) adds margin-top:10px,
+   which would push this below the side toggle deeper than the spot form's
+   rhythm. Labels stay inline (no block/margin-bottom) so the first text line
+   sits exactly where the spot form's "Price" label does. */
+.margin-controls { margin-bottom: 12px; }
+.margin-ctl-row { display: flex; gap: 8px; }
+.margin-col-pool { flex: 1; min-width: 0; }
+.margin-col-lev  { width: 84px; flex: none; }
+.margin-controls label { font-size: 12px; color: var(--text-dim); }
+.margin-controls select {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+.margin-controls select:focus { border-color: var(--accent); outline: none; }
+
+/* Position preview (notional / leverage / margin / est. entry / liq / slippage). */
+.margin-preview {
+  font-size: 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+}
+/* One stat per full-width row. The old 1fr-1fr grid gave each label/value
+   pair only ~130px of the panel, so values past ~$100k wrapped mid-figure.
+   A full row holds any fmtUsd output with room to spare; the VALUE never
+   breaks (nowrap, tabular digits) — the label ellipsizes first if some
+   absurd width ever arrives. */
+.margin-preview .mp-grid { display: flex; flex-direction: column; gap: 3px; }
+.margin-preview .mp-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.margin-preview .mp-row span {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.margin-preview .mp-row b {
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.margin-preview .mp-warn { color: var(--red); }
+.margin-preview .mp-muted { color: var(--text-muted); }
+.margin-preview .mp-alert {
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+  color: var(--red);
+  font-weight: 500;
+}
+
+.order-form { display: flex; flex-direction: column; gap: 10px; }
+.order-form label { font-size: 12px; color: var(--text-dim); }
+.order-form input, .order-form select {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+}
+.order-form input:focus { border-color: var(--accent); outline: none; }
+/* Order-size slider (replaces the 25/50/75/100 buttons): the track fills
+   with an accent gradient up to --pct (set from JS) so the chosen fraction
+   reads at a glance; the datalist ticks mark the old quarter stops. The
+   range must override the .order-form input skin (width/padding/border). */
+.order-pct-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+.order-pct-slider-row input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  width: auto;
+  height: 4px;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--accent) var(--pct, 0%), var(--border) var(--pct, 0%));
+  cursor: pointer;
+}
+.order-pct-slider-row input[type="range"]:focus { outline: none; }
+.order-pct-slider-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-input);
+  box-shadow: 0 0 0 1px var(--border);
+  transition: transform 0.15s;
+}
+.order-pct-slider-row input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
+.order-pct-slider-row input[type="range"]::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-input);
+  box-shadow: 0 0 0 1px var(--border);
+}
+.order-pct-slider-row input[type="range"]:disabled { opacity: 0.4; cursor: default; }
+.order-pct-slider-row input[type="range"]:disabled::-webkit-slider-thumb { transform: none; }
+.order-pct-readout {
+  min-width: 38px;
+  text-align: right;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.order-total { font-size: 13px; color: var(--text-dim); }
+#order-total-value { color: var(--text); font-weight: 500; }
+.order-bottom { margin-top: auto; }
+.order-available {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.order-available span { color: var(--text-dim); font-weight: 500; }
+/* "(incl. … to borrow)" hint on the Available line — dimmer than the figure. */
+.order-available .avail-borrow { color: var(--text-muted); font-weight: 400; }
+/* Second line on the Buy/Sell button when borrowing is involved
+   ("Buy" / "(borrow N ICPUSD)"). */
+.btn-subline {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.25;
+  opacity: 0.85;
+}
+
+/* ── Trades ──────────────────────────────────────────────────────── */
+/* Trades panel is flex-column so the list fills remaining space and scrolls */
+.trades-panel {
+  display: flex;
+  flex-direction: column;
+}
+.trades-panel h3,
+.trades-panel .trades-header {
+  flex-shrink: 0;
+}
+.trades-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  /* No right inset: the TIME column must reach the panel edge exactly like
+     the Order Book's Value column (the book's scroll areas carry none). */
+}
+/* Place Order CTA: lighter weight, darker near-black text — crisp on both the
+   Buy (mint) and Sell (clay) fills the JS swaps in. Weight applies in every
+   state; the colour only when enabled (disabled keeps the muted grey). */
+#place-order-btn { font-weight: 370; }
+#place-order-btn:not(:disabled) { color: #060706; }
+
+.trade-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  font-size: 13px;
+  padding: 3px 0;
+  font-family: 'Inter Variable', system-ui, sans-serif;
+  font-weight: 380;  /* a hair under regular — lighter data rows (variable axis) */
+  font-variant-numeric: tabular-nums; /* equal-width digits → columns align */
+}
+/* Soften the numbers slightly (0.9) — the time span's inline newness ramp
+   (tickTradeTimes) also caps at 0.9 so it lands here without a visible step. */
+.trade-row > span { opacity: 0.9; }
+.trade-row span:first-child { text-align: left; }
+.trade-row span:nth-child(2),
+.trade-row span:nth-child(3) { text-align: right; }
+.trades-header span { text-align: right; }
+.trades-header span:first-child { text-align: left; }
+.trade-row-buy  .price { color: var(--green); }
+.trade-row-sell .price { color: var(--red); }
+@keyframes tradeFlash {
+  0%   { background: rgba(94, 230, 180, 0.32); }
+  40%  { background: rgba(94, 230, 180, 0.16); }
+  100% { background: rgba(94, 230, 180, 0); }
+}
+.trade-row-sell.trade-row-new {
+  animation-name: tradeFlashRed;
+}
+@keyframes tradeFlashRed {
+  0%   { background: rgba(240, 122, 108, 0.32); }
+  40%  { background: rgba(240, 122, 108, 0.16); }
+  100% { background: rgba(240, 122, 108, 0); }
+}
+.trade-row-new {
+  animation: tradeFlash 2s ease-out;
+}
+.trade-row .time {
+  transition: opacity 0.3s ease-in;
+}
+
+/* User orders tabbed panel (shown on all viewports). Transparent like the
+   other Markets boxes — the border alone carries the box edge (mobile strips
+   even that via responsive.css). */
+.user-orders-mobile {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.uom-tabs {
+  display: flex;
+  /* Left-justified, content-width tabs (desktop) — not divided across the full
+     width. Mobile restores the full-width spread in the media query below. */
+  gap: 28px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+.uom-tab {
+  padding: 8px 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 400;  /* light nav/tab text */
+  cursor: pointer;
+  transition: color 0.15s;
+  position: relative;
+  text-align: left;
+}
+.uom-tab.active { color: var(--text); }
+.uom-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 10%;
+  right: 10%;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+.uom-content { flex: 1; min-height: 0; overflow-y: auto; }
+/* Shared column geometry for ALL four tabs — the grid tabs (Open Orders,
+   Spot History) and the table tabs (Positions, Positions History) read the
+   same variables, so Asset/Side don't jump when switching tab. */
+#user-orders-mobile { --uom-col-asset: 80px; --uom-col-side: 64px; --uom-col-pool: 150px; }
+.uom-row {
+  display: grid;
+  /* Asset (icon · symbol) · Side (pill) · Price · Qty · Filled/When ·
+     action — one leading pair across all four tabs; the panel shows ALL
+     markets by default (the norm across venues), "This market only" narrows. */
+  grid-template-columns: var(--uom-col-asset) var(--uom-col-side) 1fr 1fr 1fr 32px;
+  font-size: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+}
+.uom-row:last-child { border-bottom: none; }
+.uom-row .side-buy { color: var(--green); font-weight: 600; }
+.uom-row .side-sell { color: var(--red); font-weight: 600; }
+.uom-coin { color: var(--text-muted); }
+/* Resting margin (pool) order marker in the Markets Open Orders list. */
+.uom-mgn-tag {
+  display: inline-block; margin-left: 5px; padding: 0 4px;
+  border-radius: 3px; font-size: 8.5px; font-weight: 600; letter-spacing: 0.04em;
+  background: rgba(56, 189, 240, 0.16); color: var(--accent); vertical-align: 1px;
+}
+.uom-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.uom-row span:nth-child(n+3) { text-align: right; }
+/* Header typography matches the positions tables (capitalized, 13px,
+   text-dim, medium weight) — one look across all four tabs. */
+.uom-header {
+  display: grid;
+  grid-template-columns: var(--uom-col-asset) var(--uom-col-side) 1fr 1fr 1fr 32px;
+  font-size: 13px;
+  color: var(--text-dim);
+  font-weight: 500;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.uom-header span:nth-child(n+3) { text-align: right; }
+/* Table tabs (Positions, Positions History) inside the panel: pin the first
+   two columns to the shared widths, start cells flush-left like the grid
+   columns, and adopt Spot History's compact row height (5px vertical
+   padding, 12px text). Scoped to the panel — Account's tables keep their
+   roomier native sizing. */
+#uom-content .positions-table th:first-child,
+#uom-content .positions-table td:first-child { width: var(--uom-col-asset); }
+#uom-content .positions-table th.th-side,
+#uom-content .positions-table td.td-side { width: var(--uom-col-side); }
+#uom-content .positions-table th.th-pool,
+#uom-content .positions-table td.pos-pool {
+  width: var(--uom-col-pool); max-width: var(--uom-col-pool);
+  overflow: hidden; text-overflow: ellipsis;
+}
+#uom-content .positions-table th { padding: 0 10px 4px 0; }
+#uom-content .positions-table td { padding: 5px 10px 5px 0; font-size: 12px; }
+#uom-content .pos-close-btn { padding: 1px 8px; font-size: 11px; }
+/* Panel-level market filter (applies to all four tabs). */
+.uom-scope {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  padding: 8px 0;
+}
+.uom-scope input { accent-color: var(--accent); cursor: pointer; }
+.uom-cancel {
+  background: none;
+  border: none;
+  color: var(--red);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px;
+}
+.uom-empty {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 16px 0;
+}
+
+/* Pending match row — slice currently reserved against an AMM-protected
+   maker, settling on the 5s timer. Distinguished from open orders by a
+   subtle background tint and a countdown in the rightmost column. */
+.uom-row-pending {
+  background: rgba(180, 130, 40, 0.06);
+  position: relative;
+}
+.uom-row-pending::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+.uom-settling {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 500;
+}
+.uom-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.uom-pagination button {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.uom-pagination button:disabled { opacity: 0.3; cursor: default; }
+
+.swap-order-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.swap-order-row:last-child { border-bottom: none; }
+.swap-order-info { display: flex; gap: 16px; }
+

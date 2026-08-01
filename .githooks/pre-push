@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Pre-push lint gate. Enable once per clone with:
+#   git config core.hooksPath .githooks
+# Bypass in an emergency with:  git push --no-verify
+exec "$(git rev-parse --show-toplevel)/scripts/lint-ratchet.sh"

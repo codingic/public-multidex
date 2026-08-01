@@ -1,0 +1,162 @@
+<!-- ic-app-connect drop-in bridge page, served at /ai-connect.html on the app
+     origin. Implements Internet Computer App Connect v1 (docs/spec-app-connect.md).
+
+     THIS IS A TEMPLATE. An App Connect connector reads the RAW served HTML (it
+     fetches the markup like curl and does NOT run this page's JavaScript), so
+     the ic:canister-id meta below must already hold the real backend id in the
+     served bytes. The committed value is the literal placeholder
+     `place-deployed-canister-id-here`; the build replaces it with the deployed
+     backend id for the target network — see vite.config.js
+     (bake-ai-connect-canister-id), fed by scripts/deploy.sh on a cloud/mainnet
+     deploy and by the local replica's id mapping for `npm run build`. A backend
+     gets a DIFFERENT id per network, so never commit a real id here. Delete the
+     ic:network tag to auto-detect the network. Do not edit the handshake script
+     at the bottom. -->
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="ic:canister-id" content="place-deployed-canister-id-here">
+<!-- Agent bootstrap hint. The connector reads the RAW markup, so this rides in
+     the served bytes like ic:canister-id. A connector that surfaces app hints to
+     the model should relay it; the entry point is ALSO discoverably named
+     (getApiDoc) so a model finds it in the Candid interface even if this tag is
+     ignored — belt-and-suspenders, both harmless if unused. -->
+<meta name="ic:agent-instructions" content="This canister is MULTI/DEX (an order-book + AMM + margin DEX). Before calling other methods, call getApiDoc() on the backend canister — it returns a guide to the non-obvious semantics (sealed/staged matching so orders return with no fills and you poll for the outcome; integer money scaled 10^8; the dead-man switch; fees/levels). Then getMarketSpecs() for live constants.">
+<title>Connect AI assistant — Internet Computer</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 560px;
+         margin: 64px auto; padding: 0 24px; color: #222; line-height: 1.5; }
+  h1 { font-size: 22px; }
+  button { font-size: 16px; padding: 10px 22px; border-radius: 8px; cursor: pointer;
+           border: 1px solid #3b00b9; background: #3b00b9; color: white; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  pre { white-space: pre-wrap; color: #444; background: #f5f5f5; padding: 12px;
+        border-radius: 8px; min-height: 1em; }
+  .note { font-size: 13px; color: #666; }
+</style>
+</head>
+<body>
+<h1>Connect your AI assistant</h1>
+<p>This signs you in with <strong>Internet Identity</strong> and hands the resulting
+session to the IC connector running on this machine. Your AI assistant will be able
+to act as the signed-in principal until the session expires
+(<strong><span id="ttl">?</span> hours</strong>) or you log out.</p>
+<p class="note">Session keys never leave the connector — this page only relays the
+signed delegation. The principal is derived from <em>this page's origin</em>
+(<span id="origin"></span>): serve this page from an app's own origin and the AI
+acts as the same principal you have in that app.</p>
+<button id="go">Continue with Internet Identity</button>
+<pre id="status"></pre>
+<script>
+// Parameters arrive in the URL fragment so they never leave the browser:
+//   #v=1&pubkey=<hex DER session public key>&nonce=<hex>&port=<loopback port>
+//    &ttl_ns=<session ttl in ns>&ttl_hours=<display only>
+// "v" is the App Connect contract version; this page speaks v1 only.
+const CONTRACT_V = "1";
+const params = new URLSearchParams(location.hash.slice(1));
+const V = params.get("v");
+const SESSION_PUBKEY_HEX = params.get("pubkey") || "";
+const NONCE = params.get("nonce") || "";
+const PORT = params.get("port") || "17600";
+const TTL_NS = params.get("ttl_ns") || "";
+const CALLBACK = "http://127.0.0.1:" + PORT + "/callback";
+const II_ORIGIN = "https://id.ai";
+
+const statusEl = document.getElementById("status");
+const goBtn = document.getElementById("go");
+document.getElementById("ttl").textContent = params.get("ttl_hours") || "?";
+document.getElementById("origin").textContent = location.origin;
+function log(s) { statusEl.textContent += s + "\n"; }
+
+if (V !== CONTRACT_V) {
+  goBtn.disabled = true;
+  log("Version mismatch: this sign-in page speaks App Connect v" + CONTRACT_V +
+      " but the connector sent " + (V ? "v=" + V : "no version") +
+      ". Update your IC connector (or ask the app to update this page).");
+} else if (!SESSION_PUBKEY_HEX || !NONCE || !TTL_NS) {
+  goBtn.disabled = true;
+  log("Missing connection parameters — this page must be opened by your IC " +
+      "connector's login command, not directly.");
+}
+
+function hexToBytes(hex) {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(2 * i, 2), 16);
+  return out;
+}
+function bytesToHex(buf) {
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+goBtn.onclick = () => {
+  // Open Internet Identity in a foreground TAB, not a sized popup: a popup
+  // (forced by passing width/height) can end up hidden behind the current
+  // window and leave the user lost. Omitting the features string lets the
+  // browser open a tab, which stays in front. focus() nudges it forward too.
+  const ii = window.open(II_ORIGIN + "/#authorize", "iiWindow");
+  if (!ii) { log("Sign-in tab was blocked — please allow pop-ups/tabs for this page and retry."); return; }
+  try { ii.focus(); } catch (_) {}
+  goBtn.disabled = true;
+  log("Continue in the Internet Identity tab…");
+
+  const handler = async (event) => {
+    if (event.origin !== II_ORIGIN) return;
+    const msg = event.data;
+    if (!msg || typeof msg !== "object") return;
+
+    if (msg.kind === "authorize-ready") {
+      ii.postMessage({
+        kind: "authorize-client",
+        sessionPublicKey: hexToBytes(SESSION_PUBKEY_HEX),
+        maxTimeToLive: BigInt(TTL_NS),
+      }, II_ORIGIN);
+    } else if (msg.kind === "authorize-client-success") {
+      window.removeEventListener("message", handler);
+      try { ii.close(); } catch (_) {}
+      log("Delegation received; handing it to the connector…");
+      const body = {
+        nonce: NONCE,
+        user_public_key: bytesToHex(msg.userPublicKey),
+        delegations: msg.delegations.map(d => ({
+          delegation: {
+            pubkey: bytesToHex(d.delegation.pubkey),
+            expiration: d.delegation.expiration.toString(),
+            ...(d.delegation.targets && d.delegation.targets.length
+              ? { targets: d.delegation.targets.map(t =>
+                  typeof t === "string" ? t : (t.toText ? t.toText() : String(t))) }
+              : {}),
+          },
+          signature: bytesToHex(d.signature),
+        })),
+      };
+      try {
+        const resp = await fetch(CALLBACK, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const out = await resp.json();
+        if (out.ok) {
+          log("Connected as " + out.principal);
+          log("You can close this tab and return to your AI assistant.");
+        } else {
+          log("Connector rejected the session: " + out.error);
+          goBtn.disabled = false;
+        }
+      } catch (e) {
+        log("Could not reach the connector on 127.0.0.1:" + PORT + " — is it still " +
+            "waiting for login? (" + e + ")");
+        goBtn.disabled = false;
+      }
+    } else if (msg.kind === "authorize-client-failure") {
+      window.removeEventListener("message", handler);
+      log("Internet Identity reported a failure: " + (msg.text || "unknown"));
+      goBtn.disabled = false;
+    }
+  };
+  window.addEventListener("message", handler);
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The live trading fleet for multidex.ai (the dedicated subnet), supervised by
+  launchd so it survives closed terminals, stray kills and reboots — three
+  separate accidents cost hours of live volume before this existed.
+
+  INSTALL (replace __PROJECT_DIR__ and __HOME__ with real paths):
+    sed -e "s|__PROJECT_DIR__|$PWD|g" -e "s|__HOME__|$HOME|g" \
+      ops/ai.multidex.bots.plist.template > ~/Library/LaunchAgents/ai.multidex.bots.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.multidex.bots.plist
+
+  STOP FOR GOOD (a plain `kill` only bounces it):
+    launchctl bootout gui/$(id -u)/ai.multidex.bots
+
+  MDX_FOREGROUND=1 is REQUIRED. Without it the starter daemonises and returns,
+  launchd sees the job exit within a second, KeepAlive restarts it, and the
+  pidfile guard then refuses with "already running" — a throttled crash-loop.
+  With it the starter execs the engine, so launchd's PID is the fleet itself
+  and its signals reach the engine's cleanup trap (which deletes the bot
+  identities; a SIGKILL would leak them).
+
+  Fleet size, pace and margin collateral come from scripts/lib/targets.sh
+  (mdx_bots_for / mdx_interval_for / mdx_pool_fund_for), so the launch profile
+  lives in version control with the code, not in this file.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.multidex.bots</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>scripts/start_bots_subnet.sh</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>MDX_FOREGROUND</key>
+    <string>1</string>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>__PROJECT_DIR__</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Each start re-creates and re-funds the fleet (~2-3 min of mainnet update
+       calls), so throttle hard enough that a genuine failure loop cannot
+       hammer the venue. -->
+  <key>ThrottleInterval</key>
+  <integer>120</integer>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/mdex-bots.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/mdex-bots.log</string>
+</dict>
+</plist>

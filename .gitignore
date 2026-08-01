@@ -1,0 +1,54 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# Skills are a machine-synced mirror of skills.internetcomputer.org, kept
+# current by the SessionStart hook (.claude/sync-ic-skills.sh) — never commit.
+.claude/skills/
+# Per-developer Claude Code local overrides (machine paths, personal allowlist).
+.claude/settings.local.json
+
+# moc build cache + per-machine moc-resolution marker (not source).
+.mops/.build/
+.mops/moc-*
+
+# icp-cli machine/deploy state (canister-id mappings, local network data).
+# .icp/data/ (mainnet canister-id mappings) is COMMITTED — it is the link
+# between canister names and the live canisters; losing it nearly caused a
+# deploy to CREATE new canisters instead of upgrading multidex.ai's (skill:
+# icp-cli pitfall 5). Only the ephemeral cache (incl. the local replica's
+# mapping, which changes on every network reset) stays ignored.
+.icp/cache/
+
+# Cloud-engine / subnet deploy config (machine/target-specific)
+scripts/.cloud-engine.conf
+scripts/.subnet.conf
+# AI assistant API keys — injected at deploy time (setGoogleApiKey /
+# setAnthropicApiKey), NEVER committed. Put the raw key on one line here;
+# deploy.sh / cold_start.sh / play_start.sh read them. If BOTH are present the
+# scripts inject Anthropic last, so Anthropic serves (backend: last key set wins).
+scripts/.google-api-key
+scripts/.anthropic-api-key
+# Legacy name of the Google key file (renamed 2026-07-10) — keep ignored as a
+# tripwire so a stale copy on any machine can never be committed.
+scripts/.ai-api-key
+# Trading-bot / sim logs written by scripts/deploy.sh --bots and the local sim.
+scripts/sim_cloud.log
+scripts/sim_local.log
+
+# Secrets — broad tripwires so a stray credential can't be committed by `git add .`
+*.pem
+*.key
+*.p12
+*.pfx
+.env
+.env.*
+*.secret
+id_rsa*
+
+# Private security material — exploit-detail audit docs kept OUT of the public repo
+docs/*.private.md
+.run/
+src/backend/backend.did
+ops/phase1/

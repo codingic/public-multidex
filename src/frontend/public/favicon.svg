@@ -1,0 +1,20 @@
+<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+  <!-- MULTI/DEX — the brand icon (Asset 7) on a dark glacier tile. -->
+  <rect width="32" height="32" rx="7" fill="#0A1424"/>
+  <g transform="translate(2 6.3) scale(0.597)" fill="#38BDF0">
+    <rect x="20.28" y="12.23" width=".99" height="20.38"/>
+    <rect x="14.96" y="9.71" width=".99" height="14.51"/>
+    <rect x="18.66" y="19" width="4.22" height="11.12" rx=".71" ry=".71"/>
+    <rect x="13.34" y="12.29" width="4.22" height="8.8" rx=".71" ry=".71"/>
+    <rect x="30.93" y="9.71" width=".99" height="14.51"/>
+    <rect x="25.61" y="12.23" width=".99" height="20.38"/>
+    <rect x="23.99" y="19" width="4.22" height="11.12" rx=".71" ry=".71"/>
+    <rect x="29.31" y="12.29" width="4.22" height="8.8" rx=".71" ry=".71"/>
+    <rect x="9.63" y="9.91" width=".99" height="6.82"/>
+    <path d="M8.67,11.36h2.92c.36,0,.65.29.65.65v3c0,.36-.29.65-.65.65h-2.92c-.36,0-.65-.29-.65-.65v-3c0-.36.29-.65.65-.65Z"/>
+    <path fill-rule="evenodd" d="M8.52,11.36c-6.62,0-7.17-7.13.08-10.69.66-.32.41-.8-.12-.65-11.8,3.56-10.72,15.23-.24,15.23h1.39l-.49-3.9h-.62Z"/>
+    <rect x="36.26" y="9.91" width=".99" height="6.82"/>
+    <path d="M35.29,11.36h2.92c.36,0,.65.29.65.65v3c0,.36-.29.65-.65.65h-2.92c-.36,0-.65-.29-.65-.65v-3c0-.36.29-.65.65-.65Z"/>
+    <path fill-rule="evenodd" d="M38.36,11.36c6.62,0,7.17-7.13-.08-10.69-.66-.32-.41-.8.12-.65,11.8,3.56,10.72,15.23.24,15.23h-1.39l.49-3.9h.62Z"/>
+  </g>
+</svg>

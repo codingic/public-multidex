@@ -1,0 +1,48 @@
+[
+  // THIS is the file that ships. vite's root is src/frontend and only
+  // publicDir (src/frontend/public) is copied verbatim into dist/ — which is
+  // what the asset canister syncs and reads. A sibling src/frontend/.ic-assets.json5
+  // sits at the vite ROOT and is therefore NEVER copied, so rules placed
+  // there silently do nothing (that is how the caching / raw-access / security
+  // rules below went missing from every deployment until 2026-07-23).
+  // Verify after changing: curl -sD- -o/dev/null <origin>/ and check the headers.
+
+  // .well-known/ is where agent-discovery files live (ic-app.json — see
+  // vite.config.js's emitWellKnownManifest). The asset sync SKIPS dot-paths
+  // by default, so without this rule the directory never reaches the
+  // canister and the SPA fallback serves index.html in its place — which
+  // discovery tooling correctly ignores.
+  { "match": ".well-known", "ignore": false },
+  { "match": ".well-known/**/*", "ignore": false },
+
+  // Everything: revalidate every load (index.html must never go stale — it
+  // names the content-hashed bundle), and refuse raw.icp0.io, whose responses
+  // BYPASS certification: a raw URL can serve modified JS to a signed-in
+  // trader with no cryptographic check.
+  {
+    "match": "**/*",
+    "headers": {
+      "Cache-Control": "public, max-age=0, must-revalidate",
+    },
+    "allow_raw_access": false,
+  },
+
+  // Content-hashed build output (assets/index-<hash>.js, fonts, sprites) —
+  // the name changes whenever the bytes do, so it can be cached hard.
+  {
+    "match": "assets/**/*",
+    "headers": {
+      "Cache-Control": "public, max-age=31536000, immutable",
+    },
+  },
+
+  // IC App Connect bridge page (ai-connect.html): forbid framing so a
+  // clickjacking overlay can't trick the user into approving the II sign-in.
+  // The page self-enforces too; this header covers older browsers/proxies.
+  {
+    "match": "ai-connect.html",
+    "headers": {
+      "Content-Security-Policy": "frame-ancestors 'none'",
+    },
+  },
+]

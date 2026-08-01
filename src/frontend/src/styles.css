@@ -1,0 +1,25 @@
+/* MULTI/DEX styles.
+   Split into component files under ./styles/ for manageability and inlined here
+   in cascade order by the bundler's @import handling (one stylesheet at build).
+   Edit the per-component files — NOT this barrel — and keep the @import order
+   (tokens/reset first, the global responsive block in its original position). */
+@import "./styles/base.css";          /* reset + :root design tokens */
+@import "./styles/header.css";        /* header, nav, chart cell */
+@import "./styles/shell.css";         /* buttons, balance display, loader, views */
+@import "./styles/swap.css";          /* Swap page */
+@import "./styles/markets.css";       /* markets list, selector, desktop grid, column resizer */
+@import "./styles/orderbook.css";     /* order book / trades tabs + container split + card bases */
+@import "./styles/orderform.css";     /* order form, Spot|Margin toggle, trades */
+@import "./styles/overlays.css";      /* modal, toast, scrollbar */
+@import "./styles/responsive.css";    /* global mobile (max-width:900) block */
+@import "./styles/misc.css";          /* stale indicator, spinner, empty state, user chip */
+@import "./styles/account.css";       /* account view + tabs */
+@import "./styles/archive.css";       /* Archive tab */
+@import "./styles/margin-ui.css";     /* borrowing / health UI */
+@import "./styles/chart-overlay.css"; /* chart overlay + order-panel auth overlay */
+@import "./styles/pools.css";         /* per-market + AMM pool cards */
+@import "./styles/oracle.css";        /* oracle feed + depth bars */
+@import "./styles/stats.css";         /* fuel banner, stats tabs, swap-page extras, events log, margin pills */
+@import "./styles/intelli.css";       /* Intelli: data explorer + assistant */
+@import "./styles/deposit.css";       /* Deposit tab (Bridge canister stub) */
+@import "./styles/docs.css";          /* Docs tab (on-site levels/fees/badges) */

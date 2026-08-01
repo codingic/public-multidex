@@ -1,0 +1,2112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MULTI/DEX — Multi-Chain Decentralized Exchange</title>
+  <!-- Served from public/ at a STABLE root path — the cloud-engine console
+       loads the app icon from /favicon.svg (__META_ICON_PATH), so this must
+       not be a hashed asset. -->
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <!-- Inter is the single bundled typeface (imported in main.js); no external
+       font request is needed here. -->
+  <link rel="stylesheet" href="/src/styles.css" />
+</head>
+<!-- data-1p-ignore: 1Password honours this by default and skips every field on
+     the page (it's an II-auth DEX, never a credential/payment form), so its
+     inline icon never appears. LastPass ignores its equivalent unless the user
+     flips an advanced setting, so it's suppressed via CSS instead (styles.css). -->
+<body data-1p-ignore>
+  <div id="app">
+    <!-- Top chrome: the fuel banner is part of the header block, so both
+         stick together and the banner appearing simply EXPANDS the chrome.
+         Pages that size against the viewport subtract var(--chrome-h), which
+         a ResizeObserver in main.js keeps equal to this wrapper's rendered
+         height — so the banner (any height, any text wrap) can never push
+         page content off-screen. -->
+    <div id="top-chrome">
+      <!-- Out-of-fuel banner. The DEX is a public good — if it freezes for
+           want of cycles the heartbeat stops and trading halts, but query
+           calls still serve, so the UI can detect the stall and tell anyone
+           how to refuel it. Hidden until getCanisterInfo reports trouble. -->
+      <div id="fuel-banner" class="fuel-banner" style="display:none"></div>
+      <!-- Oracle divergence banner: the primary feed disagrees with the
+           independent XRC anchor beyond the alarm band. Alarm-only (trading
+           continues) — shown so users cross-check prices and ops looks at the
+           sources. Same chrome mechanics as the fuel banner. -->
+      <div id="oracle-banner" class="oracle-banner" style="display:none"></div>
+      <!-- Launch notice: the play-mode story. Shown only in #play posture,
+           persistently dismissible (✕ → localStorage), links to the dedicated
+           #docs/launch page. Same #top-chrome mechanics as the banners above
+           (expands --chrome-h). Rendered by renderLaunchBanner() in main.js. -->
+      <div id="launch-banner" class="launch-banner" style="display:none"></div>
+
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <div class="logo">
+          <!-- MULTI/DEX — full brand lockup (Asset 7), outlined vector. Fills map to
+               the theme: icon + slash -> --accent, letters -> --text.
+               .logo-shimmer: one-shot light sweep when the app reveals. -->
+          <span class="logo-shimmer"><svg class="logo-lockup" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 176.99 37.93" role="img" aria-label="MULTI/DEX"><g><rect style="fill:var(--accent)" x="23.59" y="14.22" width="1.15" height="23.7"/><rect style="fill:var(--accent)" x="17.4" y="11.3" width="1.15" height="16.88"/><path style="fill:var(--accent)" d="M22.53,22.1h3.27c.45,0,.82.37.82.82v11.29c0,.45-.37.82-.82.82h-3.27c-.45,0-.82-.37-.82-.82v-11.29c0-.45.37-.82.82-.82Z"/><rect style="fill:var(--accent)" x="15.52" y="14.3" width="4.91" height="10.24" rx=".82" ry=".82"/><rect style="fill:var(--accent)" x="35.98" y="11.3" width="1.15" height="16.88"/><rect style="fill:var(--accent)" x="29.79" y="14.22" width="1.15" height="23.7"/><path style="fill:var(--accent)" d="M28.73,22.1h3.27c.45,0,.82.37.82.82v11.29c0,.45-.37.82-.82.82h-3.27c-.45,0-.82-.37-.82-.82v-11.29c0-.45.37-.82.82-.82Z"/><rect style="fill:var(--accent)" x="34.1" y="14.3" width="4.91" height="10.24" rx=".82" ry=".82"/><rect style="fill:var(--accent)" x="11.21" y="11.52" width="1.15" height="7.93"/><rect style="fill:var(--accent)" x="9.32" y="13.22" width="4.91" height="5.01" rx=".76" ry=".76"/><path style="fill:var(--accent);fill-rule:evenodd" d="M9.91,13.22c-7.7,0-8.34-8.29.09-12.43.77-.38.47-.94-.14-.75-13.73,4.14-12.47,17.72-.28,17.72h1.62l-.57-4.54h-.73Z"/><rect style="fill:var(--accent)" x="42.18" y="11.52" width="1.15" height="7.93"/><rect style="fill:var(--accent)" x="40.29" y="13.22" width="4.91" height="5.01" rx=".76" ry=".76"/><path style="fill:var(--accent);fill-rule:evenodd" d="M44.62,13.22c7.7,0,8.34-8.29-.09-12.43-.77-.38-.47-.94.14-.75,13.73,4.14,12.47,17.72.28,17.72h-1.62l.57-4.54h.73Z"/><path style="fill:var(--text)" d="M68.14,12.8v.89c.48-.88.93-1.48,1.35-1.82s.95-.5,1.59-.5c1.3,0,2.25.77,2.86,2.32.45-.85.91-1.46,1.37-1.8s1.06-.52,1.79-.52,1.43.25,2.03.73c.66.55,1.12,1.33,1.37,2.33.17.67.26,1.73.26,3.18v5.26c0,.84,0,1.35.02,1.53.07.73.24,1.1.51,1.1.09,0,.23-.04.41-.11.18-.07.32-.11.41-.11.46,0,.69.31.69.92,0,.71-.27,1.07-.79,1.07-.2,0-.5-.04-.9-.11-.4-.07-.71-.11-.92-.11-.23,0-.55.04-.98.11-.43.07-.76.11-.98.11-.56,0-.83-.36-.83-1.07,0-.61.21-.92.64-.92.05,0,.19.02.4.06.08.04.19.06.32.06.23,0,.37-.17.43-.52.06-.35.1-1.21.11-2.59v-3.88c0-1.4-.07-2.43-.21-3.07-.14-.64-.4-1.15-.78-1.51s-.82-.55-1.31-.55c-.94,0-1.59.5-1.96,1.5-.29.79-.44,2.18-.44,4.15v2.17c0,1.91.03,3.11.09,3.59.06.48.22.72.47.72.08,0,.2-.02.35-.06s.27-.06.35-.06c.19,0,.34.1.47.29.13.19.19.43.19.71,0,.66-.31.99-.93.99-.2,0-.49-.04-.88-.12s-.69-.12-.88-.12c-.28,0-.58.04-.91.12s-.62.12-.87.12c-.54,0-.81-.35-.81-1.04,0-.63.2-.95.6-.95.15,0,.26.03.34.08.19.09.32.13.42.13.32,0,.48-.52.5-1.56l.06-1.44v-4.45c0-1.78-.16-3.02-.47-3.71-.31-.7-.86-1.04-1.66-1.04-.87,0-1.54.49-2.01,1.47-.38.8-.58,2.19-.58,4.17v4.08c0,.82,0,1.3.02,1.44.05.7.2,1.04.44,1.04.07,0,.21-.06.42-.17.03,0,.07-.01.12-.04h.14c.52,0,.77.34.77,1.01s-.3.98-.89.98c-.23,0-.5-.03-.83-.09-.45-.08-.83-.12-1.15-.12-.16,0-.45.03-.87.09-.57.08-.91.12-1.03.12-.53,0-.79-.35-.79-1.04,0-.63.26-.95.77-.95h.12c.05.02.09.03.12.03l.51.15s.04.03.08.03c.36,0,.56-.5.59-1.5v-6.41c0-1.73-.03-2.81-.09-3.24-.06-.43-.22-.64-.49-.64-.05,0-.24.05-.56.15-.13.04-.24.06-.32.06-.49,0-.73-.33-.73-.98,0-.69.27-1.04.81-1.04.15,0,.34.02.6.06.25.04.47.06.66.06h.36l.48-.12h.06c.32,0,.48.29.48.88Z"/><path style="fill:var(--text)" d="M91.41,26.38v-.95c-.72,1.49-1.78,2.23-3.18,2.23-1.59,0-2.7-.74-3.32-2.23-.27-.65-.42-1.41-.45-2.29-.01-.43-.02-1.32-.02-2.69v-2.53c0-2.79-.2-4.18-.59-4.18-.08,0-.21.02-.39.05-.18.03-.31.05-.41.05-.48,0-.72-.33-.72-.99s.29-.96.87-.96c.13,0,.33.03.6.08s.46.08.6.08c.12,0,.33-.03.63-.09.2-.04.32-.06.34-.06.42,0,.63.39.63,1.16v2.62l-.06,2.26v1.98c0,1.77.09,3.04.28,3.82.31,1.28,1.05,1.92,2.23,1.92.58,0,1.09-.2,1.54-.59.45-.4.76-.92.93-1.57.22-.79.32-2.3.32-4.52v-3.66c-.07-.98-.24-1.47-.53-1.47h-.61c-.47,0-.71-.31-.71-.92,0-.69.26-1.04.79-1.04.12,0,.31.02.56.06.25.04.44.06.56.06.11,0,.27-.02.49-.06.22-.04.38-.06.49-.06.41,0,.61.33.61.98,0,.29-.01.51-.04.67-.07.77-.1,1.92-.1,3.43v4.71c0,1.24,0,1.94.02,2.08.07,1.08.26,1.62.57,1.62.09,0,.23-.03.41-.08.18-.05.31-.08.41-.08.46,0,.69.34.69,1.01s-.28,1.04-.85,1.04c-.12,0-.3-.02-.53-.06-.34-.06-.55-.09-.63-.09-.04,0-.18.02-.43.06-.16.06-.3.09-.43.09-.38,0-.57-.29-.57-.89Z"/><path style="fill:var(--text)" d="M100.42,14.4v9.48c.01,1.04.2,1.55.56,1.55.08,0,.26-.05.52-.15.17-.04.28-.06.33-.06.46,0,.69.35.69,1.04s-.28,1.01-.84,1.01c-.22,0-.57-.04-1.05-.12-.48-.08-.85-.12-1.11-.12-.22,0-.55.04-.99.12-.44.08-.76.12-.97.12h-.1c-.58,0-.86-.37-.86-1.1,0-.63.24-.95.71-.95h.15c.08.03.15.04.19.04.35.11.55.17.6.17.25,0,.41-.16.47-.47.06-.32.1-1.14.11-2.47l.02-2.14v-10.2c-.01-.61-.03-1.02-.06-1.23-.1-.47-.29-.7-.58-.7-.04,0-.22.04-.54.12-.15.04-.28.06-.37.06-.47,0-.7-.33-.7-.98s.28-1.01.83-1.01c.15,0,.28,0,.39.03l.5.09c.22.04.41.06.56.06.14,0,.34-.03.62-.09.28-.06.48-.09.62-.09.32,0,.48.29.48.88,0,.2,0,.36-.02.46-.1,1.57-.14,3.78-.14,6.64Z"/><path style="fill:var(--text)" d="M110.67,22.93v-1.95c.01-.83.27-1.25.76-1.25s.74.47.74,1.4c0,2.22-.2,3.76-.59,4.64-.53,1.18-1.4,1.77-2.61,1.77-1.12,0-1.91-.52-2.38-1.56-.35-.75-.52-2.04-.52-3.85v-7.33c0-.43-.14-.64-.41-.64h-.69c-.23,0-.42-.11-.57-.32-.15-.21-.23-.47-.23-.78,0-.29.07-.54.22-.76.15-.22.31-.33.49-.33h.82c.24,0,.36-.19.36-.58v-3.14c0-.77.27-1.16.82-1.16.51,0,.76.39.76,1.16v3.27c0,.3.13.46.38.46h2.29c.53,0,.8.36.8,1.07,0,.75-.29,1.13-.86,1.13h-2.32c-.2,0-.29.21-.29.64v7.51c0,2.14.49,3.21,1.47,3.21s1.52-.86,1.56-2.59Z"/><path style="fill:var(--text)" d="M118.88,18.29v3.97c0,1.02,0,1.62.02,1.8.07.92.26,1.37.58,1.37.07,0,.25-.05.54-.15.07-.04.18-.06.32-.06.54,0,.81.34.81,1.01,0,.29-.09.53-.27.73-.18.2-.41.31-.68.31-.23,0-.58-.05-1.04-.14-.47-.09-.81-.14-1.04-.14-.37,0-.79.04-1.25.12-.56.1-.93.15-1.12.15-.57,0-.86-.35-.86-1.04s.25-1.01.74-1.01c.12,0,.28.03.51.09.22.06.39.09.51.09.35,0,.56-.65.63-1.95v-7.82c-.07-1.28-.29-1.92-.65-1.92-.12,0-.28.04-.49.11-.21.07-.36.11-.47.11-.52,0-.78-.33-.78-.98,0-.69.31-1.04.94-1.04.27,0,.46.01.58.03.46.08.75.12.88.12.11,0,.29-.03.53-.08.24-.05.41-.08.53-.08.41,0,.62.4.62,1.19,0,.08,0,.2-.02.37-.01.16-.02.29-.02.37-.01.16-.02.79-.03,1.89-.01.83-.02,1.69-.02,2.56ZM117.76,10.29c-.33,0-.61-.17-.85-.5-.24-.34-.35-.74-.35-1.21s.12-.87.35-1.19c.24-.33.52-.49.85-.49s.61.16.85.49.35.72.35,1.19-.12.87-.35,1.21c-.24.33-.52.5-.85.5Z"/><path style="fill:var(--accent)" d="M125.42,29.92c-.09.33-.18.67-.27,1.02-.1.36-.19.74-.29,1.15-.16.67-.46,1.01-.9,1.01h-.68c-.44,0-.66-.24-.66-.73,0-.08,0-.16.01-.23,0-.07.03-.15.05-.23l.22-.7.24-.85v.03l5.46-19.51.13-.46.59-2.26v.03c.04-.2.09-.4.14-.58.05-.18.1-.38.14-.58.15-.59.46-.89.94-.89h.63c.42,0,.63.24.63.73,0,.16-.07.48-.22.95l-.17.67v-.03l-6.01,21.46Z"/><path style="fill:var(--text)" d="M138.5,11.36c1.47,0,2.57.78,3.29,2.35v-3.08c0-.81-.02-1.31-.04-1.5-.07-.63-.28-.95-.62-.95-.12,0-.29.03-.5.09-.22.06-.38.09-.5.09-.55,0-.82-.33-.82-.98s.37-1.01,1.11-1.01c.12,0,.33.02.65.06.47.06.72.09.73.09.13,0,.33-.03.58-.08.25-.05.44-.08.58-.08.42,0,.62.41.62,1.22v.34c-.01.06-.03.6-.04,1.62,0,.12-.02.91-.07,2.35-.03,1.02-.04,1.79-.04,2.32v8.1c.02,1.35.06,2.18.14,2.51.08.33.26.49.54.49.2,0,.35-.02.45-.06.24-.04.41-.06.5-.06.56,0,.84.34.84,1.01s-.33,1.04-1,1.04c-.15,0-.37-.03-.68-.08-.3-.05-.53-.08-.68-.08-.04,0-.22.02-.51.06-.18.06-.33.09-.47.09-.4,0-.6-.37-.6-1.1v-.67c-.78,1.45-1.92,2.17-3.42,2.17s-2.72-.75-3.64-2.26c-.92-1.51-1.38-3.48-1.38-5.92s.45-4.43,1.36-5.91c.9-1.48,2.11-2.21,3.63-2.21ZM141.71,22.14c.06-.67.09-1.54.09-2.59,0-1.36-.04-2.29-.11-2.78-.13-1.02-.46-1.81-.96-2.38-.6-.67-1.28-1.01-2.06-1.01-1.05,0-1.86.54-2.45,1.62-.59,1.08-.88,2.55-.88,4.43s.31,3.46.92,4.56c.61,1.11,1.45,1.66,2.51,1.66.81,0,1.48-.32,2.02-.96.54-.64.85-1.49.94-2.55Z"/><path style="fill:var(--text)" d="M159.29,18.17c0,.77-.04,1.25-.11,1.42-.08.17-.29.26-.66.26h-7.2c-.2,0-.32.04-.38.11-.06.07-.09.19-.09.35,0,1.53.34,2.8,1.02,3.82.68,1.02,1.52,1.53,2.54,1.53.66,0,1.27-.24,1.82-.73.55-.49.91-1.11,1.08-1.86l.2-.88c.11-.49.35-.73.75-.73.56,0,.84.39.84,1.16,0,1.32-.5,2.5-1.49,3.53-1,1.03-2.13,1.54-3.4,1.54-1.58,0-2.85-.72-3.78-2.15-.94-1.43-1.4-3.36-1.4-5.78s.5-4.5,1.49-6.04c1-1.55,2.29-2.32,3.89-2.32,1.42,0,2.59.64,3.51,1.92.92,1.28,1.38,2.91,1.38,4.88ZM151.07,17.38c0,.29.17.43.5.43h5.41c.32,0,.48-.14.48-.43,0-1.08-.3-2.01-.91-2.81-.6-.79-1.31-1.19-2.13-1.19s-1.62.41-2.31,1.24-1.04,1.75-1.04,2.76Z"/><path style="fill:var(--text)" d="M165.58,24.08l3.2-4.88-3.2-5.03c-.22-.33-.48-.49-.78-.49-.12,0-.22.01-.28.04l-.39.14c-.06.02-.17.04-.32.04-.51,0-.76-.33-.76-.98,0-.69.31-1.04.94-1.04h.07s.4.03,1.15.09c.38.08.71.12.97.12s.64-.04,1.13-.11c.49-.07.86-.11,1.11-.11.63,0,.94.35.94,1.04,0,.65-.29.98-.88.98-.12,0-.24-.02-.35-.07l-.35-.14h-.14c-.06,0-.09.02-.09.06.03.12.1.27.21.43l2.1,3.41,2.19-3.41c.14-.21.21-.35.21-.43-.02-.04-.05-.06-.11-.06-.08,0-.2.04-.38.11-.17.07-.31.11-.4.11-.55,0-.82-.34-.82-1.02s.32-.99.97-.99c-.03,0,.38.05,1.22.15.34.04.7.06,1.08.06s.79-.04,1.22-.11.74-.11.92-.11c.68,0,1.01.34,1.01,1.02s-.26.99-.79.99c-.12,0-.3-.04-.53-.11-.23-.07-.41-.11-.53-.11-.37,0-.88.49-1.53,1.47l-2.68,4.04,3.59,5.63c.21.35.48.52.78.52.09,0,.23-.02.43-.06s.33-.06.43-.06c.55,0,.83.33.83.98,0,.71-.32,1.07-.97,1.07h-.18l-.9-.15c-.25-.04-.61-.06-1.11-.06-.42,0-.83.03-1.24.09l-.83.12h-.25c-.72,0-1.08-.33-1.08-.98,0-.71.28-1.07.85-1.07.2,0,.48.04.85.12.03.02.08.03.16.03.15,0,.23-.08.23-.24,0-.06-.02-.12-.07-.18l-.07-.12-2.56-3.97-2.6,3.97c-.11.16-.16.29-.16.37,0,.1.08.15.23.15.11,0,.27-.02.48-.06.21-.04.38-.06.48-.06.66,0,.99.36.99,1.07,0,.65-.33.98-.99.98h-.32l-.92-.12c-.46-.06-.87-.09-1.22-.09-.28,0-.61.03-.99.09-.52.08-.91.12-1.15.12-.65,0-.97-.35-.97-1.04s.28-1.01.83-1.01c.09,0,.23.02.42.05.18.03.32.05.41.05.29,0,.71-.41,1.24-1.23Z"/></g></svg></span>
+        </div>
+        <button id="menu-toggle" class="menu-toggle" aria-label="Menu">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+      </div>
+      <nav class="tabs">
+        <button class="tab active" data-tab="swap">Swap</button>
+        <button class="tab" data-tab="markets">Markets</button>
+        <!-- data-tab is the INTERNAL token (view ids + CSS + tabName logic all
+             key off "stats"/"intelli"); the URL hash is mapped to #status /
+             #ai at the routing boundary (ROUTE_TO_TAB / TAB_TO_ROUTE in
+             main.js). Old #stats / #intelli / #intelligence hashes still
+             resolve. -->
+        <button class="tab" data-tab="stats">System</button>
+        <button class="tab" data-tab="ledger">Ledger</button>
+        <button class="tab" data-tab="leaderboard">Leaderboard</button>
+        <!-- Shortcut into Account → Earn (like Deposit): staking the AMM vault
+             and the insurance fund is a destination in its own right. -->
+        <button class="tab" data-tab="earn">Earn</button>
+        <button class="tab" data-tab="intelli">AI</button>
+        <button class="tab" data-tab="docs">Docs</button>
+        <!-- Account lives in the far-right user dropdown on desktop; in the
+             mobile drawer it appears as the username pill (avatar + name,
+             filled by renderProfileChip; reads "Account" until signed in). -->
+        <button class="tab tab-mobile-only tab-account-pill" data-tab="account">
+          <span class="user-menu-avatar" id="drawer-acct-avatar" style="display:none">?</span>
+          <span id="drawer-acct-name">Account</span>
+        </button>
+        <!-- Mobile drawer, second level: tapping the username pill swaps the
+             nav list for the Account sections (main.js toggles .acct-menu on
+             the header). Desktop never shows this — the far-right dropdown
+             carries the same list there. -->
+        <div class="drawer-acct" id="drawer-acct-menu">
+          <button class="drawer-acct-back" id="drawer-acct-back" aria-label="Back to menu">
+            <span aria-hidden="true">←</span> Menu
+          </button>
+          <button class="drawer-acct-item" data-acct-go="overview">Overview</button>
+          <button class="drawer-acct-item" data-acct-go="deposit">Deposit</button>
+          <button class="drawer-acct-item" data-acct-go="wallet">Wallet</button>
+          <button class="drawer-acct-item" data-acct-go="spot">Spot</button>
+          <button class="drawer-acct-item" data-acct-go="positions">Positions</button>
+          <button class="drawer-acct-item" data-acct-go="earn">Earn</button>
+          <button class="drawer-acct-item" data-acct-go="archive">Archive</button>
+          <button class="drawer-acct-item" data-acct-go="status">Fee Level</button>
+          <button class="drawer-acct-item" data-acct-go="ai">AI usage</button>
+        </div>
+      </nav>
+      <div class="header-right">
+        <!-- Signed-in user menu (desktop far-right dropdown): trigger pill +
+             Account / Sign out. Hidden on mobile (the drawer carries Account
+             as a tab and Sign out as the auth button). Pill BEFORE the account
+             value, per review. -->
+        <div id="user-menu" class="user-menu">
+          <button id="user-menu-trigger" class="user-menu-trigger" aria-haspopup="true" aria-expanded="false">
+            <span class="user-menu-avatar" id="user-menu-avatar">?</span>
+            <span class="user-menu-name" id="user-menu-name">—</span>
+            <svg class="user-menu-caret" width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div class="user-menu-dropdown" id="user-menu-dropdown">
+            <button class="user-menu-item" data-useraction="acct:overview">Overview</button>
+            <button class="user-menu-item" data-useraction="acct:deposit">Deposit</button>
+            <button class="user-menu-item" data-useraction="acct:wallet">Wallet</button>
+            <button class="user-menu-item" data-useraction="acct:spot">Spot</button>
+            <button class="user-menu-item" data-useraction="acct:positions">Positions</button>
+            <button class="user-menu-item" data-useraction="acct:earn">Earn</button>
+            <button class="user-menu-item" data-useraction="acct:archive">Archive</button>
+            <button class="user-menu-item" data-useraction="acct:status">Fee Level</button>
+            <button class="user-menu-item" data-useraction="acct:ai">AI usage</button>
+            <div class="user-menu-sep" role="separator"></div>
+            <button class="user-menu-item" data-useraction="signout">Sign out</button>
+          </div>
+        </div>
+        <div id="balance-display" class="balance-display" style="display:none"></div>
+        <button id="auth-btn" class="btn btn-primary">Sign In</button>
+      </div>
+    </header>
+    </div><!-- /#top-chrome -->
+
+    <!-- Initial loading screen — visible until init() activates the
+         routed view (no view has class="view active" by default, so the
+         CSS :has() rule below keeps this loader showing until then). -->
+    <div id="app-loader">
+      <!-- .logo-shimmer hosts the one-shot light sweep (::after masked to
+           /assets/lockup.svg, so the band only lights the glyphs). -->
+      <span class="logo-shimmer"><svg class="logo-lockup" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 176.99 37.93" role="img" aria-label="MULTI/DEX"><g><rect style="fill:var(--accent)" x="23.59" y="14.22" width="1.15" height="23.7"/><rect style="fill:var(--accent)" x="17.4" y="11.3" width="1.15" height="16.88"/><path style="fill:var(--accent)" d="M22.53,22.1h3.27c.45,0,.82.37.82.82v11.29c0,.45-.37.82-.82.82h-3.27c-.45,0-.82-.37-.82-.82v-11.29c0-.45.37-.82.82-.82Z"/><rect style="fill:var(--accent)" x="15.52" y="14.3" width="4.91" height="10.24" rx=".82" ry=".82"/><rect style="fill:var(--accent)" x="35.98" y="11.3" width="1.15" height="16.88"/><rect style="fill:var(--accent)" x="29.79" y="14.22" width="1.15" height="23.7"/><path style="fill:var(--accent)" d="M28.73,22.1h3.27c.45,0,.82.37.82.82v11.29c0,.45-.37.82-.82.82h-3.27c-.45,0-.82-.37-.82-.82v-11.29c0-.45.37-.82.82-.82Z"/><rect style="fill:var(--accent)" x="34.1" y="14.3" width="4.91" height="10.24" rx=".82" ry=".82"/><rect style="fill:var(--accent)" x="11.21" y="11.52" width="1.15" height="7.93"/><rect style="fill:var(--accent)" x="9.32" y="13.22" width="4.91" height="5.01" rx=".76" ry=".76"/><path style="fill:var(--accent);fill-rule:evenodd" d="M9.91,13.22c-7.7,0-8.34-8.29.09-12.43.77-.38.47-.94-.14-.75-13.73,4.14-12.47,17.72-.28,17.72h1.62l-.57-4.54h-.73Z"/><rect style="fill:var(--accent)" x="42.18" y="11.52" width="1.15" height="7.93"/><rect style="fill:var(--accent)" x="40.29" y="13.22" width="4.91" height="5.01" rx=".76" ry=".76"/><path style="fill:var(--accent);fill-rule:evenodd" d="M44.62,13.22c7.7,0,8.34-8.29-.09-12.43-.77-.38-.47-.94.14-.75,13.73,4.14,12.47,17.72.28,17.72h-1.62l.57-4.54h.73Z"/><path style="fill:var(--text)" d="M68.14,12.8v.89c.48-.88.93-1.48,1.35-1.82s.95-.5,1.59-.5c1.3,0,2.25.77,2.86,2.32.45-.85.91-1.46,1.37-1.8s1.06-.52,1.79-.52,1.43.25,2.03.73c.66.55,1.12,1.33,1.37,2.33.17.67.26,1.73.26,3.18v5.26c0,.84,0,1.35.02,1.53.07.73.24,1.1.51,1.1.09,0,.23-.04.41-.11.18-.07.32-.11.41-.11.46,0,.69.31.69.92,0,.71-.27,1.07-.79,1.07-.2,0-.5-.04-.9-.11-.4-.07-.71-.11-.92-.11-.23,0-.55.04-.98.11-.43.07-.76.11-.98.11-.56,0-.83-.36-.83-1.07,0-.61.21-.92.64-.92.05,0,.19.02.4.06.08.04.19.06.32.06.23,0,.37-.17.43-.52.06-.35.1-1.21.11-2.59v-3.88c0-1.4-.07-2.43-.21-3.07-.14-.64-.4-1.15-.78-1.51s-.82-.55-1.31-.55c-.94,0-1.59.5-1.96,1.5-.29.79-.44,2.18-.44,4.15v2.17c0,1.91.03,3.11.09,3.59.06.48.22.72.47.72.08,0,.2-.02.35-.06s.27-.06.35-.06c.19,0,.34.1.47.29.13.19.19.43.19.71,0,.66-.31.99-.93.99-.2,0-.49-.04-.88-.12s-.69-.12-.88-.12c-.28,0-.58.04-.91.12s-.62.12-.87.12c-.54,0-.81-.35-.81-1.04,0-.63.2-.95.6-.95.15,0,.26.03.34.08.19.09.32.13.42.13.32,0,.48-.52.5-1.56l.06-1.44v-4.45c0-1.78-.16-3.02-.47-3.71-.31-.7-.86-1.04-1.66-1.04-.87,0-1.54.49-2.01,1.47-.38.8-.58,2.19-.58,4.17v4.08c0,.82,0,1.3.02,1.44.05.7.2,1.04.44,1.04.07,0,.21-.06.42-.17.03,0,.07-.01.12-.04h.14c.52,0,.77.34.77,1.01s-.3.98-.89.98c-.23,0-.5-.03-.83-.09-.45-.08-.83-.12-1.15-.12-.16,0-.45.03-.87.09-.57.08-.91.12-1.03.12-.53,0-.79-.35-.79-1.04,0-.63.26-.95.77-.95h.12c.05.02.09.03.12.03l.51.15s.04.03.08.03c.36,0,.56-.5.59-1.5v-6.41c0-1.73-.03-2.81-.09-3.24-.06-.43-.22-.64-.49-.64-.05,0-.24.05-.56.15-.13.04-.24.06-.32.06-.49,0-.73-.33-.73-.98,0-.69.27-1.04.81-1.04.15,0,.34.02.6.06.25.04.47.06.66.06h.36l.48-.12h.06c.32,0,.48.29.48.88Z"/><path style="fill:var(--text)" d="M91.41,26.38v-.95c-.72,1.49-1.78,2.23-3.18,2.23-1.59,0-2.7-.74-3.32-2.23-.27-.65-.42-1.41-.45-2.29-.01-.43-.02-1.32-.02-2.69v-2.53c0-2.79-.2-4.18-.59-4.18-.08,0-.21.02-.39.05-.18.03-.31.05-.41.05-.48,0-.72-.33-.72-.99s.29-.96.87-.96c.13,0,.33.03.6.08s.46.08.6.08c.12,0,.33-.03.63-.09.2-.04.32-.06.34-.06.42,0,.63.39.63,1.16v2.62l-.06,2.26v1.98c0,1.77.09,3.04.28,3.82.31,1.28,1.05,1.92,2.23,1.92.58,0,1.09-.2,1.54-.59.45-.4.76-.92.93-1.57.22-.79.32-2.3.32-4.52v-3.66c-.07-.98-.24-1.47-.53-1.47h-.61c-.47,0-.71-.31-.71-.92,0-.69.26-1.04.79-1.04.12,0,.31.02.56.06.25.04.44.06.56.06.11,0,.27-.02.49-.06.22-.04.38-.06.49-.06.41,0,.61.33.61.98,0,.29-.01.51-.04.67-.07.77-.1,1.92-.1,3.43v4.71c0,1.24,0,1.94.02,2.08.07,1.08.26,1.62.57,1.62.09,0,.23-.03.41-.08.18-.05.31-.08.41-.08.46,0,.69.34.69,1.01s-.28,1.04-.85,1.04c-.12,0-.3-.02-.53-.06-.34-.06-.55-.09-.63-.09-.04,0-.18.02-.43.06-.16.06-.3.09-.43.09-.38,0-.57-.29-.57-.89Z"/><path style="fill:var(--text)" d="M100.42,14.4v9.48c.01,1.04.2,1.55.56,1.55.08,0,.26-.05.52-.15.17-.04.28-.06.33-.06.46,0,.69.35.69,1.04s-.28,1.01-.84,1.01c-.22,0-.57-.04-1.05-.12-.48-.08-.85-.12-1.11-.12-.22,0-.55.04-.99.12-.44.08-.76.12-.97.12h-.1c-.58,0-.86-.37-.86-1.1,0-.63.24-.95.71-.95h.15c.08.03.15.04.19.04.35.11.55.17.6.17.25,0,.41-.16.47-.47.06-.32.1-1.14.11-2.47l.02-2.14v-10.2c-.01-.61-.03-1.02-.06-1.23-.1-.47-.29-.7-.58-.7-.04,0-.22.04-.54.12-.15.04-.28.06-.37.06-.47,0-.7-.33-.7-.98s.28-1.01.83-1.01c.15,0,.28,0,.39.03l.5.09c.22.04.41.06.56.06.14,0,.34-.03.62-.09.28-.06.48-.09.62-.09.32,0,.48.29.48.88,0,.2,0,.36-.02.46-.1,1.57-.14,3.78-.14,6.64Z"/><path style="fill:var(--text)" d="M110.67,22.93v-1.95c.01-.83.27-1.25.76-1.25s.74.47.74,1.4c0,2.22-.2,3.76-.59,4.64-.53,1.18-1.4,1.77-2.61,1.77-1.12,0-1.91-.52-2.38-1.56-.35-.75-.52-2.04-.52-3.85v-7.33c0-.43-.14-.64-.41-.64h-.69c-.23,0-.42-.11-.57-.32-.15-.21-.23-.47-.23-.78,0-.29.07-.54.22-.76.15-.22.31-.33.49-.33h.82c.24,0,.36-.19.36-.58v-3.14c0-.77.27-1.16.82-1.16.51,0,.76.39.76,1.16v3.27c0,.3.13.46.38.46h2.29c.53,0,.8.36.8,1.07,0,.75-.29,1.13-.86,1.13h-2.32c-.2,0-.29.21-.29.64v7.51c0,2.14.49,3.21,1.47,3.21s1.52-.86,1.56-2.59Z"/><path style="fill:var(--text)" d="M118.88,18.29v3.97c0,1.02,0,1.62.02,1.8.07.92.26,1.37.58,1.37.07,0,.25-.05.54-.15.07-.04.18-.06.32-.06.54,0,.81.34.81,1.01,0,.29-.09.53-.27.73-.18.2-.41.31-.68.31-.23,0-.58-.05-1.04-.14-.47-.09-.81-.14-1.04-.14-.37,0-.79.04-1.25.12-.56.1-.93.15-1.12.15-.57,0-.86-.35-.86-1.04s.25-1.01.74-1.01c.12,0,.28.03.51.09.22.06.39.09.51.09.35,0,.56-.65.63-1.95v-7.82c-.07-1.28-.29-1.92-.65-1.92-.12,0-.28.04-.49.11-.21.07-.36.11-.47.11-.52,0-.78-.33-.78-.98,0-.69.31-1.04.94-1.04.27,0,.46.01.58.03.46.08.75.12.88.12.11,0,.29-.03.53-.08.24-.05.41-.08.53-.08.41,0,.62.4.62,1.19,0,.08,0,.2-.02.37-.01.16-.02.29-.02.37-.01.16-.02.79-.03,1.89-.01.83-.02,1.69-.02,2.56ZM117.76,10.29c-.33,0-.61-.17-.85-.5-.24-.34-.35-.74-.35-1.21s.12-.87.35-1.19c.24-.33.52-.49.85-.49s.61.16.85.49.35.72.35,1.19-.12.87-.35,1.21c-.24.33-.52.5-.85.5Z"/><path style="fill:var(--accent)" d="M125.42,29.92c-.09.33-.18.67-.27,1.02-.1.36-.19.74-.29,1.15-.16.67-.46,1.01-.9,1.01h-.68c-.44,0-.66-.24-.66-.73,0-.08,0-.16.01-.23,0-.07.03-.15.05-.23l.22-.7.24-.85v.03l5.46-19.51.13-.46.59-2.26v.03c.04-.2.09-.4.14-.58.05-.18.1-.38.14-.58.15-.59.46-.89.94-.89h.63c.42,0,.63.24.63.73,0,.16-.07.48-.22.95l-.17.67v-.03l-6.01,21.46Z"/><path style="fill:var(--text)" d="M138.5,11.36c1.47,0,2.57.78,3.29,2.35v-3.08c0-.81-.02-1.31-.04-1.5-.07-.63-.28-.95-.62-.95-.12,0-.29.03-.5.09-.22.06-.38.09-.5.09-.55,0-.82-.33-.82-.98s.37-1.01,1.11-1.01c.12,0,.33.02.65.06.47.06.72.09.73.09.13,0,.33-.03.58-.08.25-.05.44-.08.58-.08.42,0,.62.41.62,1.22v.34c-.01.06-.03.6-.04,1.62,0,.12-.02.91-.07,2.35-.03,1.02-.04,1.79-.04,2.32v8.1c.02,1.35.06,2.18.14,2.51.08.33.26.49.54.49.2,0,.35-.02.45-.06.24-.04.41-.06.5-.06.56,0,.84.34.84,1.01s-.33,1.04-1,1.04c-.15,0-.37-.03-.68-.08-.3-.05-.53-.08-.68-.08-.04,0-.22.02-.51.06-.18.06-.33.09-.47.09-.4,0-.6-.37-.6-1.1v-.67c-.78,1.45-1.92,2.17-3.42,2.17s-2.72-.75-3.64-2.26c-.92-1.51-1.38-3.48-1.38-5.92s.45-4.43,1.36-5.91c.9-1.48,2.11-2.21,3.63-2.21ZM141.71,22.14c.06-.67.09-1.54.09-2.59,0-1.36-.04-2.29-.11-2.78-.13-1.02-.46-1.81-.96-2.38-.6-.67-1.28-1.01-2.06-1.01-1.05,0-1.86.54-2.45,1.62-.59,1.08-.88,2.55-.88,4.43s.31,3.46.92,4.56c.61,1.11,1.45,1.66,2.51,1.66.81,0,1.48-.32,2.02-.96.54-.64.85-1.49.94-2.55Z"/><path style="fill:var(--text)" d="M159.29,18.17c0,.77-.04,1.25-.11,1.42-.08.17-.29.26-.66.26h-7.2c-.2,0-.32.04-.38.11-.06.07-.09.19-.09.35,0,1.53.34,2.8,1.02,3.82.68,1.02,1.52,1.53,2.54,1.53.66,0,1.27-.24,1.82-.73.55-.49.91-1.11,1.08-1.86l.2-.88c.11-.49.35-.73.75-.73.56,0,.84.39.84,1.16,0,1.32-.5,2.5-1.49,3.53-1,1.03-2.13,1.54-3.4,1.54-1.58,0-2.85-.72-3.78-2.15-.94-1.43-1.4-3.36-1.4-5.78s.5-4.5,1.49-6.04c1-1.55,2.29-2.32,3.89-2.32,1.42,0,2.59.64,3.51,1.92.92,1.28,1.38,2.91,1.38,4.88ZM151.07,17.38c0,.29.17.43.5.43h5.41c.32,0,.48-.14.48-.43,0-1.08-.3-2.01-.91-2.81-.6-.79-1.31-1.19-2.13-1.19s-1.62.41-2.31,1.24-1.04,1.75-1.04,2.76Z"/><path style="fill:var(--text)" d="M165.58,24.08l3.2-4.88-3.2-5.03c-.22-.33-.48-.49-.78-.49-.12,0-.22.01-.28.04l-.39.14c-.06.02-.17.04-.32.04-.51,0-.76-.33-.76-.98,0-.69.31-1.04.94-1.04h.07s.4.03,1.15.09c.38.08.71.12.97.12s.64-.04,1.13-.11c.49-.07.86-.11,1.11-.11.63,0,.94.35.94,1.04,0,.65-.29.98-.88.98-.12,0-.24-.02-.35-.07l-.35-.14h-.14c-.06,0-.09.02-.09.06.03.12.1.27.21.43l2.1,3.41,2.19-3.41c.14-.21.21-.35.21-.43-.02-.04-.05-.06-.11-.06-.08,0-.2.04-.38.11-.17.07-.31.11-.4.11-.55,0-.82-.34-.82-1.02s.32-.99.97-.99c-.03,0,.38.05,1.22.15.34.04.7.06,1.08.06s.79-.04,1.22-.11.74-.11.92-.11c.68,0,1.01.34,1.01,1.02s-.26.99-.79.99c-.12,0-.3-.04-.53-.11-.23-.07-.41-.11-.53-.11-.37,0-.88.49-1.53,1.47l-2.68,4.04,3.59,5.63c.21.35.48.52.78.52.09,0,.23-.02.43-.06s.33-.06.43-.06c.55,0,.83.33.83.98,0,.71-.32,1.07-.97,1.07h-.18l-.9-.15c-.25-.04-.61-.06-1.11-.06-.42,0-.83.03-1.24.09l-.83.12h-.25c-.72,0-1.08-.33-1.08-.98,0-.71.28-1.07.85-1.07.2,0,.48.04.85.12.03.02.08.03.16.03.15,0,.23-.08.23-.24,0-.06-.02-.12-.07-.18l-.07-.12-2.56-3.97-2.6,3.97c-.11.16-.16.29-.16.37,0,.1.08.15.23.15.11,0,.27-.02.48-.06.21-.04.38-.06.48-.06.66,0,.99.36.99,1.07,0,.65-.33.98-.99.98h-.32l-.92-.12c-.46-.06-.87-.09-1.22-.09-.28,0-.61.03-.99.09-.52.08-.91.12-1.15.12-.65,0-.97-.35-.97-1.04s.28-1.01.83-1.01c.09,0,.23.02.42.05.18.03.32.05.41.05.29,0,.71-.41,1.24-1.23Z"/></g></svg>
+      </span>
+      <!-- App version: SINGLE SOURCE here; bump on every shipped change
+           (0.5 → 0.51 → 0.52 …). Shown only while the loader is up — it IS
+           the loading line (no separate "Loading…" text). -->
+      <span class="app-version">VERSION 1.50</span>
+    </div>
+
+    <!-- Swap Tab -->
+    <main id="swap-view" class="view">
+      <h1 class="swap-strap">100% onchain. 100% native assets. <span class="strap-accent">Yours.</span></h1>
+      <div class="swap-container">
+        <div class="swap-card">
+          <h2>Swap</h2>
+          <div class="swap-form">
+            <div class="swap-input-group">
+              <label>Sell</label>
+              <div class="swap-input-row">
+                <input type="number" id="swap-from-amount" placeholder="0.0" step="any" min="0" />
+                <select id="swap-from-token">
+                  <option value="ICPUSD">ICPUSD</option>
+                  <option value="BTC" selected>BTC</option>
+                  <option value="ETH">ETH</option>
+                  <option value="SOL">SOL</option>
+                  <option value="ICP">ICP</option>
+                </select>
+              </div>
+              <div class="swap-balance" id="swap-from-balance">Balance: —</div>
+            </div>
+
+            <div class="swap-arrow">
+              <button id="swap-reverse-btn" class="swap-arrow-btn">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 4V16M10 16L6 12M10 16L14 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+            </div>
+
+            <div class="swap-input-group">
+              <label>Buy <span id="swap-preview-loading" style="display:none;font-size:11px;color:var(--text-muted)">estimating…</span></label>
+              <div class="swap-input-row">
+                <!-- type="text", not "number": the field is a disabled, write-only display,
+                     and number inputs silently reject thousands-separated values. -->
+                <input type="text" id="swap-to-amount" placeholder="0.0" disabled />
+                <select id="swap-to-token">
+                  <option value="BTC">BTC</option>
+                  <option value="ETH">ETH</option>
+                  <option value="SOL">SOL</option>
+                  <option value="ICP" selected>ICP</option>
+                  <option value="ICPUSD">ICPUSD</option>
+                </select>
+              </div>
+              <div class="swap-balance" id="swap-to-balance">Balance: —</div>
+              <div class="swap-preview" id="swap-preview" style="display:none">
+                <span class="swap-preview-rate" id="swap-preview-rate"></span>
+                <span class="swap-preview-impact" id="swap-preview-impact"></span>
+              </div>
+            </div>
+
+            <!-- Market orders only for now. Limit mode was removed 2026-07-08
+                 pending the swap-limit design (docs/swap-limit-orders-design.md);
+                 the backend #limitOrder path still exists untouched. -->
+            <div class="swap-options">
+              <div id="market-options" class="swap-mode-options">
+                <label>Max Slippage</label>
+                <div class="slippage-btns">
+                  <button class="slip-btn" data-slip="0.01">1%</button>
+                  <button class="slip-btn active" data-slip="0.05">5%</button>
+                  <button class="slip-btn" data-slip="0.10">10%</button>
+                  <button class="slip-btn" data-slip="0.25">25%</button>
+                </div>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="no-partial-fill" />
+                  No partial fulfillment
+                </label>
+              </div>
+              <p class="min-order-hint">Minimum order: <span id="min-order-value">10</span> ICPUSD
+                — orders spending your entire remaining balance are exempt.
+                <a class="pos-docs-link" href="#docs/swap">How swaps work →</a></p>
+            </div>
+
+            <button id="swap-execute-btn" class="btn btn-primary btn-lg">Sign In</button>
+          </div>
+        </div>
+
+        <!-- Rate history for the pair being swapped, as "1 FROM = X TO".
+             Direct pairs plot the market's own close series (anchored on the
+             non-ICPUSD asset — the familiar "1 BTC = $X"); cross pairs divide
+             the two legs' closes bucket-by-bucket (buckets share wall-clock
+             boundaries across markets). A LINE of closes, not candles: dividing
+             two OHLC series would fabricate highs/lows the ratio never traded
+             at. The backend's zero-volume clock-fill candles keep both legs
+             gapless, so the division is well-defined through quiet stretches;
+             buckets genuinely missing from either leg are skipped. -->
+        <div class="swap-graph-box" id="swap-graph-section" style="display:none">
+          <div class="swap-graph-head">
+            <span class="swap-graph-title" id="swap-graph-title">—</span>
+            <div class="swap-graph-ivs" id="swap-graph-ivs">
+              <button data-ms="900000">15m</button>
+              <button class="active" data-ms="3600000">1H</button>
+              <button data-ms="14400000">4H</button>
+              <button data-ms="86400000">1D</button>
+            </div>
+          </div>
+          <div class="swap-graph-canvas" id="swap-graph-canvas"></div>
+        </div>
+
+        <!-- Underlying market activity for the assets being swapped: order book
+             and recent trades for the source and destination assets, in tabs, so
+             the user sees what's going on beneath the swap (e.g. a thin/expensive
+             market that might stall it). Tab labels show each asset's symbol. -->
+        <div class="swap-market-box" id="swap-market-section" style="display:none">
+          <div class="swap-market-tabs" id="swap-market-tabs">
+            <button class="smt-tab active" data-smt="src-book">Book</button>
+            <button class="smt-tab" data-smt="src-trades">Trades</button>
+            <button class="smt-tab" data-smt="dst-book">Book</button>
+            <button class="smt-tab" data-smt="dst-trades">Trades</button>
+          </div>
+          <div class="swap-market-body" id="swap-market-body"></div>
+          <!-- Order-book aggregation controls — the same price-interval dropdown
+               + Σ cumulative toggle as the Markets book (reuses .orderbook-toolbar
+               / .ob-* classes and the shared logic in main.js). A stable sibling
+               of the body so the 2s poll re-render can't wipe the open menu.
+               Shown only while a Book tab is active. -->
+          <div class="orderbook-toolbar swap-ob-toolbar" id="swap-ob-toolbar" style="display:none">
+            <div class="ob-granularity" id="swap-ob-granularity">
+              <span class="ob-gran-label" id="swap-ob-gran-label">Exact</span>
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2.5 4L5 6.5L7.5 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              <div class="ob-gran-menu" id="swap-ob-gran-menu"></div>
+            </div>
+            <button id="swap-ob-cumulative" class="ob-cumulative-btn active" title="Cumulative depth">Σ</button>
+          </div>
+        </div>
+
+        <!-- Active swap orders -->
+        <div class="swap-orders-card" id="swap-orders-section" style="display:none">
+          <h3>Your Open Swap Orders</h3>
+          <div id="swap-orders-list"></div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Markets Tab -->
+    <main id="markets-view" class="view">
+      <div class="markets-container">
+        <div class="market-detail" id="market-detail" style="display:none">
+          <div class="market-content">
+            <!-- Market header — lives inside the grid so it occupies only the
+                 chart column (desktop), matching Hyperliquid's framing. -->
+            <div class="market-header">
+              <div class="market-selector" id="market-selector">
+                <h2 id="market-title">BTC-ICPUSD</h2>
+                <svg class="market-selector-chevron" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3.5 5.25L7 8.75L10.5 5.25" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <div class="market-dropdown" id="market-dropdown">
+                  <div id="market-dropdown-recent" class="market-dropdown-section" style="display:none">
+                    <div class="market-dropdown-label">Recent</div>
+                    <div id="market-dropdown-recent-list"></div>
+                  </div>
+                  <div class="market-dropdown-section">
+                    <div class="market-dropdown-label">All</div>
+                    <div id="market-dropdown-all-list"></div>
+                  </div>
+                </div>
+              </div>
+              <!-- Mobile-only price/stats dropdown (hidden on desktop): price
+                   stacked over the 24h change; tapping opens a popup with all
+                   the labeled stats shown on the desktop bar. -->
+              <div class="market-stats-mobile" id="market-stats-toggle">
+                <div class="msm-summary">
+                  <span id="market-header-price" class="market-header-price">—</span>
+                  <span id="market-price-change" class="market-price-change">—</span>
+                </div>
+                <svg class="market-selector-chevron" width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M3.5 5.25L7 8.75L10.5 5.25" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <div class="market-stats-dropdown" id="market-stats-dropdown">
+                  <div class="msd-row"><span class="ms-label">Price</span><span class="ms-value" id="msd-price">—</span></div>
+                  <div class="msd-row"><span class="ms-label">Mark</span><span class="ms-value" id="msd-mark">—</span></div>
+                  <div class="msd-row"><span class="ms-label">24h Change</span><span class="ms-value" id="msd-change">—</span></div>
+                  <div class="msd-row"><span class="ms-label">24h Volume</span><span class="ms-value" id="msd-volume">—</span></div>
+                  <div class="msd-row"><span class="ms-label">24h High</span><span class="ms-value" id="msd-high">—</span></div>
+                  <div class="msd-row"><span class="ms-label">24h Low</span><span class="ms-value" id="msd-low">—</span></div>
+                  <div class="msd-row"><span class="ms-label">Total Depth</span><span class="ms-value" id="msd-depth">—</span></div>
+                  <div class="msd-row"><span class="ms-label">Longs</span><span class="ms-value" id="msd-longs">—</span></div>
+                  <div class="msd-row"><span class="ms-label">Shorts</span><span class="ms-value" id="msd-shorts">—</span></div>
+                  <div class="msd-row"><span class="ms-label">Long Health</span><span class="ms-value" id="msd-lhealth">—</span></div>
+                  <div class="msd-row"><span class="ms-label">Short Health</span><span class="ms-value" id="msd-shealth">—</span></div>
+                  <div class="msd-row"><span class="ms-label">Long Liq</span><span class="ms-value" id="msd-lliq">—</span></div>
+                  <div class="msd-row"><span class="ms-label">Short Liq</span><span class="ms-value" id="msd-sliq">—</span></div>
+                </div>
+              </div>
+              <!-- Desktop-only stacked stat cells (Hyperliquid-style).
+                   Cells that don't fit the header hide FROM THE END, and the
+                   last cell still visible becomes a dropdown listing the
+                   hidden ones (updateMarketHeaderMode). 24h Change is the
+                   floor: cells at or after it can end up as that trigger, so
+                   they carry a chevron (shown only on .market-stat-more) —
+                   any new telemetry cell appended after these needs one too.
+                   The chevron sits INSIDE the label line: labels are narrower
+                   than their values, so becoming the trigger adds no width
+                   and the floor set measures exactly like the plain bar. -->
+              <div class="market-stats">
+                <div class="market-stat">
+                  <span class="ms-label">Price</span>
+                  <span class="ms-value" id="dt-market-price">—</span>
+                </div>
+                <div class="market-stat">
+                  <span class="ms-label">Mark</span>
+                  <span class="ms-value" id="dt-market-mark">—</span>
+                </div>
+                <div class="market-stat">
+                  <span class="ms-label">24h Change<svg class="ms-more-chevron" width="10" height="10" viewBox="0 0 14 14" fill="none"><path d="M3.5 5.25L7 8.75L10.5 5.25" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                  <span class="ms-value" id="dt-market-change">—</span>
+                  <!-- Shared overflow popup; JS re-parents it into whichever
+                       cell is the current trigger and fills in the rows. -->
+                  <div class="market-stats-dropdown" id="market-stats-overflow"></div>
+                </div>
+                <div class="market-stat">
+                  <span class="ms-label">24h Volume<svg class="ms-more-chevron" width="10" height="10" viewBox="0 0 14 14" fill="none"><path d="M3.5 5.25L7 8.75L10.5 5.25" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                  <span class="ms-value" id="dt-market-volume">—</span>
+                </div>
+                <div class="market-stat">
+                  <span class="ms-label">24h High<svg class="ms-more-chevron" width="10" height="10" viewBox="0 0 14 14" fill="none"><path d="M3.5 5.25L7 8.75L10.5 5.25" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                  <span class="ms-value" id="dt-market-high">—</span>
+                </div>
+                <div class="market-stat">
+                  <span class="ms-label">24h Low<svg class="ms-more-chevron" width="10" height="10" viewBox="0 0 14 14" fill="none"><path d="M3.5 5.25L7 8.75L10.5 5.25" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                  <span class="ms-value" id="dt-market-low">—</span>
+                </div>
+                <div class="market-stat">
+                  <span class="ms-label">Total Depth<svg class="ms-more-chevron" width="10" height="10" viewBox="0 0 14 14" fill="none"><path d="M3.5 5.25L7 8.75L10.5 5.25" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                  <span class="ms-value" id="dt-market-depth">—</span>
+                </div>
+                <div class="market-stat">
+                  <span class="ms-label">Longs<svg class="ms-more-chevron" width="10" height="10" viewBox="0 0 14 14" fill="none"><path d="M3.5 5.25L7 8.75L10.5 5.25" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                  <span class="ms-value" id="dt-market-longs">—</span>
+                </div>
+                <div class="market-stat">
+                  <span class="ms-label">Shorts<svg class="ms-more-chevron" width="10" height="10" viewBox="0 0 14 14" fill="none"><path d="M3.5 5.25L7 8.75L10.5 5.25" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                  <span class="ms-value" id="dt-market-shorts">—</span>
+                </div>
+                <div class="market-stat">
+                  <span class="ms-label">Long Health<svg class="ms-more-chevron" width="10" height="10" viewBox="0 0 14 14" fill="none"><path d="M3.5 5.25L7 8.75L10.5 5.25" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                  <span class="ms-value" id="dt-market-lhealth">—</span>
+                </div>
+                <div class="market-stat">
+                  <span class="ms-label">Short Health<svg class="ms-more-chevron" width="10" height="10" viewBox="0 0 14 14" fill="none"><path d="M3.5 5.25L7 8.75L10.5 5.25" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                  <span class="ms-value" id="dt-market-shealth">—</span>
+                </div>
+                <div class="market-stat">
+                  <span class="ms-label">Long Liq<svg class="ms-more-chevron" width="10" height="10" viewBox="0 0 14 14" fill="none"><path d="M3.5 5.25L7 8.75L10.5 5.25" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                  <span class="ms-value" id="dt-market-lliq">—</span>
+                </div>
+                <div class="market-stat">
+                  <span class="ms-label">Short Liq<svg class="ms-more-chevron" width="10" height="10" viewBox="0 0 14 14" fill="none"><path d="M3.5 5.25L7 8.75L10.5 5.25" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                  <span class="ms-value" id="dt-market-sliq">—</span>
+                </div>
+              </div>
+              <div class="market-header-spacer"></div>
+              <button id="chart-btn" class="btn btn-secondary btn-sm" title="Price Chart">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-right:4px"><rect x="1" y="8" width="3" height="6" rx="0.5" fill="currentColor" opacity="0.5"/><rect x="5" y="4" width="3" height="10" rx="0.5" fill="currentColor" opacity="0.7"/><rect x="9" y="6" width="3" height="8" rx="0.5" fill="currentColor" opacity="0.6"/><rect x="13" y="2" width="2" height="12" rx="0.5" fill="currentColor" opacity="0.8"/></svg>Chart
+              </button>
+            </div>
+
+            <!-- Chart cell (primary, widest) -->
+            <div class="chart-cell mini-chart" id="mini-chart"></div>
+
+            <!-- Draggable vertical resizer between chart and Order Book.
+                 Desktop-only; hidden on mobile and when the chart is collapsed. -->
+            <div class="col-resizer" id="col-resizer" role="separator" aria-orientation="vertical" aria-label="Resize order book column" tabindex="-1"><span class="col-grip" aria-hidden="true"></span></div>
+
+            <!-- Order Book / Trades tabbed panel (splits side-by-side via a
+                 container query when the panel is wide enough). The outer
+                 .book-trades-panel is the container (queryable size); the
+                 inner .bt-card carries the card chrome so the query can
+                 strip that chrome off in split mode, leaving each pane to
+                 be its own card instead. -->
+            <div class="book-trades-panel">
+              <div class="bt-card">
+              <div class="bt-tabs">
+                <button class="bt-tab active" data-bt="orderbook">Order Book</button>
+                <button class="bt-tab" data-bt="trades">Trades</button>
+                <span id="orderbook-stale" class="stale-badge" style="display:none">updating…</span>
+                <span id="trades-stale" class="stale-badge" style="display:none">updating…</span>
+              </div>
+              <div class="bt-body">
+              <div class="orderbook-panel" id="orderbook-pane">
+                <!-- Section label shown only when the panel is wide enough to
+                     split into side-by-side Order Book + Trades. -->
+                <div class="bt-section-label">Order Book</div>
+                <div class="orderbook">
+                  <div class="orderbook-header">
+                    <span>Price</span>
+                    <span id="orderbook-qty-label">Quantity</span>
+                    <span id="orderbook-total-label">Value</span>
+                  </div>
+                  <div id="orderbook-asks" class="orderbook-asks"></div>
+                  <div class="orderbook-spread" id="orderbook-spread">—</div>
+                  <div id="orderbook-bids" class="orderbook-bids"></div>
+                  <div class="orderbook-toolbar">
+                    <div class="ob-granularity" id="ob-granularity">
+                      <span class="ob-gran-label" id="ob-gran-label">Exact</span>
+                      <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2.5 4L5 6.5L7.5 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                      <div class="ob-gran-menu" id="ob-gran-menu"></div>
+                    </div>
+                    <button id="ob-cumulative" class="ob-cumulative-btn active" title="Cumulative depth">Σ</button>
+                  </div>
+                </div>
+              </div>
+              <div class="trades-panel" id="trades-pane" style="display:none">
+                <div class="bt-section-label">Trades</div>
+                <div class="trades-header">
+                  <span>Price</span>
+                  <span>Amount</span>
+                  <span>Time</span>
+                </div>
+                <div id="recent-trades" class="trades-list"></div>
+              </div>
+              </div><!-- /.bt-body -->
+              </div><!-- /.bt-card -->
+            </div>
+
+            <!-- Place order -->
+            <div class="order-panel">
+              <h3>Place Order</h3>
+              <div class="order-mode-toggle">
+                <button class="order-mode-btn active" data-mode="spot">Spot</button>
+                <button class="order-mode-btn" data-mode="margin">Margin</button>
+              </div>
+              <div class="order-type-toggle">
+                <button class="order-type-btn active" data-type="limit">Limit</button>
+                <button class="order-type-btn" data-type="market">Market</button>
+              </div>
+              <div class="order-side-toggle">
+                <button class="side-btn buy active" data-side="buy">Buy</button>
+                <button class="side-btn sell" data-side="sell">Sell</button>
+              </div>
+              <!-- Margin-only: which pool backs the position + how much leverage.
+                   Hidden in Spot mode; the rest of the form (price/size/slippage)
+                   is shared. -->
+              <div id="margin-controls" class="margin-controls" style="display:none">
+                <div class="margin-ctl-row">
+                  <div class="margin-col-pool">
+                    <label>Margin pool</label>
+                    <select id="order-pool"></select>
+                  </div>
+                  <div class="margin-col-lev">
+                    <label>Leverage</label>
+                    <select id="order-leverage">
+                      <option value="1">1×</option>
+                      <option value="2" selected>2×</option>
+                      <option value="3">3×</option>
+                      <option value="5">5×</option>
+                      <option value="10">10×</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="order-form">
+                <div id="limit-price-group">
+                  <label>Price (ICPUSD)</label>
+                  <input type="number" id="order-price" placeholder="0.0" step="any" min="0" />
+                </div>
+                <div>
+                  <label id="order-qty-label">Quantity</label>
+                  <input type="number" id="order-quantity" placeholder="0.0" step="any" min="0" />
+                  <div class="order-pct-slider-row">
+                    <input type="range" id="order-pct-slider" min="0" max="100" step="1" value="0" list="order-pct-ticks" aria-label="Order size as percent of available balance" disabled />
+                    <span id="order-pct-readout" class="order-pct-readout">0%</span>
+                    <datalist id="order-pct-ticks">
+                      <option value="0"></option>
+                      <option value="25"></option>
+                      <option value="50"></option>
+                      <option value="75"></option>
+                      <option value="100"></option>
+                    </datalist>
+                  </div>
+                </div>
+                <div class="order-total">
+                  <span id="order-total-label">Bid: </span><span id="order-total-value">0.00 ICPUSD</span>
+                </div>
+                <!-- Margin-only position preview: notional, leverage, margin pulled,
+                     est. entry/liq price and (market) est. slippage from live depth. -->
+                <div id="margin-preview" class="margin-preview" style="display:none"></div>
+                <div id="market-slippage-group" style="display:none">
+                  <label>Max Slippage</label>
+                  <select id="order-slippage">
+                    <option value="0.01">1%</option>
+                    <option value="0.05" selected>5%</option>
+                    <option value="0.10">10%</option>
+                    <option value="0.25">25%</option>
+                  </select>
+                </div>
+                <div id="limit-expiry-group">
+                  <label>Expiry</label>
+                  <select id="order-expiry">
+                    <option value="0" selected>Good 'til cancelled</option>
+                    <option value="60">1 minute</option>
+                    <option value="300">5 minutes</option>
+                    <option value="3600">1 hour</option>
+                    <option value="86400">1 day</option>
+                  </select>
+                </div>
+                <div class="order-bottom">
+                  <div class="order-available" id="order-available"></div>
+                  <button id="place-order-btn" class="btn btn-primary btn-lg" disabled>Sign in to trade</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- The venue-wide liquidation map does NOT get its own slab of
+                 page here — it SHARES the chart cell, selected from the chart's
+                 view dropdown (chart | liquidations | hide). Its mount lives
+                 inside the mini-chart container, built by renderMiniChart. -->
+
+            <!-- Bottom activity panel — full width, tabbed -->
+            <div class="user-orders-mobile" id="user-orders-mobile">
+              <div class="uom-tabs">
+                <button class="uom-tab active" data-uom="open">Open Orders</button>
+                <!-- "Spot" qualifier: this history is spot fills only, while
+                     Open Orders shows spot AND margin (MGN) orders. Margin
+                     lifecycles live under Positions / Positions History. -->
+                <button class="uom-tab" data-uom="history">Spot History</button>
+                <button class="uom-tab" data-uom="positions">Positions</button>
+                <button class="uom-tab" data-uom="poshistory">Positions History</button>
+                <!-- Venue norm (Binance's "Hide Other Pairs" et al.): every tab
+                     shows ALL markets by default so open risk is never hidden;
+                     this one checkbox scopes all four tabs to the selected
+                     market. Persisted locally. -->
+                <label class="uom-scope"><input type="checkbox" id="uom-scope-current"> This market only</label>
+              </div>
+              <div class="uom-content" id="uom-content"></div>
+              <div class="uom-pagination" id="uom-pagination"></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </main>
+
+    <!-- Leaderboard Tab — promoted out of System; the competition is a
+         headline feature, not a system readout. -->
+    <main id="leaderboard-view" class="view">
+      <div class="stats-container">
+          <section class="stats-section">
+            <div class="stats-section-head">
+              <h2>Trading Leaderboard</h2>
+            </div>
+            <div class="lb-play-banner">
+              <b>This is play mode.</b> Everyone here trades free dummy crypto — nobody can lose real
+              money. At the end of each development phase DFINITY awards <b>prizes of ICP tokens</b> to
+              the traders at the top of this board, by rank. MULTI/DEX will have no owner, and be
+              autonomously operated by the Network Nervous System.
+              <a href="#docs/launch">How to play &amp; win →</a>
+            </div>
+            <div class="lb-info-grid">
+              <div class="lb-info-box">
+                <h3>Play for free</h3>
+                <p>Each player can have exactly one account, and can claim $100k of dummy assets by
+                  signing up using their Google account (anonymized, and used in play mode only to make
+                  it harder for users to create multiple accounts). At the end of the current phase, the
+                  leaderboard will be evaluated, and prizes will be distributed by DFINITY to top
+                  positions at their discretion. The exchange ledger will be used to detect cheating and
+                  exchange manipulation before prizes are distributed, so play fair!</p>
+              </div>
+              <div class="lb-info-box">
+                <h3>Phase II Competition</h3>
+                <p>A new phase has begun, which we have celebrated by advancing the MULTI/DEX, and open
+                  sourcing its code at <a href="https://github.com/dfinity/public-multidex" target="_blank" rel="noopener">https://github.com/dfinity/public-multidex</a>.
+                  After review of the exchange ledger, winning traders from Phase I will soon be
+                  contacted through the exchange, and shown how to collect their prizes. Now Phase II is
+                  in progress, and new prizes will be announced soon. Send issue reports and pull
+                  requests to <a href="mailto:multidex@dfinity.org">multidex@dfinity.org</a> for a
+                  chance to win bounties.</p>
+              </div>
+            </div>
+            <p class="lb-explain">Profit is your account value vs simply holding your deposits. Good
+              entries, exits and maker income score positive; fees, borrow interest and liquidations
+              count against you. Named traders only.</p>
+            <div id="lb-my-rank" class="lb-my-rank" style="display:none"></div>
+            <div class="lb-table-wrap">
+              <table class="lb-table">
+                <thead>
+                  <tr>
+                    <th class="lb-rank">#</th>
+                    <th>Trader</th>
+                    <th class="lb-num">Trading Profit</th>
+                    <th class="lb-num">Return</th>
+                    <th class="lb-num">Equity</th>
+                    <th class="lb-num">Level</th>
+                    <th class="lb-num">Badges</th>
+                  </tr>
+                </thead>
+                <tbody id="lb-body">
+                  <tr><td colspan="7" class="empty-state">No ranked traders yet</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="lb-updated" id="lb-updated"></div>
+            <p class="lb-explain"><a href="#phase1">Provisional Phase I Leaders →</a>
+              The frozen Phase I standings, and how ledger analysis decides the winners.</p>
+          </section>
+      </div>
+    </main>
+
+    <!-- Provisional Phase I leaders — static snapshot, survives the phase reset -->
+    <main id="phase1-view" class="view">
+      <div class="stats-container">
+          <section class="stats-section">
+            <div class="stats-section-head">
+              <h2>Provisional Phase I Leaders</h2>
+            </div>
+            <div class="lb-play-banner">
+              <b>These standings are provisional.</b> Final Phase I winners are decided only after a
+              full review of the exchange ledger: every fill on this venue is permanently archived
+              together with the account that made it, and that record is analyzed when the phase closes. Accounts
+              found wash trading, colluding across multiple accounts, or otherwise manipulating the
+              exchange will be disqualified and their places passed down the table. Prizes are then
+              distributed by DFINITY at its discretion. Winning traders will be contacted through the
+              exchange itself — keep signing in with your account.
+              <a href="#leaderboard">Live leaderboard →</a>
+            </div>
+            <p class="lb-explain" id="phase1-asof">Loading standings…</p>
+            <div class="lb-table-wrap">
+              <table class="lb-table">
+                <thead>
+                  <tr>
+                    <th class="lb-rank">#</th>
+                    <th>Trader</th>
+                    <th class="lb-num">Trading Profit</th>
+                    <th class="lb-num">Return</th>
+                    <th class="lb-num">Level</th>
+                    <th class="lb-num">Badges</th>
+                  </tr>
+                </thead>
+                <tbody id="phase1-body">
+                  <tr><td colspan="6" class="empty-state">Loading…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+      </div>
+    </main>
+
+    <!-- Stats Tab -->
+    <main id="stats-view" class="view">
+      <div class="stats-container">
+        <!-- Sub-tabs: Overview vs AMM P&L. The page got busy enough
+             with KPIs / market cards / pool detail / oracle / depth that
+             pushing P&L charts onto a second tab keeps each view
+             scannable without scrolling forever. -->
+        <nav class="stats-subtabs">
+          <button class="stats-subtab active" data-stats-tab="overview">Overview</button>
+          <button class="stats-subtab" data-stats-tab="issues">Issues</button>
+          <button class="stats-subtab" data-stats-tab="pnl">AMM</button>
+          <button class="stats-subtab" data-stats-tab="insurance">Insurance Fund</button>
+          <button class="stats-subtab" data-stats-tab="treasury">Treasury</button>
+          <button class="stats-subtab" data-stats-tab="canister">Canisters</button>
+          <button class="stats-subtab" data-stats-tab="events">Events</button>
+        </nav>
+
+        <!-- Leaderboard: trading profit vs HODL (precomputed on-chain snapshot,
+             getLeaderboard). Profit = net equity − value of the net deposited
+             basket at CURRENT prices, so a pure holder scores 0 and the board
+             isolates trading skill from market beta. -->
+
+        <div id="stats-overview-pane" class="stats-tab-content active">
+        <!-- Top KPI strip: exchange-wide totals. -->
+        <section class="stats-kpi-row" id="stats-kpis">
+          <div class="kpi-tile">
+            <div class="kpi-label">Total Value Locked</div>
+            <div class="kpi-value" id="kpi-tvl">—</div>
+            <div class="kpi-sub" id="kpi-tvl-sub"></div>
+          </div>
+          <div class="kpi-tile">
+            <div class="kpi-label">24h Volume</div>
+            <div class="kpi-value" id="kpi-24vol">—</div>
+            <div class="kpi-sub">across all markets</div>
+          </div>
+          <div class="kpi-tile">
+            <div class="kpi-label">Oracle Refreshes</div>
+            <div class="kpi-value" id="kpi-refresh">—</div>
+            <div class="kpi-sub" id="kpi-refresh-sub"></div>
+          </div>
+          <div class="kpi-tile">
+            <div class="kpi-label">Active AMM Pools</div>
+            <div class="kpi-value" id="kpi-pools">—</div>
+            <div class="kpi-sub">of <span id="kpi-pools-total">—</span> markets</div>
+          </div>
+          <div class="kpi-tile">
+            <div class="kpi-label">Treasury</div>
+            <div class="kpi-value" id="kpi-treasury">—</div>
+            <div class="kpi-sub" id="kpi-treasury-sub"></div>
+          </div>
+        </section>
+
+        <!-- Per-market snapshot cards. -->
+        <section class="stats-section">
+          <div class="stats-section-head">
+            <h2>Markets</h2>
+            <span class="stats-section-sub">Last price, 24h change, and oracle drift per market</span>
+          </div>
+          <div class="stats-market-grid" id="stats-market-grid">
+            <div class="stats-empty">Loading…</div>
+          </div>
+        </section>
+
+        <!-- (AMM pool detail moved to the AMM sub-tab.) -->
+
+        <!-- Oracle feed health: sources, stddev, freshness. -->
+        <section class="stats-section">
+          <div class="stats-section-head">
+            <h2>Oracle Feed</h2>
+            <span class="stats-section-sub">Multi-source price aggregation status · <a class="pos-docs-link" href="#docs/oracle">How prices are made →</a></span>
+          </div>
+          <div class="stats-oracle" id="stats-oracle">
+            <div class="stats-empty">Loading…</div>
+          </div>
+        </section>
+
+        <!-- Market depth: cumulative bid/ask within tight price bands. -->
+        <section class="stats-section">
+          <div class="stats-section-head">
+            <h2>Order Book Depth</h2>
+            <span class="stats-section-sub">Cumulative liquidity within price bands</span>
+          </div>
+          <div class="stats-depth-grid" id="stats-depth-grid">
+            <div class="stats-empty">Loading…</div>
+          </div>
+        </section>
+        </div><!-- /#stats-overview-pane -->
+
+        <div id="stats-issues-pane" class="stats-tab-content">
+          <!-- Two kinds of card share this list:
+               · AUTO-DETECTED — injected into #issues-auto by renderStatsIssues()
+                 (main.js) from live canister state: fuel, memory, heartbeat,
+                 oracle staleness, archive-chain health, insurance shortfall,
+                 history gaps, error events. Refreshes with the Status page.
+               · OPERATOR-AUTHORED — hand-edited HTML cards in #issues-curated,
+                 one per notice: known issues, what to do meanwhile, what's
+                 coming. Remove a card when resolved.
+               The all-clear card below shows itself only when BOTH are empty —
+               no need to remove it when adding a notice. -->
+          <section class="stats-section">
+            <div class="stats-section-head">
+              <h2>Issues</h2>
+              <span class="stats-section-sub">Live-detected problems &amp; operator notices about the exchange</span>
+            </div>
+            <div class="status-alerts">
+              <div id="issues-auto" style="display:contents"><!-- auto-detected cards (renderStatsIssues) --></div>
+              <div id="issues-curated" style="display:contents">
+                <!-- operator-authored notice cards go here -->
+              </div>
+              <div class="status-alert status-ok" id="issues-allclear">
+                <div class="status-alert-head">
+                  <span class="status-alert-dot"></span>
+                  <span class="status-alert-title">All clear</span>
+                </div>
+                <p>Nothing detected and nothing reported. Live checks watch fuel, memory, the
+                heartbeat, price freshness, the AMM, the history archive chain, and the insurance
+                fund; when one trips — or something is known to be wrong — a notice appears here
+                with what to do meanwhile.</p>
+              </div>
+            </div>
+          </section>
+        </div><!-- /#stats-issues-pane -->
+
+        <div id="stats-pnl-pane" class="stats-tab-content">
+          <a class="stats-cta" href="#account/earn">Deposit into the AMM and earn <span class="stats-cta-arrow">→</span></a>
+          <!-- AMM pool detail: inventory, LP economics, quoting health.
+               Moved here from the Overview tab — the AMM tab is the
+               natural place to look at pool internals. -->
+          <section class="stats-section">
+            <div class="stats-section-head">
+              <h2>Pools</h2>
+              <span class="stats-section-sub">Inventory, LP value, quoting activity · <a class="pos-docs-link" href="#docs/liquidity">How the AMM works →</a></span>
+            </div>
+            <div class="stats-pool-list" id="stats-pool-list">
+              <div class="stats-empty">Loading…</div>
+            </div>
+          </section>
+
+          <section class="stats-section">
+            <div class="stats-section-head">
+              <h2>P&amp;L</h2>
+              <span class="stats-section-sub">Value per LP token over time · 1.00 = breakeven (initial deposit value)</span>
+            </div>
+            <div class="stats-pnl-list" id="stats-pnl-list">
+              <div class="stats-empty">Loading…</div>
+            </div>
+          </section>
+
+          <!-- The venue's own arbitrageur (synthetic assets have no external
+               one): imports/exports at the oracle mark and takes orders resting
+               >0.5% off it, so pushing price around pays the venue. Live stats
+               from getArbStats; its actions land in the public event log. -->
+          <section class="stats-section">
+            <div class="stats-section-head">
+              <h2>Arbitrageur</h2>
+              <span class="stats-section-sub">Pins venue prices to the oracle mark · <a class="pos-docs-link" href="#docs/arbitrage">How it works →</a></span>
+            </div>
+            <section class="stats-kpi-row" id="stats-arb-kpis">
+              <div class="kpi-tile">
+                <div class="kpi-label">Working Capital</div>
+                <div class="kpi-value" id="kpi-arb-capital">—</div>
+                <div class="kpi-sub" id="kpi-arb-wired">not wired</div>
+              </div>
+              <div class="kpi-tile">
+                <div class="kpi-label">Imported (lifetime)</div>
+                <div class="kpi-value" id="kpi-arb-import">—</div>
+                <div class="kpi-sub">bought at the mark &amp; sold into rich venue bids</div>
+              </div>
+              <div class="kpi-tile">
+                <div class="kpi-label">Exported (lifetime)</div>
+                <div class="kpi-value" id="kpi-arb-export">—</div>
+                <div class="kpi-sub">bought from cheap venue asks &amp; sold at the mark</div>
+              </div>
+              <div class="kpi-tile">
+                <div class="kpi-label">Hourly Budget Used</div>
+                <div class="kpi-value" id="kpi-arb-hour">—</div>
+                <div class="kpi-sub" id="kpi-arb-caps">per-call and hourly caps bound a wrong mark</div>
+              </div>
+            </section>
+            <div class="stats-insurance-explainer">
+              <p>Because these are <strong>synthetic assets</strong>, no outside arbitrageur exists to pull
+                venue prices back to the market consensus. The protocol runs its own: it may exchange
+                assets with the “external world” at the <a href="#docs/oracle">oracle mark</a> (paying a
+                haircut), and trades the venue through the same staged, fee-paying path as everyone else —
+                it can never trade with the AMM and only ever takes orders priced away from the mark.
+                <strong>Its profit comes from whoever pushed the price off-mark.</strong> Every import and
+                export is written to the <a data-stats-goto="events" href="#">public event log</a>.</p>
+            </div>
+          </section>
+        </div><!-- /#stats-pnl-pane -->
+
+        <div id="stats-insurance-pane" class="stats-tab-content">
+          <a class="stats-cta" href="#account/earn">Deposit into the Insurance Fund and earn <span class="stats-cta-arrow">→</span></a>
+          <!-- Margin-system risk backstop: the insurance buffer (funded by
+               the 5% liquidation penalty), realised bad debt, and the
+               volume settled peer-to-peer via cross-market netting. -->
+          <section class="stats-kpi-row" id="stats-insurance-kpis">
+            <div class="kpi-tile">
+              <div class="kpi-label">Insurance Buffer</div>
+              <div class="kpi-value" id="kpi-ins-buffer">—</div>
+              <div class="kpi-sub">accrued from 5% liquidation penalties</div>
+            </div>
+            <div class="kpi-tile">
+              <div class="kpi-label">Uncovered Bad Debt</div>
+              <div class="kpi-value" id="kpi-ins-uncovered">—</div>
+              <div class="kpi-sub">realised losses beyond the buffer</div>
+            </div>
+            <div class="kpi-tile">
+              <div class="kpi-label">Netted Liquidations</div>
+              <div class="kpi-value" id="kpi-ins-netted">—</div>
+              <div class="kpi-sub">settled peer-to-peer · zero book impact</div>
+            </div>
+            <div class="kpi-tile">
+              <div class="kpi-label">Pool Share Value</div>
+              <div class="kpi-value" id="kpi-ins-sharevalue">—</div>
+              <!-- Swapped to "+$X earned, awaiting vault cash" when the vault
+                   owes the fund (renderStatsInsurance): share value excludes
+                   pending yield, so it must be said somewhere. -->
+              <div class="kpi-sub" id="kpi-ins-sharevalue-sub">1.00 at genesis · rises with yield, falls on bad debt</div>
+            </div>
+          </section>
+
+          <section class="stats-section">
+            <div class="stats-section-head">
+              <h2>How the backstop works</h2>
+              <span class="stats-section-sub">Insolvency resolution for cross-margin accounts · <a class="pos-docs-link" href="#docs/earn">Stake the backstop →</a></span>
+            </div>
+            <div class="stats-insurance-explainer" id="stats-insurance-explainer">
+              <p>Every liquidation charges a <strong>5% penalty</strong> that accrues to the
+                 insurance buffer. When a position is so far underwater that its collateral
+                 can't cover the debt, the buffer absorbs the shortfall and the position is
+                 closed — anything beyond the buffer is realised as <strong>uncovered bad
+                 debt</strong> (an LP loss). Before either of those, opposing liquidations on
+                 the same asset are <strong>netted</strong> against each other at the oracle
+                 mid, settling peer-to-peer with zero order-book impact.</p>
+            </div>
+          </section>
+        </div><!-- /#stats-insurance-pane -->
+
+        <div id="stats-treasury-pane" class="stats-tab-content">
+          <!-- Protocol treasury: the ICPUSD war chest accrued from trading fees.
+               Its purpose is DOS defense + self-funding fuel (cycles). The fee
+               LADDER shown is read live from getAccessPolicy — rates are keyed
+               to each trader's EARNED level (docs/progressive-incentives-design.md). -->
+          <section class="stats-kpi-row" id="stats-treasury-kpis">
+            <div class="kpi-tile">
+              <div class="kpi-label">Treasury Balance</div>
+              <div class="kpi-value" id="kpi-tr-balance">—</div>
+              <div class="kpi-sub">spendable ICPUSD · falls when the treasury pays out</div>
+            </div>
+            <div class="kpi-tile">
+              <div class="kpi-label">Lifetime Fees</div>
+              <div class="kpi-value" id="kpi-tr-lifetime">—</div>
+              <div class="kpi-sub">the treasury’s half — every fee splits 50/50 with the LP vault</div>
+            </div>
+            <div class="kpi-tile">
+              <div class="kpi-label">LP Vault Share</div>
+              <div class="kpi-value" id="kpi-tr-vaultshare">—</div>
+              <div class="kpi-sub">lifetime fees paid to Earn depositors (the other half)</div>
+            </div>
+            <div class="kpi-tile">
+              <div class="kpi-label">Paid Out</div>
+              <div class="kpi-value" id="kpi-tr-paidout">—</div>
+              <!-- Sub-line is refined by renderStatsTreasury once getCanisterInfo
+                   answers: fuel is attributed ONLY by its explicit counter
+                   (fuelLifetimeCycles), never by this balance delta. -->
+              <div class="kpi-sub" id="kpi-tr-paidout-sub">lifetime − balance · vault restitution &amp; other payouts</div>
+            </div>
+            <div class="kpi-tile">
+              <div class="kpi-label">Fee Range · Taker / Maker</div>
+              <div class="kpi-value" id="kpi-tr-feerate">—</div>
+              <div class="kpi-sub">bps on the ICPUSD leg · falls with the earned level (L0→L4)</div>
+            </div>
+          </section>
+
+          <section class="stats-section">
+            <div class="stats-section-head">
+              <h2>Fee scheme</h2>
+              <span class="stats-section-sub">Progressive — rates fall as earned contribution rises</span>
+            </div>
+            <div class="lb-table-wrap">
+              <table class="lb-table" id="treasury-fee-ladder">
+                <thead>
+                  <tr>
+                    <th>Level</th>
+                    <th>Weighted 30-day volume</th>
+                    <th class="lb-num">Maker</th>
+                    <th class="lb-num">Taker</th>
+                    <th>Access rank</th>
+                  </tr>
+                </thead>
+                <tbody id="treasury-fee-ladder-body">
+                  <tr><td colspan="5" class="empty-state">Loading fee schedule…</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="fee-ladder-note" id="treasury-fee-scale-note"></div>
+            <div class="stats-insurance-explainer">
+              <p>Every fill charges a fee on the <strong>ICPUSD (quote) leg</strong>, taken from
+                <strong>both</strong> parties. The buyer pays
+                <code>tradeCost + buyerFee</code>; the seller receives
+                <code>tradeCost − sellerFee</code>; the combined fee is <strong>split 50/50</strong> —
+                half to the <a href="#docs/earn">AMM vault</a> (the LPs who carry the venue’s risk),
+                half here. Each party's rate is set by their role on the
+                fill — <strong>maker</strong> (resting) or <strong>taker</strong> (incoming), not
+                buy vs sell — at their <strong>earned fee level</strong> at that moment. Levels
+                are earned from rolling 30-day weighted volume (maker fills count double; L4 also
+                needs two-sided quote uptime) and decay when contribution stops — your own level
+                is on the <a href="#account/status">Fee Level</a> tab, and the full scheme is in the
+                <a class="pos-docs-link" href="#docs/fees">Docs</a>. Fees floor-round and the seller's credit is net by
+                subtraction, so conservation is exact: no value is created or destroyed, the fee
+                is simply redirected.</p>
+              <p>The maker rate floors at <strong>0 bps — never negative</strong>: a rebate would
+                let a wash pair be paid by the venue, while at zero the cheapest self-generated
+                volume still pays the full taker leg to the treasury. The protocol's own liquidity
+                is <strong>exempt</strong> — the AMM, the insurance fund, and the treasury itself
+                never pay a fee (charging them would be circular and would break the ledger's
+                solvency invariant) — while margin pools pay like any user, crediting their
+                owner's scorecard.</p>
+            </div>
+          </section>
+
+          <section class="stats-section">
+            <div class="stats-section-head">
+              <h2>What the treasury is for</h2>
+              <span class="stats-section-sub">Self-funding fuel + spam resistance · <a class="pos-docs-link" href="#docs/fees">Fees &amp; the treasury →</a></span>
+            </div>
+            <div class="stats-insurance-explainer">
+              <p><strong>DOS defense.</strong> A canister pays for its own execution (reverse
+                gas), so cheap, high-volume spam would otherwise drain fuel for free. A per-trade
+                fee makes sustained order flow <em>cost</em> something, pricing out the spammer
+                while ordinary trading is barely touched. A complementary
+                <strong>self-trade guard</strong> stops a user filling their own resting order —
+                a wash trade that pollutes volume and is a free self-matching DOS vector.</p>
+              <p><strong>Self-funding fuel.</strong> The accrued ICPUSD is the protocol's war
+                chest, and the loop that turns it into compute is live: treasury ICPUSD is
+                swapped → ICP on the internal ICP-ICPUSD market (the treasury is exempt, so the
+                swap is not re-fee'd), then ICP → cycles via the ICP ledger + Cycles Minting
+                Canister. An <strong>auto-fuel</strong> watchdog runs the whole loop unattended
+                whenever the canister's spendable cycle headroom runs low — the exchange refuels
+                itself before it can freeze (status on Status → Canisters).</p>
+              <div class="tr-principal-row">
+                <span class="tr-principal-label">Treasury address</span>
+                <code class="tr-principal-val" id="tr-principal">—</code>
+              </div>
+            </div>
+          </section>
+        </div><!-- /#stats-treasury-pane -->
+
+        <div id="stats-canister-pane" class="stats-tab-content">
+          <!-- Two canisters: the Exchange (DEX) running trading, and the History
+               Archive sidecar. Each pays for its own compute + storage out of a
+               cycle balance; if that runs dry — or it hits its wasm-memory limit
+               — it freezes (updates rejected, heartbeat stalls) but stays
+               queryable. Anyone can refuel by sending cycles to the canister id.
+               Tiles read green (healthy) / amber (watch) / red (critical). -->
+          <section class="stats-section">
+            <div class="stats-section-head">
+              <h2>Exchange Canister</h2>
+              <span class="stats-section-sub">The Internet Computer canister running MULTI/DEX trading · <a class="pos-docs-link" href="#docs/platform">Why this is trustless →</a></span>
+            </div>
+            <section class="stats-kpi-row" id="stats-canister-kpis">
+              <div class="kpi-tile">
+                <div class="kpi-label">Compute Fuel (cycles)</div>
+                <div class="kpi-value" id="kpi-can-cycles">—</div>
+                <div class="kpi-sub" id="kpi-can-cycles-sub">remaining balance</div>
+              </div>
+              <div class="kpi-tile">
+                <div class="kpi-label">Burn Rate</div>
+                <div class="kpi-value" id="kpi-can-burn">—</div>
+                <div class="kpi-sub" id="kpi-can-burn-sub">storage + compute per day</div>
+              </div>
+              <div class="kpi-tile">
+                <div class="kpi-label">Time to Freeze</div>
+                <div class="kpi-value" id="kpi-can-ttf">—</div>
+                <div class="kpi-sub" id="kpi-can-ttf-sub">at current burn rate</div>
+              </div>
+              <div class="kpi-tile">
+                <div class="kpi-label">Memory</div>
+                <div class="kpi-value" id="kpi-can-memory">—</div>
+                <div class="kpi-sub" id="kpi-can-memory-sub">used · max · breakdown</div>
+              </div>
+              <div class="kpi-tile">
+                <div class="kpi-label">Heap</div>
+                <div class="kpi-value" id="kpi-can-heap">—</div>
+                <div class="kpi-sub" id="kpi-can-heap-sub">% of allocated memory</div>
+              </div>
+              <div class="kpi-tile">
+                <div class="kpi-label">Status</div>
+                <div class="kpi-value" id="kpi-can-status">—</div>
+                <div class="kpi-sub" id="kpi-can-status-sub">heartbeat liveness</div>
+              </div>
+              <div class="kpi-tile">
+                <div class="kpi-label">Last Heartbeat</div>
+                <div class="kpi-value" id="kpi-can-heartbeat">—</div>
+                <div class="kpi-sub">every round when alive</div>
+              </div>
+              <div class="kpi-tile">
+                <div class="kpi-label">Stored State</div>
+                <div class="kpi-value" id="kpi-can-storage">—</div>
+                <div class="kpi-sub" id="kpi-can-storage-sub">objects retained on the heap</div>
+              </div>
+            </section>
+            <div class="canister-id-card">
+              <div class="canister-id-label">DEX Canister ID</div>
+              <div class="canister-id-row">
+                <code id="canister-id-value" class="canister-id-value">—</code>
+                <button id="canister-id-copy" class="btn btn-secondary canister-id-copy">Copy</button>
+              </div>
+              <div class="canister-id-hint">
+                Anyone can keep the exchange running, or restart the exchange when it's out of fuel,
+                by sending cycles to this canister.
+              </div>
+            </div>
+          </section>
+
+          <!-- History archive sidecar — hidden until the sidecar is spawned.
+               Populated by renderArchiveStats() from the archive's stats(). -->
+          <section class="stats-section" id="stats-archive-section" style="display:none">
+            <div class="stats-section-head">
+              <h2>History Archive</h2>
+              <span class="stats-section-sub">Sidecar canister holding permanent user history (tax records) · <a class="pos-docs-link" href="#docs/data">How history is kept →</a></span>
+            </div>
+            <section class="stats-kpi-row" id="stats-archive-kpis">
+              <div class="kpi-tile">
+                <div class="kpi-label">Compute Fuel (cycles)</div>
+                <div class="kpi-value" id="kpi-arch-cycles">—</div>
+                <div class="kpi-sub" id="kpi-arch-cycles-sub">remaining balance</div>
+              </div>
+              <div class="kpi-tile">
+                <div class="kpi-label">Memory</div>
+                <div class="kpi-value" id="kpi-arch-memory">—</div>
+                <div class="kpi-sub" id="kpi-arch-memory-sub">used · max · breakdown</div>
+              </div>
+              <div class="kpi-tile">
+                <div class="kpi-label">Heap</div>
+                <div class="kpi-value" id="kpi-arch-heap">—</div>
+                <div class="kpi-sub" id="kpi-arch-heap-sub">% of allocated memory</div>
+              </div>
+              <div class="kpi-tile">
+                <div class="kpi-label">Archived</div>
+                <div class="kpi-value" id="kpi-arch-events">—</div>
+                <div class="kpi-sub" id="kpi-arch-events-sub">durable events · users</div>
+              </div>
+              <div class="kpi-tile">
+                <div class="kpi-label">Queued in DEX</div>
+                <div class="kpi-value" id="kpi-arch-buffered">—</div>
+                <div class="kpi-sub" id="kpi-arch-buffered-sub">buffered, awaiting ship</div>
+              </div>
+            </section>
+            <div class="canister-id-card">
+              <div class="canister-id-label">Archive Canister ID</div>
+              <div class="canister-id-row">
+                <code id="archive-id-value" class="canister-id-value">—</code>
+                <button id="archive-id-copy" class="btn btn-secondary canister-id-copy">Copy</button>
+              </div>
+              <div class="canister-id-hint">
+                Anyone can keep the archive running, or restart the archive when it's out of fuel,
+                by sending cycles to this canister. If it does run dry, history is buffered in the
+                DEX (see “Queued in DEX”) and re-shipped once refunded — nothing is lost.
+              </div>
+            </div>
+            <!-- Archive chain — EVERY canister carrying the ledger: sealed
+                 segments (immutable, oldest first), the active tip, and the
+                 pre-spawned successor. Any one of them freezing breaks
+                 verification for its seq range, so each row carries the DEX
+                 fuel pass's last observation (renderArchiveChain / getArchives). -->
+            <div class="stats-section-head archive-chain-head">
+              <h2>Archive Chain</h2>
+              <span class="stats-section-sub">All canisters carrying the ledger — together they hold the full event history and allow verification</span>
+            </div>
+            <div class="archive-chain-wrap">
+              <table class="archive-chain">
+                <thead><tr><th>Role</th><th>Canister</th><th>Seq range</th><th>Fuel</th><th>State</th></tr></thead>
+                <tbody id="archive-chain-body"><tr><td colspan="5" class="stats-empty">Loading…</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+        </div><!-- /#stats-canister-pane -->
+
+        <div id="stats-events-pane" class="stats-tab-content">
+          <!-- A rolling log of notable exchange events — oracle health, AMM
+               defensive actions (widening / inventory floor), swaps,
+               liquidations. Helps debug "why did price leave the band?" and
+               lets public users see what the exchange is doing. -->
+          <section class="stats-section">
+            <div class="stats-section-head">
+              <h2>Event Log</h2>
+              <span class="stats-section-sub">Oracle, AMM, swap &amp; liquidation activity · newest first · <a class="pos-docs-link" href="#docs/data">About the event log →</a></span>
+            </div>
+            <div id="stats-events-list" class="events-list">
+              <div class="stats-empty">Loading…</div>
+            </div>
+            <div id="events-pager" class="events-pager" style="display:none">
+              <button id="events-prev" class="btn btn-secondary">‹ Newer</button>
+              <span id="events-page-label" class="events-page-label"></span>
+              <button id="events-next" class="btn btn-secondary">Older ›</button>
+            </div>
+          </section>
+        </div><!-- /#stats-events-pane -->
+      </div>
+    </main>
+
+    <!-- Account Tab -->
+    <main id="account-view" class="view">
+      <div class="account-container">
+
+        <!-- Sign-in prompt (shown when not logged in) -->
+        <div id="account-signin-prompt" class="account-card" style="text-align:center;padding:48px 24px">
+          <div style="font-size:32px;margin-bottom:12px">⛰</div>
+          <!-- Copy is swapped by showAccountTab when the Deposit sub-tab is the
+               target: the Launch page's "Get your free dummy crypto" CTA lands
+               here signed-out, and a generic "view your account" would read as
+               a different promise than the one just made. -->
+          <div id="account-signin-title" style="font-size:18px;font-weight:600;margin-bottom:8px">Sign in to view your account</div>
+          <div id="account-signin-sub" style="font-size:14px;color:var(--text-dim);margin-bottom:20px">Your profile, balances and trading history are here.</div>
+          <button id="account-signin-btn" class="btn btn-primary">Sign In</button>
+        </div>
+
+        <!-- Profile card -->
+        <div id="account-profile-card" class="account-card" style="display:none">
+          <div class="profile-row">
+            <div class="profile-avatar" id="profile-avatar-large">?</div>
+            <div class="profile-details">
+              <div class="profile-username" id="profile-username">—</div>
+              <div class="profile-userid" id="profile-userid">ID: —</div>
+              <div class="profile-principal-row">
+                <span class="profile-principal-label">Principal</span>
+                <code class="profile-principal" id="profile-principal">—</code>
+                <button id="profile-principal-copy" class="profile-copy-btn" title="Copy your principal">Copy</button>
+              </div>
+              <div class="profile-meta" id="profile-meta">Member since —</div>
+            </div>
+            <div class="regen-btn-area">
+              <button id="regen-username-btn" class="btn btn-secondary btn-sm">↺ Regenerate name</button>
+              <span class="regen-remaining" id="regen-remaining">5 regenerations remaining</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Account tabs ────────────────────────────────────────────────
+             "All" is the overview: the aggregate account value with its venue
+             breakdown, plus the badge trophy shelf. The rest each group one
+             domain of the account. -->
+        <div class="account-tabs" id="account-tabs" style="display:none">
+          <button class="acct-tab active" data-acct="overview">Overview</button>
+          <button class="acct-tab" data-acct="deposit">Deposit</button>
+          <button class="acct-tab" data-acct="wallet">Wallet</button>
+          <button class="acct-tab" data-acct="spot">Spot</button>
+          <button class="acct-tab" data-acct="positions">Positions</button>
+          <button class="acct-tab" data-acct="earn">Earn</button>
+          <button class="acct-tab" data-acct="archive">Archive</button>
+          <button class="acct-tab" data-acct="status">Fee Level</button>
+          <button class="acct-tab" data-acct="ai">AI usage</button>
+        </div>
+
+        <!-- All: account value + accounting rows (where the value lives), and
+             earned badges. The rows sum to the total — each is one venue
+             capital can sit in, and each links to that venue's tab. -->
+        <div id="acct-pane-overview" class="acct-pane" style="display:none">
+          <p class="acct-intro">Everything you hold on MULTI/DEX, marked to market and net of any
+            financing. Each row is one place your capital can live — together they make up your
+            account value. Click a row to open that part of your account.</p>
+
+        <div id="all-value-card" class="account-card" style="display:none">
+          <div class="account-value-row">
+            <span class="account-value-label">Account value</span>
+            <span class="account-value-amount" id="acct-net-value">—</span>
+            <span class="account-value-note">Wallet + positions + pools + earn</span>
+          </div>
+          <!-- Row titles are real anchors into the venue's tab (#account/<tab>),
+               so middle-click / long-press work like any link. -->
+          <div class="balances-list" id="all-venue-rows">
+            <div class="balance-row all-venue-row">
+              <span class="balance-row-token"><a class="all-venue-link" href="#account/wallet">Wallet</a> <span class="all-row-sub">spot balances in custody</span></span>
+              <span class="balance-row-amount" id="all-val-wallet">—</span>
+            </div>
+            <div class="balance-row all-venue-row">
+              <span class="balance-row-token"><a class="all-venue-link" href="#account/positions">Positions</a> <span class="all-row-sub">unrealized P&amp;L on open positions</span></span>
+              <span class="balance-row-amount" id="all-val-positions">—</span>
+            </div>
+            <div class="balance-row all-venue-row">
+              <span class="balance-row-token"><a class="all-venue-link" href="#account/positions">Pools</a> <span class="all-row-sub">collateral in margin pools</span></span>
+              <span class="balance-row-amount" id="all-val-pools">—</span>
+            </div>
+            <div class="balance-row all-venue-row">
+              <span class="balance-row-token"><a class="all-venue-link" href="#account/earn">AMM Vault</a> <span class="all-row-sub">your liquidity-provider stake</span></span>
+              <span class="balance-row-amount" id="all-val-vault">—</span>
+            </div>
+            <div class="balance-row all-venue-row">
+              <span class="balance-row-token"><a class="all-venue-link" href="#account/earn">Insurance Pools</a> <span class="all-row-sub">your staked backstop share</span></span>
+              <span class="balance-row-amount" id="all-val-insurance">—</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Badges: permanent lifetime milestones (recognition, not power).
+             The trophy shelf shows what's EARNED; the next-badge nudge points
+             at the closest unearned one, and Docs carries the full catalog. -->
+        <div id="badges-card" class="account-card" style="display:none">
+          <div class="account-card-header">
+            <h3>Badges</h3>
+            <span class="card-value"><b id="badges-count">—</b></span>
+          </div>
+          <div id="badge-next" class="badge-next" style="display:none"></div>
+          <div id="badge-shelf" class="badge-shelf"></div>
+          <p class="access-fineprint">Badges record your milestones within the app, and are never lost.
+            <a class="pos-docs-link" href="#docs/badges">Learn about badges →</a></p>
+        </div>
+        </div>
+
+        <!-- Deposit: the play on-ramp (free dummy crypto). Moved here from a
+             top-level nav item — funding is part of your account, and the
+             Launch page sends new users straight to #account/deposit. -->
+        <div id="acct-pane-deposit" class="acct-pane" style="display:none">
+      <div class="deposit-container">
+        <div class="deposit-card">
+          <h2>Deposit &amp; Claim</h2>
+          <p class="deposit-intro">
+            On the live exchange you move assets into your wallet by sending them to your
+            deposit addresses on their native chains: after a short delay the transfer shows
+            up below, and once it reaches finality you click Claim to move it into your
+            exchange wallet — from where you can trade, or withdraw back to native addresses.
+            (Bitcoin can take an hour or more to reach finality.)
+            <strong>This exchange runs in play mode: the addresses below are simulated
+            stand-ins — never send real assets to them. Use the numbered buttons to make
+            play deposits instead.</strong>
+            <a class="pos-docs-link" href="#docs/custody">How deposits &amp; withdrawals work →</a>
+          </p>
+          <div id="deposit-status" class="deposit-status">Sign in to view your deposit addresses.</div>
+          <!-- Play anti-Sybil unlock card (docs/play-anti-sybil-design.md):
+               shown INSTEAD of the on-ramp when the signed-in account has no
+               verified Google-linked identity yet. Rendered by
+               refreshDepositPage; the button runs verifyWithGoogle(). -->
+          <div id="deposit-verify" class="deposit-verify" style="display:none"></div>
+          <!-- One box for the whole play on-ramp: the lifetime allowance strip
+               (backend getPlayDepositAllowance; empty everywhere but #play) and
+               the deposit simulation that EXERCISES it — the asset is marked to
+               market when "Deposit amount" is pressed and refused if, together
+               with prior deposits, it would breach the cap. The wrapper carries
+               the single border; JS shows it when either part is visible. -->
+          <div id="deposit-onramp" class="deposit-onramp" style="display:none">
+            <div id="deposit-allowance" class="deposit-allowance" style="display:none"></div>
+            <div id="deposit-dev" class="deposit-dev" style="display:none">
+              <div class="deposit-dev-label">Simulate depositing into the exchange from anywhere.</div>
+              <div class="deposit-dev-row">
+                <select id="deposit-sim-asset">
+                  <option value="BTC">BTC</option>
+                  <option value="ETH">ETH</option>
+                  <option value="SOL">SOL</option>
+                  <option value="ICP">ICP</option>
+                  <option value="ICPUSD">ICPUSD</option>
+                </select>
+                <input type="number" id="deposit-sim-amount" placeholder="amount" step="any" min="0" />
+                <!-- One batch at a time: JS (updateDepositFlowButtons) enables
+                     exactly the step that's next — "1. Deposit amount" only when
+                     nothing is pending, "2. Simulate finality" only when
+                     something is. The confirm button starts disabled to match
+                     the common (nothing-pending) state before the first refresh. -->
+                <button id="deposit-sim-btn" class="btn btn-sm">1. Deposit amount</button>
+                <button id="deposit-confirm-btn" class="btn btn-sm" disabled>2. Simulate finality</button>
+              </div>
+              <!-- Live value of the entered amount at the current mark — the
+                   same refPrice the allowance charges when "1. Deposit amount"
+                   is pressed. Rendered by updateDepositSimValue. -->
+              <div id="deposit-sim-value" class="deposit-sim-value" style="display:none"></div>
+            </div>
+          </div>
+
+          <button id="deposit-create" class="btn btn-primary btn-lg" style="display:none">Create deposit address</button>
+
+          <div id="deposit-list" class="deposit-list"></div>
+        </div>
+      </div>
+        </div>
+
+        <div id="acct-pane-wallet" class="acct-pane" style="display:none">
+          <p class="acct-intro">Your custody balances — deposits land here, withdrawals leave from here,
+            and spot trades settle here. Wallet funds are never collateral: committing margin to a
+            position pool is an explicit transfer, shown under “To / From Positions”.
+            <a class="pos-docs-link" href="#docs/custody">How custody works →</a></p>
+
+        <div id="account-balances-card" class="account-card" style="display:none">
+          <div class="account-card-header">
+            <h3>Wallet</h3>
+            <span class="card-value">Wallet value <b id="wallet-value">—</b></span>
+          </div>
+          <div class="balances-list" id="account-balances-grid">
+            <div class="empty-state">Loading…</div>
+          </div>
+          <!-- Withdraw only — depositing lives on the Deposit page (bridge claim
+               flow), so the wallet card no longer offers deposit addresses. -->
+          <div class="margin-divider"></div>
+          <div class="wallet-actions pos-actions">
+            <div class="pos-actions-row">
+              <label class="pos-label">Withdraw</label>
+              <select id="wallet-token" class="pos-input">
+                <option value="ICPUSD">ICPUSD</option>
+                <option value="BTC">BTC</option>
+                <option value="ETH">ETH</option>
+                <option value="SOL">SOL</option>
+                <option value="ICP">ICP</option>
+              </select>
+              <input id="wallet-wd-amount" class="pos-input" type="number" min="0" step="any" placeholder="Amount" />
+              <input id="wallet-wd-dest" class="pos-input" placeholder="Destination address" />
+              <button id="wallet-wd-btn" class="btn btn-accent btn-sm" type="button">Withdraw</button>
+            </div>
+            <div id="wallet-msg" class="margin-msg"></div>
+          </div>
+          <!-- Phase 0: cross-market bid-headroom indicator. Populated by
+               refreshBidHeadroom() after balance refresh. Hidden until
+               the user is authenticated. -->
+          <div id="bid-headroom-card" class="bid-headroom-card" style="display:none"></div>
+        </div>
+        <div id="account-deposits-card" class="account-card" style="display:none">
+          <h3>Deposit &amp; Withdrawal History</h3>
+          <div class="history-scroll">
+            <table class="history-table" id="account-deposits-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Token</th>
+                  <th>Amount</th>
+                  <th>Type</th>
+                </tr>
+              </thead>
+              <tbody id="account-deposits-body">
+                <tr><td colspan="4" class="empty-state">No deposits yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div id="pool-transfers-card" class="account-card" style="display:none">
+          <h3>To / From Positions</h3>
+          <div id="pool-transfers-wrap"><div class="empty-state">No margin transfers yet</div></div>
+        </div>
+        </div>
+
+        <!-- Fee Level: the caller's earned economic standing (docs/progressive-
+             incentives-design.md). Fee level + progress, access implications and
+             the quote-uptime scorecard. Everything here is EARNED by algorithm —
+             no operator grants. (Badges live on the All tab: recognition, not
+             economics.) -->
+        <div id="acct-pane-status" class="acct-pane" style="display:none">
+          <p class="acct-intro">Your fee level — earned by algorithm, never granted. Fees fall
+            and settlement priority rises with your rolling 30-day contribution, and decay
+            without it.
+            <a id="status-docs-link" class="pos-docs-link" href="#docs/levels">How fee levels work →</a></p>
+
+        <div id="status-card" class="account-card" style="display:none">
+          <div class="account-card-header">
+            <h3>Fee Level &amp; Access</h3>
+            <span id="status-level-badge" class="tier-badge">—</span>
+          </div>
+          <div id="status-shed-banner" class="access-shed-banner" style="display:none"></div>
+          <div class="access-rows">
+            <div class="access-row">
+              <span class="access-label">Your fees</span>
+              <span id="status-fees-note" class="access-value">—</span>
+            </div>
+            <div class="access-row" id="status-next-row">
+              <span class="access-label">Next level</span>
+              <span class="access-value">
+                <span id="status-next-note">—</span>
+                <span class="access-bar"><span id="status-next-bar" class="access-bar-fill"></span></span>
+              </span>
+            </div>
+            <div class="access-row">
+              <span class="access-label">30-day volume</span>
+              <span id="status-vol-note" class="access-value">—</span>
+            </div>
+            <div class="access-row">
+              <span class="access-label">Quote uptime</span>
+              <span id="status-uptime-note" class="access-value">—</span>
+            </div>
+            <div class="access-row">
+              <span class="access-label">Priority</span>
+              <span id="status-rank-note" class="access-value">—</span>
+            </div>
+            <div class="access-row">
+              <span class="access-label">Staged orders</span>
+              <span id="status-staged-note" class="access-value">—</span>
+            </div>
+            <div class="access-row">
+              <span class="access-label">Minimum order</span>
+              <span id="status-min-note" class="access-value">—</span>
+            </div>
+          </div>
+          <p class="access-fineprint">Levels are recomputed continuously from a rolling ~30-day window —
+            they rise with contribution and decay without it. Maker fills count double. Level bars scale
+            with total exchange volume (<span id="status-scale-note">—</span>), so early participants
+            reach levels sooner. Every level change and badge award is recorded in the public event log.</p>
+        </div>
+        </div>
+
+        <!-- AI usage — how much of the assistant this account has used, what
+             kinds of steps those were, and the abuse-guard state. Rendered by
+             refreshAiUsageTab() from getMyAiUsage(); the allowances and the
+             refusal/suspension policy are enforced by the backend AI proxy. -->
+        <div id="acct-pane-ai" class="acct-pane" style="display:none">
+          <p class="acct-intro">Your use of the MULTI/DEX AI Assistant. The assistant runs on shared
+            infrastructure, so each account has sliding-window allowances. Harmful or jailbreak
+            prompts are refused, and repeated refusals suspend AI access for 24 hours.
+            <a class="pos-docs-link" href="#docs/mcp">Prefer your own AI? Use MCP →</a></p>
+
+          <div id="ai-suspended-banner" class="access-shed-banner" style="display:none"></div>
+
+          <div class="account-card">
+            <div class="account-card-header"><h3>Allowance</h3></div>
+            <div class="access-rows">
+              <div class="access-row">
+                <span class="access-label">Last minute</span>
+                <span class="access-value"><span id="ai-used-minute">—</span>
+                  <span class="access-bar"><span id="ai-bar-minute" class="access-bar-fill"></span></span></span>
+              </div>
+              <div class="access-row">
+                <span class="access-label">Last hour</span>
+                <span class="access-value"><span id="ai-used-hour">—</span>
+                  <span class="access-bar"><span id="ai-bar-hour" class="access-bar-fill"></span></span></span>
+              </div>
+              <div class="access-row">
+                <span class="access-label">Last 24 hours</span>
+                <span class="access-value"><span id="ai-used-day">—</span>
+                  <span class="access-bar"><span id="ai-bar-day" class="access-bar-fill"></span></span></span>
+              </div>
+            </div>
+            <p class="access-fineprint">Each assistant question runs several steps (reads, then an
+              answer), and every step counts once against the allowance. Retries while rate-limited
+              count too.</p>
+          </div>
+
+          <div class="account-card">
+            <div class="account-card-header"><h3>What you've used it for</h3></div>
+            <div class="access-rows">
+              <div class="access-row"><span class="access-label">Answers</span><span class="access-value" id="ai-stat-replies">—</span></div>
+              <div class="access-row"><span class="access-label">Data lookups (analysis)</span><span class="access-value" id="ai-stat-reads">—</span></div>
+              <div class="access-row"><span class="access-label">Trade actions proposed</span><span class="access-value" id="ai-stat-proposed">—</span></div>
+              <div class="access-row"><span class="access-label">Trade actions executed</span><span class="access-value" id="ai-stat-executed">—</span></div>
+              <div class="access-row"><span class="access-label">Refused (policy)</span><span class="access-value" id="ai-stat-refused">—</span></div>
+              <div class="access-row"><span class="access-label">Rate-limit bounces</span><span class="access-value" id="ai-stat-limited">—</span></div>
+              <div class="access-row"><span class="access-label">Total steps</span><span class="access-value" id="ai-stat-steps">—</span></div>
+            </div>
+            <p class="access-fineprint">Classified per step from the assistant protocol: reads are
+              OQL/account/price-history lookups; proposed actions are confirm cards; executed means
+              you pressed Confirm and the action ran.</p>
+          </div>
+        </div>
+
+        <div id="acct-pane-spot" class="acct-pane" style="display:none">
+          <p class="acct-intro">Spot trading activity from your Wallet — open orders on the books,
+            recently closed orders, your fills, and any automatic adjustments applied to your orders.
+            <a class="pos-docs-link" href="#docs/markets">How orders &amp; fills work →</a></p>
+        <div id="account-open-orders-card" class="account-card" style="display:none">
+          <h3>Open Orders</h3>
+          <div class="history-scroll">
+            <table class="history-table" id="account-open-orders-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Market</th>
+                  <th>Type</th>
+                  <th>Side</th>
+                  <th>Price</th>
+                  <th>Qty</th>
+                  <th>Filled</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="account-open-orders-body">
+                <tr><td colspan="8" class="empty-state">No open orders</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div id="account-closed-orders-card" class="account-card" style="display:none">
+          <h3>Recently Closed Orders</h3>
+          <div class="history-scroll">
+            <table class="history-table" id="account-closed-orders-table">
+              <thead>
+                <tr>
+                  <th>Closed</th>
+                  <th>Market</th>
+                  <th>Type</th>
+                  <th>Side</th>
+                  <th>Price</th>
+                  <th>Qty</th>
+                  <th>Filled</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="account-closed-orders-body">
+                <tr><td colspan="8" class="empty-state">No closed orders yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div id="account-trades-card" class="account-card" style="display:none">
+          <h3>Spot Order History</h3>
+          <div class="history-scroll">
+            <table class="history-table" id="account-trades-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Market</th>
+                  <th>Type</th>
+                  <th>Side</th>
+                  <th>Price</th>
+                  <th>Qty</th>
+                  <th>Total (ICPUSD)</th>
+                </tr>
+              </thead>
+              <tbody id="account-trades-body">
+                <tr><td colspan="7" class="empty-state">No trades yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div id="account-adjustments-card" class="account-card" style="display:none">
+          <h3>Auto-Adjustments</h3>
+          <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px">
+            Orders automatically resized or cancelled when your balance changes after a trade.
+          </p>
+          <div class="history-scroll">
+            <table class="history-table" id="account-adj-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Order ID</th>
+                  <th>Market</th>
+                  <th>Side</th>
+                  <th>Old Size</th>
+                  <th>New Size</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="account-adj-body">
+                <tr><td colspan="7" class="empty-state">No adjustments</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        </div>
+
+        <div id="acct-pane-positions" class="acct-pane" style="display:none">
+          <p class="acct-intro">Leveraged longs and shorts, organised by the margin pool that backs them.
+            Each pool is its own liquidation domain — loss in one pool can never touch another pool or
+            your Wallet. Open new positions from the Markets page (Place Order → Margin).
+            <a class="pos-docs-link" href="#docs/margin">How margin works →</a></p>
+        <div id="positions-card" class="account-card" style="display:none">
+          <div class="account-card-header">
+            <h3>Positions and pools</h3>
+            <span class="card-value">Pools value <b id="pools-value">—</b></span>
+            <span id="acct-liq-pill" class="margin-status-pill margin-status-off">No leverage</span>
+          </div>
+          <!-- One block per pool: header chips (value, free margin, debt, uPnL,
+               its own % to liquidation — liquidation is per-pool) + fund/withdraw,
+               with the positions that pool backs nested beneath. Positions are
+               OPENED from the Markets page Place Order box (Margin mode). -->
+          <div id="pos-actions" class="pos-actions">
+            <div id="pools-rows"></div>
+            <div class="pos-actions-row">
+              <button id="pos-newpool-btn" class="btn btn-secondary btn-sm" type="button">+ New pool</button>
+            </div>
+            <div id="pos-newpool-form" class="pos-actions-row" style="display:none">
+              <input id="pos-newpool-name" class="pos-input" placeholder="Pool name (e.g. BTC swing)" maxlength="24" />
+              <select id="pos-newpool-mode" class="pos-input">
+                <option value="cross">Cross-margin (positions share collateral)</option>
+                <option value="isolated">Isolated (one position)</option>
+              </select>
+              <button id="pos-newpool-create" class="btn btn-primary btn-sm" type="button">Create</button>
+            </div>
+            <div id="pos-msg" class="margin-msg"></div>
+            <div id="pool-orders-wrap" class="pool-orders-wrap"></div>
+          </div>
+        </div>
+        <div id="positions-history-card" class="account-card" style="display:none">
+          <div class="account-card-header">
+            <h3>Positions History</h3>
+            <div class="seg-toggle">
+              <button id="ph-mode-fills" class="seg-btn seg-active" type="button">Fills</button>
+              <button id="ph-mode-episodes" class="seg-btn" type="button">Closed positions</button>
+            </div>
+          </div>
+          <div id="positions-history-wrap"><div class="empty-state">No position fills yet</div></div>
+        </div>
+        <div id="pools-history-card" class="account-card" style="display:none">
+          <h3>Pools History</h3>
+          <div id="pools-history-wrap"><div class="empty-state">No pool events yet</div></div>
+        </div>
+        </div>
+
+        <div id="acct-pane-earn" class="acct-pane" style="display:none">
+          <p class="acct-intro">Put capital to work: provide liquidity to the AMM vault that quotes every
+            book (earns the spread), or stake the insurance fund that backstops the margin system
+            (earns liquidation penalties, absorbs bad debt first).
+            <a class="pos-docs-link" href="#docs/earn">How Earn works →</a></p>
+        <div id="earn-vault-card" class="account-card" style="display:none">
+          <div class="account-card-header">
+            <h3>AMM Vault</h3>
+            <span class="card-value">Vault value <b id="earn-vault-cardvalue">—</b></span>
+          </div>
+          <div class="earn-section">
+              <p class="margin-explainer">
+                Deposit any asset into the unified market-making vault. The vault quotes
+                both sides of every book; the spread it earns lifts the value of each
+                LP token, so your share grows with its P&amp;L. The vault targets a fixed
+                basket — deposit an asset it's <strong>under-weight</strong> in for a
+                bonus, <strong>over-weight</strong> in for a fee. Withdraw any time for
+                your pro-rata slice of the basket.
+              </p>
+              <div class="earn-stats">
+                <div class="margin-stat"><div class="margin-stat-label">Your LP</div><div class="margin-stat-value" id="earn-vault-lp">—</div></div>
+                <div class="margin-stat"><div class="margin-stat-label">Value</div><div class="margin-stat-value" id="earn-vault-value">—</div></div>
+                <div class="margin-stat"><div class="margin-stat-label">Pool share</div><div class="margin-stat-value" id="earn-vault-share">—</div></div>
+                <div class="margin-stat"><div class="margin-stat-label">Value / LP</div><div class="margin-stat-value" id="earn-vault-vplp">—</div></div>
+              </div>
+              <!-- Target-weight table: shows what the vault needs + the live
+                   deposit bonus/fee per asset. Populated by renderEarnCard. -->
+              <div id="earn-vault-weights"></div>
+              <!-- What this vault underwrites. The vault is the margin system's
+                   lender AND the senior absorber of uncovered bad debt, so an
+                   LP is exposed to every leveraged position on the venue.
+                   Populated by renderMarginRisk from getMarginRiskSummary. -->
+              <div id="earn-margin-risk" class="margin-risk" style="display:none"></div>
+              <div class="margin-row">
+                <select id="earn-vault-deposit-token" class="margin-token-select">
+                  <option value="ICPUSD">ICPUSD</option>
+                  <option value="BTC">BTC</option>
+                  <option value="ETH">ETH</option>
+                  <option value="SOL">SOL</option>
+                  <option value="ICP">ICP</option>
+                </select>
+                <input id="earn-vault-deposit-input" type="number" min="0" step="any" placeholder="Amount to deposit" class="margin-amount-input" />
+                <button id="earn-vault-deposit-btn" class="btn btn-primary btn-sm">Deposit</button>
+                <input id="earn-vault-withdraw-input" type="number" min="0" step="any" placeholder="LP to withdraw" class="margin-amount-input" />
+                <button id="earn-vault-withdraw-btn" class="btn btn-secondary btn-sm">Withdraw</button>
+              </div>
+            </div>
+        </div>
+        <div id="earn-insurance-card" class="account-card" style="display:none">
+          <div class="account-card-header">
+            <h3>Insurance Fund</h3>
+            <span class="card-value">Stake value <b id="earn-ins-cardvalue">—</b></span>
+          </div>
+          <div class="earn-section">
+              <p class="margin-explainer">
+                Stake ICPUSD as the margin system's junior backstop. You earn the 5%
+                penalty from every liquidation (your share value rises), but your stake
+                absorbs insolvent bad debt before AMM LPs do (it can fall). Higher
+                yield, real downside — this is what keeps the exchange solvent.
+              </p>
+              <div class="earn-stats">
+                <div class="margin-stat"><div class="margin-stat-label">Your shares</div><div class="margin-stat-value" id="earn-ins-shares">—</div></div>
+                <div class="margin-stat"><div class="margin-stat-label">Value</div><div class="margin-stat-value" id="earn-ins-value">—</div></div>
+                <div class="margin-stat"><div class="margin-stat-label">Share value</div><div class="margin-stat-value" id="earn-ins-sharevalue">—</div></div>
+                <div class="margin-stat"><div class="margin-stat-label">Pool size</div><div class="margin-stat-value" id="earn-ins-pool">—</div></div>
+                <!-- Shown only while the vault owes the fund: penalties are
+                     earned in USD but liquidation pays the vault in kind, so a
+                     solvent vault can be briefly cash-poor. Excluded from share
+                     value (which stays cash-backed), hence stated here. -->
+                <div class="margin-stat" id="earn-ins-pending-tile" style="display:none">
+                  <div class="margin-stat-label">Pending yield</div>
+                  <div class="margin-stat-value" id="earn-ins-pending">—</div>
+                </div>
+              </div>
+              <div class="margin-row">
+                <input id="earn-ins-stake-input" type="number" min="0" step="any" placeholder="ICPUSD to stake" class="margin-amount-input" />
+                <button id="earn-ins-stake-btn" class="btn btn-primary btn-sm">Stake</button>
+                <input id="earn-ins-unstake-input" type="number" min="0" step="any" placeholder="Shares to unstake" class="margin-amount-input" />
+                <button id="earn-ins-unstake-btn" class="btn btn-secondary btn-sm">Unstake</button>
+              </div>
+            </div>
+          <div id="earn-msg" class="margin-msg" style="display:none"></div>
+        </div>
+        </div>
+
+        <div id="acct-pane-archive" class="acct-pane" style="display:none">
+          <p class="acct-intro">Your complete permanent history — every fill, deposit, withdrawal, transfer,
+            position close, liquidation and Earn action — spanning this canister and the durable archive
+            sidecar. The freshest entries may still be in transit to the archive; they're shown here too,
+            tagged <b>pending</b> until the sidecar acknowledges them (a second or two).
+            <a class="pos-docs-link" href="#docs/data">How permanent history works →</a></p>
+          <div id="archive-card" class="account-card">
+            <div class="account-card-header">
+              <h3>Archive</h3>
+              <span class="card-value" id="archive-count">—</span>
+            </div>
+            <div class="archive-controls">
+              <input id="arch-search" class="pos-input" type="text" placeholder="Search (market, side, amount, reason…)" />
+              <select id="arch-cat" class="pos-input">
+                <option value="">All types</option>
+                <option value="fill">Fills</option>
+                <option value="deposit">Deposits</option>
+                <option value="withdrawal">Withdrawals</option>
+                <option value="transfer">Pool transfers</option>
+                <option value="position">Position closes</option>
+                <option value="orderClosed">Order closes</option>
+                <option value="liquidation">Liquidations</option>
+                <option value="lp">AMM vault</option>
+                <option value="insurance">Insurance</option>
+                <option value="rejection">Rejections</option>
+              </select>
+              <select id="arch-market" class="pos-input">
+                <option value="">All markets</option>
+                <option value="BTC-ICPUSD">BTC</option>
+                <option value="ETH-ICPUSD">ETH</option>
+                <option value="SOL-ICPUSD">SOL</option>
+                <option value="ICP-ICPUSD">ICP</option>
+              </select>
+              <input id="arch-from" class="pos-input" type="date" title="From date" />
+              <input id="arch-to" class="pos-input" type="date" title="To date" />
+              <button id="arch-csv" class="btn btn-secondary btn-sm" type="button">Export CSV</button>
+              <button id="arch-json" class="btn btn-secondary btn-sm" type="button">Export JSON</button>
+            </div>
+            <div id="archive-list"><div class="empty-state">Loading your history…</div></div>
+            <div class="archive-more-wrap">
+              <button id="archive-more" class="btn btn-secondary btn-sm" type="button" style="display:none">Load older entries</button>
+            </div>
+          </div>
+        </div>
+
+
+        <!-- Wallet: withdrawable custody balances + deposit / withdraw -->
+
+        <!-- Margin Pools: segregated long/short positions (primary margin surface) -->
+
+        <!-- Earn: provide liquidity / stake the backstop -->
+
+        <!-- Open orders across all markets -->
+
+        <!-- Recently closed orders — capped per-user history appended by the
+             backend reaper as it frees closed orders from the hot order map.
+             Executions themselves are in Spot Order History below. -->
+
+        <!-- Trade history -->
+
+        <!-- Auto-adjustments history -->
+
+        <!-- Deposit history -->
+
+      </div>
+    </main>
+
+    <!-- ── Intelli: data/query browser + AI assistant ──────────────── -->
+    <main id="intelli-view" class="view">
+      <div class="intelli-container">
+        <!-- Signed-out gate. The whole AI section is caller-scoped — the
+             assistant proxy requires auth (aiComplete → requireAuth) and every
+             explorer query is bounded by the caller's identity — so signed out
+             there is nothing here to show. Same card as the Account/Earn
+             prompt, shown INSTEAD of the section body (applyIntelliAuthGate). -->
+        <div id="intelli-signin-prompt" class="account-card" style="display:none;text-align:center;padding:48px 24px">
+          <div style="font-size:32px;margin-bottom:12px">⛰</div>
+          <div style="font-size:18px;font-weight:600;margin-bottom:8px">Sign in to use AI</div>
+          <div style="font-size:14px;color:var(--text-dim);margin-bottom:20px">The assistant and the memory explorer answer as <em>you</em> — your positions, your orders, your history. Sign in to use them.</div>
+          <button id="intelli-signin-btn" class="btn btn-primary">Sign In</button>
+        </div>
+        <div class="intelli-head">
+          <p class="intelli-sub">Connect your favorite AI chat to interrogate and <a href="#docs/mcp">instruct MULTI/DEX using MCP</a>, or use the default tools below.</p>
+        </div>
+        <div class="intelli-tabs">
+          <button class="intelli-tab active" data-intelli="assistant">Assistant</button>
+          <button class="intelli-tab" data-intelli="memory">Memory Explorer</button>
+        </div>
+
+        <!-- Data explorer: a generic OQL query browser. -->
+        <div id="intelli-pane-explorer" class="intelli-pane">
+          <p class="intelli-intro">Run queries over the data that the exchange maintains in its persistent memory, just like AI can. Your identity bounds what you can see.
+            <a class="pos-docs-link" href="#docs/data">About your data &amp; the query surface →</a></p>
+          <!-- Schema at a glance (entities/fields/joins) + the no-database story;
+               filled per canister by dxRenderStats (explorer.js). -->
+          <div id="dx-stats" class="dx-stats" style="display:none"></div>
+          <div id="dx-identity" class="dx-identity" style="display:none">
+            <span class="dx-identity-label">You are</span>
+            <span id="dx-identity-name" class="dx-identity-name">—</span>
+            <code id="dx-identity-principal" class="dx-identity-principal">—</code>
+            <button id="dx-identity-copy" class="profile-copy-btn" title="Copy your principal">Copy</button>
+            <button id="dx-filter-me" class="btn btn-secondary btn-sm" title="Filter the current entity to rows you own">Filter to me</button>
+          </div>
+          <div class="dx-controls">
+            <div class="dx-row">
+              <label class="dx-label">Presets</label>
+              <select id="dx-presets" class="dx-select dx-presets"><option value="">— pick a query —</option></select>
+              <span class="dx-hint">Loads &amp; runs a ready-made query: joins, aggregates, text search, your own rows.</span>
+            </div>
+            <div class="dx-row">
+              <label class="dx-label">Canister</label>
+              <select id="dx-canister" class="dx-select">
+                <option value="exchange">Exchange</option>
+                <option value="history">History</option>
+              </select>
+              <span class="dx-hint">Exchange = live state · History = your archived events + all users' deposits/withdrawals</span>
+            </div>
+            <div class="dx-workbench">
+              <aside id="dx-rail" class="dx-rail" aria-label="Entities"></aside>
+              <div class="dx-main">
+                <select id="dx-entity" class="dx-select" style="display:none"></select>
+                <div id="dx-entity-meta" class="dx-entity-meta"></div>
+                <!-- Quick search: icontains over the entity's label field (placeholder
+                     names it); ↵ runs, ✕ (or emptying + ↵) re-browses the entity. -->
+                <div class="dx-search-row">
+                  <input id="dx-search" class="dx-input dx-search" type="text" placeholder="Search…" aria-label="Quick search">
+                  <button id="dx-search-clear" class="dx-f-rm" title="Clear search">✕</button>
+                </div>
+                <div class="dx-row dx-cols-row">
+                  <label class="dx-label">Columns</label>
+                  <div id="dx-cols" class="dx-cols"></div>
+                </div>
+                <div id="dx-edge-panel" class="dx-edge-panel" style="display:none"></div>
+                <div class="dx-filters-head">
+                  <label class="dx-label">Filters</label>
+                  <div id="dx-combinator" class="dx-combinator" style="display:none">
+                    <button type="button" class="dx-comb-btn active" data-comb="and">match ALL</button>
+                    <button type="button" class="dx-comb-btn" data-comb="or">match ANY</button>
+                  </div>
+                  <button id="dx-add-filter" class="btn btn-secondary btn-sm">+ Add filter</button>
+                </div>
+                <div id="dx-filters" class="dx-filters"></div>
+                <div class="dx-row dx-cols-row">
+                  <label class="dx-label">Group by</label>
+                  <div id="dx-groupby" class="dx-cols"></div>
+                </div>
+                <div class="dx-filters-head">
+                  <label class="dx-label">Aggregate <span class="dx-hint">count · sum · avg · min · max</span></label>
+                  <button id="dx-add-agg" class="btn btn-secondary btn-sm">+ Add aggregate</button>
+                </div>
+                <div id="dx-aggs" class="dx-filters"></div>
+                <div class="dx-filters-head">
+                  <label class="dx-label">Sort <span class="dx-hint">(or click a column header)</span></label>
+                  <button id="dx-add-sort" class="btn btn-secondary btn-sm">+ Add sort</button>
+                  <label class="dx-label dx-label-pad">Limit</label>
+                  <input id="dx-limit" class="dx-input" type="number" min="1" max="500" value="25">
+                </div>
+                <div id="dx-sorts" class="dx-filters"></div>
+                <div class="dx-actions">
+                  <button id="dx-run" class="btn btn-accent">Run query</button>
+                  <button id="dx-raw-toggle" class="btn btn-secondary btn-sm">Show query</button>
+                  <button id="dx-share" class="btn btn-secondary btn-sm" title="Copy a shareable link to this query">Copy link</button>
+                  <button id="dx-ask-ai" class="btn btn-secondary btn-sm" style="display:none" title="Send this query to the AI Assistant to run and interpret">Ask AI</button>
+                  <span class="dx-actions-spacer"></span>
+                  <button id="dx-export-csv" class="btn btn-secondary btn-sm" title="Download results as CSV">Export CSV</button>
+                  <button id="dx-export-json" class="btn btn-secondary btn-sm" title="Download results as JSON">Export JSON</button>
+                </div>
+                <textarea id="dx-raw" class="dx-raw" rows="5" spellcheck="false" style="display:none" aria-label="OQL query JSON"></textarea>
+                <div id="dx-help" class="dx-help" style="display:none">filters <code>eq ne lt le gt ge in</code> · text <code>contains icontains startsWith endsWith</code> · logic <code>and or not</code> · <code>groupBy</code>+<code>aggregate</code> (count sum avg min max) · <code>orderBy</code> · <code>select</code> · joins <code>edge.field</code>, ≤4 hops, usable in <code>select</code>/<code>where</code>/<code>orderBy</code>/<code>groupBy</code> (e.g. <code>marketId.lastPrice</code>) · <kbd>⌘↵</kbd> runs</div>
+              </div>
+            </div>
+          </div>
+          <div id="dx-status" class="dx-status"></div>
+          <div id="dx-results" class="dx-results"></div>
+          <button id="dx-more" class="btn btn-secondary dx-more" style="display:none">Load more</button>
+        </div>
+
+        <!-- Ask AI: the in-app assistant chat (reads via OQL, confirmed mutations). -->
+        <div id="intelli-pane-ai" class="intelli-pane" style="display:none">
+          <div id="asst-messages" class="asst-messages"></div>
+          <!-- visibility (not display): the line keeps its height when hidden,
+               so toggling it can't shrink the flex-sized message list and clip
+               the just-sent prompt bubble at the bottom. -->
+          <div id="asst-thinking" class="asst-thinking" style="visibility:hidden">Thinking…</div>
+          <div class="asst-input-row">
+            <textarea id="asst-input" class="asst-input" rows="1" placeholder="Ask about the exchange, or tell me what to do…"></textarea>
+            <button id="asst-send" class="asst-send" title="Send" aria-label="Send">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="12" y1="19" x2="12" y2="5"></line>
+                <polyline points="6 11 12 5 18 11"></polyline>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Ledger — the PUBLIC ledger, promoted to its own top-level view: every
+         balance-changing action on the exchange, hash-chained and IC-certified,
+         verifiable in the reader's own browser. The Account → Archive tab is
+         the per-user view of the same tape; this is the whole-exchange view +
+         the PoR story. Element ids (lg-*) are wired by src/ledger.js. -->
+    <main id="ledger-view" class="view">
+      <div class="stats-container">
+          <section class="stats-section">
+            <div class="stats-section-head">
+              <h2>The Exchange Ledger</h2>
+              <span class="stats-section-sub">Every balance change, hash-chained &amp; verifiable — the substrate for Proof&nbsp;of&nbsp;Reserves</span>
+            </div>
+            <div class="stats-insurance-explainer">
+              <p><strong>One tape, no trust.</strong> Every action that moves value — fills, deposits,
+                withdrawals, vault and insurance flows, margin debt — writes signed <em>delta</em> records
+                to a public append-only archive. Each record carries the SHA-256 hash of the one before
+                it, so history cannot be quietly rewritten: change any past record and every hash after
+                it breaks. The newest hash (the <em>head</em>) is placed in the canister's
+                <code>certified_data</code>, which the Internet Computer's subnet <em>signs</em> —
+                and full archives are sealed and <strong>blackholed</strong>, so even the operator
+                cannot touch them.</p>
+              <p><strong>Proof of Reserves.</strong> Liabilities need no auditor: fold the ledger's
+                delta records per account and you have reconstructed every balance the exchange owes —
+                anyone can do it, from this page or the Intelligence explorer. Twinned with on-chain custody
+                addresses (the Bridge), solvency becomes a continuously checkable fact rather than a
+                quarterly promise. The venue's own accounts — the AMM vault, treasury, insurance fund and
+                the <a href="#docs/arbitrage">arbitrageur</a> (whose holdings are synthetic supply it
+                imports/exports at the mark, not user custody) — are labeled on every row, so a folder
+                measures custody against <em>user</em> liabilities and nets the venue's internal capital
+                out. <span class="docs-mono">verify_ledger.mjs --fold</span> prints exactly that split.</p>
+              <p><strong>Verify it yourself, right here.</strong> The button below re-computes the
+                hash chain <em>in your browser</em> from the raw event bytes and compares the result
+                against the IC-certified head — nothing is taken on the exchange's word.
+                <a class="pos-docs-link" href="#docs/ledger">The full ledger story →</a></p>
+            </div>
+          </section>
+          <section class="stats-section">
+            <div class="stats-section-head">
+              <h2>Archive chain</h2>
+              <span class="stats-section-sub">Sealed history + the live tape</span>
+            </div>
+            <div id="lg-chain"><div class="empty-state">Loading…</div></div>
+            <div class="lg-verify-row">
+              <select id="lg-verify-scope" class="lg-select">
+                <option value="500" selected>Verify the last 500 events</option>
+                <option value="2000">Verify the last 2,000 events</option>
+                <option value="full">Verify the FULL history</option>
+              </select>
+              <button id="lg-verify" class="btn btn-accent">Verify in my browser</button>
+              <button id="lg-refresh" class="btn btn-secondary">Refresh</button>
+            </div>
+            <div id="lg-verify-result" class="lg-verify-out"></div>
+          </section>
+          <section class="stats-section">
+            <div class="stats-section-head">
+              <h2>Ledger entries</h2>
+              <span class="stats-section-sub">Newest first — hashes recomputed locally; matching colours are the chain</span>
+            </div>
+            <div class="lg-pager">
+              <button id="lg-older" class="btn btn-secondary btn-sm">← Older</button>
+              <button id="lg-newer" class="btn btn-secondary btn-sm" disabled>Newer →</button>
+              <button id="lg-newest" class="btn btn-secondary btn-sm" disabled>⇥ Newest</button>
+              <span id="lg-range" class="lg-range">—</span>
+            </div>
+            <div id="lg-tape"><div class="empty-state">Loading…</div></div>
+          </section>
+      </div>
+    </main>
+
+    <!-- Deposit Tab — talks to the STUB Bridge canister (src/bridge/main.mo).
+         Real chain-key custody is a separate team's job; the dev-only Simulate /
+         Confirm controls stand in for real external-chain deposits. See
+         docs/bridge-and-cks-design.md. -->
+
+    <!-- Docs Tab — on-site documentation (levels/fees/badges). Served straight
+         from this asset canister; the Status tab links here. TOC links use
+         data-docs-goto (not href="#…") so they scroll without disturbing the
+         app's hash-based tab routing. -->
+    <main id="docs-view" class="view">
+      <div class="docs-container docs-shell">
+        <!-- Multi-page docs. Content lives in src/docs.js (registry order =
+             story order); the sidebar, page body, welcome map and prev/next
+             pager are all rendered from it by docsRoute() in main.js.
+             Routes: #docs (welcome) and #docs/<slug>. -->
+        <aside class="docs-side" id="docs-side" aria-label="Docs navigation"></aside>
+        <article class="docs-page" id="docs-page"></article>
+      </div>
+    </main>
+
+    <!-- Add Tokens Modal -->
+    <!-- Sign-in options. The radio is the delegation's maxTimeToLive — the cap
+         while a tab stays open; closing the last tab ends the session (the
+         heartbeat + boot stale-check in main.js). The checkbox keeps the
+         session key in memory only (no disk trace), which also makes a tab
+         refresh end the session. -->
+    <div id="signin-modal" class="modal" style="display:none">
+      <div class="modal-backdrop" id="signin-backdrop"></div>
+      <div class="modal-content signin-modal">
+        <button id="signin-close" class="signin-close" aria-label="Close">✕</button>
+        <h3>Sign in</h3>
+        <div class="signin-group-label">Max session length</div>
+        <div class="signin-group-note">Closing all tabs immediately ends the session.</div>
+        <div class="signin-opts" id="signin-opts">
+          <label class="signin-opt"><input type="radio" name="signin-ttl" value="20"><span>20 minutes</span></label>
+          <label class="signin-opt"><input type="radio" name="signin-ttl" value="60" checked><span>1 hour</span></label>
+          <label class="signin-opt"><input type="radio" name="signin-ttl" value="480"><span>8 hours</span></label>
+          <label class="signin-opt"><input type="radio" name="signin-ttl" value="1440"><span>1 day</span></label>
+        </div>
+        <label class="signin-check">
+          <input type="checkbox" id="signin-inmemory">
+          <span><b>In-memory session key only</b><small>Tab refresh also ends the session — your key isn't stored on disk (no forensic trace; best for a shared or public computer).</small></span>
+        </label>
+        <p class="signin-google-note">Playing the competition? <b>Sign in with Google</b>, or
+          use an internet identity that includes Google as an access method — one
+          funded account per player; deposits unlock after Google verification.
+          Return using the same option.</p>
+        <div class="modal-buttons">
+          <button id="signin-google" class="btn btn-secondary" title="Authenticate through the Google account linked to your Internet Identity — on the play venue this is also what unlocks deposits and the leaderboard.">
+            <!-- Google "G" mark, inlined (asset-canister pages make no external requests) -->
+            <svg class="google-g" width="15" height="15" viewBox="0 0 48 48" aria-hidden="true">
+              <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+              <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+              <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+              <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+            </svg>
+            Sign in with Google
+          </button>
+          <button id="signin-confirm" class="btn btn-primary">ID.ai</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chart overlay -->
+    <div id="chart-overlay" class="chart-overlay" style="display:none">
+      <div class="chart-overlay-header">
+        <span id="chart-title" class="chart-title">BTC-ICPUSD</span>
+        <div class="chart-intervals" id="chart-intervals">
+          <button class="chart-interval-btn" data-interval="60000">1m</button>
+          <button class="chart-interval-btn" data-interval="300000">5m</button>
+          <button class="chart-interval-btn" data-interval="900000">15m</button>
+          <button class="chart-interval-btn active" data-interval="3600000">1h</button>
+          <button class="chart-interval-btn" data-interval="14400000">4h</button>
+          <button class="chart-interval-btn" data-interval="43200000">12h</button>
+          <button class="chart-interval-btn" data-interval="86400000">1D</button>
+          <button class="chart-interval-btn" data-interval="604800000">1W</button>
+          <button class="chart-interval-btn" data-interval="2592000000">1M</button>
+        </div>
+        <button id="chart-close-btn" class="chart-close-btn" title="Close">&times;</button>
+      </div>
+      <div id="chart-container" class="chart-container"></div>
+    </div>
+
+    <!-- Toast notifications -->
+    <div id="toast-container" class="toast-container"></div>
+
+  </div>
+
+  <!-- LightweightCharts v5 for native multi-pane support (candles in
+       pane 0, volume histogram in pane 1). v4 didn't split the right-axis
+       labels between stacked scales; v5's addPane/paneIndex API does. -->
+  <script src="https://unpkg.com/lightweight-charts@5.1.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

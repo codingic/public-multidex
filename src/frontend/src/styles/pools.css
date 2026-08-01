@@ -1,0 +1,148 @@
+/* ── Per-market cards ── */
+.stats-market-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+.sm-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  text-decoration: none;
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 120ms;
+}
+.sm-card:hover { border-color: var(--accent); }
+.sm-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.sm-name { font-weight: 600; font-size: 14px; color: var(--text); }
+.sm-amm-badge {
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.sm-amm-badge.enabled  { background: rgba(94,230,180,0.12); color: var(--green); }
+.sm-amm-badge.disabled { background: var(--bg-input); color: var(--text-muted); }
+.sm-price {
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.sm-change {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+.sm-change.pos { color: var(--green); }
+.sm-change.neg { color: var(--red); }
+.sm-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  margin-top: 6px;
+}
+.sm-k { color: var(--text-muted); }
+.sm-v { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.sm-drift {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 8px;
+  background: var(--bg-input);
+  border-radius: 6px;
+  margin-top: 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.sm-drift-label {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+}
+.sm-drift-pct { margin-left: auto; font-weight: 600; }
+.drift-ok    { color: var(--green); }
+.drift-warn  { color: var(--accent); }
+.drift-bad   { color: var(--red); }
+
+/* ── AMM pool detail cards ── */
+.stats-pool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pool-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+.pool-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 12px;
+}
+.pool-title { display: flex; gap: 10px; align-items: center; }
+.pool-name { font-size: 15px; font-weight: 600; color: var(--text); }
+.pool-value {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.pool-bar {
+  height: 6px;
+  background: var(--red-dim);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.pool-bar-base {
+  height: 100%;
+  background: var(--green);
+  transition: width 300ms;
+}
+.pool-bar-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 14px;
+}
+.pool-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: -1px;
+}
+.pool-dot.base  { background: var(--green); }
+.pool-dot.quote { background: var(--red); }
+.pool-kvs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.pool-kv { display: flex; flex-direction: column; gap: 2px; }
+.pool-k  { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.pool-v  { font-size: 14px; color: var(--text); }
+.pool-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+

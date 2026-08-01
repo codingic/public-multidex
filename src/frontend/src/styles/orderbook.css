@@ -1,0 +1,346 @@
+/* ── Order Book / Trades tabs ───────────────────────────────────── */
+.bt-tabs {
+  /* No bottom border — the active tab keeps its own underline; a full-width
+     rule would draw a line across the boxless panel. */
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px 0;
+  flex-shrink: 0;
+}
+.bt-tab {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 400;  /* light nav/tab text */
+  padding: 8px 4px;
+  margin-right: 16px;
+  cursor: pointer;
+  position: relative;
+  transition: color 0.15s;
+}
+.bt-tab:hover { color: var(--text); }
+.bt-tab.active {
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.bt-tabs .stale-badge { margin-left: auto; }
+.book-trades-panel .orderbook-panel,
+.book-trades-panel .trades-panel {
+  flex: 1;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  /* Extra top padding so the PRICE / QUANTITY / TOTAL column labels
+     sit a touch below the tab-bar underline instead of hugging it. */
+  padding: 8px 12px 12px;
+}
+
+/* Section labels shown when the panel splits into two side-by-side halves.
+   Hidden in tabbed mode (the tab bar serves the same role). */
+.bt-section-label {
+  display: none;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--border);
+  box-shadow: inset 0 -2px 0 var(--accent);
+  flex-shrink: 0;
+}
+
+/* Inner wrapper holding the two panes — starts as a flex column (panes
+   stacked; tab bar picks which is visible). Container queries can only
+   style descendants of the container, not the container itself, so the
+   flex-direction flip happens on .bt-body rather than on .book-trades-panel. */
+.bt-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── Container-driven split: once the panel is wide enough, show Order
+   Book and Trades as TWO SEPARATE cards side-by-side instead of one
+   tabbed card. The threshold is the panel's own width — the drag-resizer
+   sets --book-col-width, which directly drives this query. */
+@container booktrades (min-width: 520px) {
+  /* Outer card chrome is already gone (base rule); keep overflow visible so
+     the side-by-side panes aren't clipped. */
+  .book-trades-panel .bt-card {
+    overflow: visible;
+  }
+  /* Tab bar becomes redundant when both panes are visible */
+  .book-trades-panel .bt-tabs { display: none; }
+  /* Lay the two panes side-by-side with a small gap; a centered subtle line
+     (::after) divides them with breathing room on each side. */
+  .book-trades-panel .bt-body {
+    flex-direction: row;
+    gap: 16px;
+    position: relative;
+  }
+  .book-trades-panel .bt-body::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    background: var(--border);
+  }
+  /* Force BOTH panes visible, overriding the inline style="display:none"
+     that the JS tab handler applies in tabbed mode. No boxes — both panes
+     render over the page background, divided by a subtle vertical line. */
+  .book-trades-panel .bt-body > .orderbook-panel,
+  .book-trades-panel .bt-body > .trades-panel {
+    display: flex !important;
+    flex-direction: column;
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+  .book-trades-panel .bt-body > .orderbook-panel > .orderbook,
+  .book-trades-panel .bt-body > .trades-panel > .trades-header,
+  .book-trades-panel .bt-body > .trades-panel > .trades-list {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  /* Column header labels (PRICE / QUANTITY / TOTAL, PRICE / QTY / TIME) need
+     breathing room above them so they're vertically centered between the
+     section-label's amber underline and the border-bottom that separates
+     them from the data rows. In tabbed mode this comes from the panel's
+     padding-top (8px); here we add it to the headers directly since the
+     panels have padding:0 in split mode. The existing padding-bottom:8px
+     on the header already provides the matching bottom gap. */
+  .book-trades-panel .bt-body > .orderbook-panel .orderbook-header,
+  .book-trades-panel .bt-body > .trades-panel > .trades-header {
+    padding-top: 8px;
+  }
+  /* Show the per-pane section labels (Order Book / Trades) */
+  .book-trades-panel .bt-section-label { display: block; }
+}
+
+/* ── Order Book / Order Form / Trades card bases ──────────────── */
+.orderbook-panel, .order-panel, .trades-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.order-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 12px;
+  /* Place Order box: transparent over the page field with a slightly stronger,
+     slightly thicker cyan outline — same treatment as the Swap Tokens box. */
+  background: transparent;
+  border-color: rgba(56, 189, 240, 0.45);
+  border-width: 1.5px;
+}
+.order-panel h3 { flex-shrink: 0; }
+.order-panel .order-form { flex: 1; min-height: 0; overflow-y: auto; }
+.trades-panel { overflow: hidden; display: flex; flex-direction: column; }
+/* Orderbook panel fills its grid cell and lays out as flex column */
+.orderbook-panel {
+  display: flex;
+  flex-direction: column;
+}
+.orderbook-panel h3 { flex-shrink: 0; }
+.orderbook {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.orderbook-panel h3, .order-panel h3, .trades-panel h3 {
+  font-size: 14px;
+  /* h3 defaults to bold (700); 540 keeps the label presence without the
+     heaviness — matches the lightened tab/button weights. */
+  font-weight: 540;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+/* Place Order title matches the Swap box title colour (full --text), unlike the
+   dimmed order-book/trades panel labels it shares the base rule with. Placed
+   after that rule so it wins at equal specificity. */
+.order-panel h3 { color: var(--text); }
+.orderbook-header, .trades-header {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.orderbook .orderbook-header,
+.orderbook .orderbook-spread { flex-shrink: 0; }
+.orderbook-asks, .orderbook-bids {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+/* Asks bottom-align so the best ask hugs the spread (empty space at the
+   top, where the far/deep asks would be) — standard order-book look when
+   a side is thin (e.g. SOL). Use margin-top:auto on the first row rather
+   than justify-content:flex-end: the auto margin collapses to 0 once the
+   list overflows, so scrolling still works (flex-end + overflow silently
+   breaks scroll-to-top). Bids stay top-aligned (best bid under the spread). */
+.orderbook-asks {
+  display: flex;
+  flex-direction: column;
+}
+.orderbook-asks > :first-child { margin-top: auto; }
+/* Row size-change flash (like Trades / HyperLiquid). Animates background-
+   COLOR only, so the depth-bar gradient (background-image, set inline)
+   survives the flash. */
+/* Flash starts at 0.42 — comfortably above the 0.22 resting depth bars (set
+   inline in main.js), so a size change still reads as a distinct pulse. */
+@keyframes obFlashBid {
+  0%   { background-color: rgba(94, 230, 180, 0.42); }
+  100% { background-color: transparent; }
+}
+@keyframes obFlashAsk {
+  0%   { background-color: rgba(240, 122, 108, 0.42); }
+  100% { background-color: transparent; }
+}
+/* Row chrome shared by BOTH books — the Markets book (.orderbook-row) and the
+   Swap book (.swap-ob-row). They were separate near-identical copies that
+   drifted ("mirrors .orderbook-row", "match the Markets book rows"); one rule
+   means a change to the data rows lands on both. Only genuine layout
+   differences stay per-book (see .swap-ob-row in stats.css). */
+.orderbook-row,
+.swap-ob-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  font-size: 13px;
+  padding: 3px 0;
+  font-family: 'Inter Variable', system-ui, sans-serif;
+  font-weight: 380;  /* a hair under regular — lighter data rows (variable axis) */
+  font-variant-numeric: tabular-nums; /* equal-width digits → columns align */
+  /* Inset the depth bar (the inline background-image gradient) vertically so a
+     sliver of panel background separates consecutive bars. Requires the inline
+     style to set background-IMAGE longhand — the shorthand would reset these. */
+  background-repeat: no-repeat;
+  background-size: 100% calc(100% - 2px);
+  background-position: right center;
+}
+/* Softened numbers on the SPANS, not the row, so the depth-bar backgrounds and
+   the change-flash keep full strength. */
+.orderbook-row > span,
+.swap-ob-row > span { opacity: 0.9; }
+/* The change-flash itself: one animation pair, both books. */
+.orderbook-row.ob-flash-bid, .swap-ob-row.ob-flash-bid { animation: obFlashBid 0.7s ease-out; }
+.orderbook-row.ob-flash-ask, .swap-ob-row.ob-flash-ask { animation: obFlashAsk 0.7s ease-out; }
+/* Soften the numbers slightly (0.9) — on the SPANS, not the row, so the
+   depth-bar backgrounds and change-flash keep full strength. */
+.orderbook-row span:first-child { text-align: left; }
+/* Click-to-fill affordance: clickable cells bold on hover to signal an action
+   (price → sets order price; in aggregation mode Quantity/Value also set the
+   amount). */
+.orderbook-row .ob-click { cursor: pointer; }
+.orderbook-row .ob-click:hover { font-weight: 700; }
+.orderbook-row span:nth-child(2),
+.orderbook-row span:nth-child(3) { text-align: right; }
+.orderbook-header span { text-align: right; }
+.orderbook-header span:first-child { text-align: left; }
+.orderbook-row.ask .price { color: var(--red); }
+.orderbook-row.bid .price { color: var(--green); }
+/* Spread row, HyperLiquid-style: "Spread" legend | absolute spread | percent,
+   aligned to the Price | Quantity | Total columns above. */
+.orderbook-spread {
+  /* Centered group ("Spread 0.0010 0.037%"), desktop and mobile alike. */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 14px;
+  /* Compact band, slightly lighter than the panel, so it reads as a divider
+     between asks and bids instead of bleeding into the rows (HyperLiquid). */
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.05);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.orderbook-spread .ob-spread-label {
+  letter-spacing: 0.3px;
+}
+.orderbook-spread .ob-spread-abs,
+.orderbook-spread .ob-spread-pct {
+  color: var(--text);
+  font-family: 'Inter Variable', system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+.orderbook-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0 0;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+}
+.ob-granularity {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+.ob-granularity:hover { border-color: var(--accent); color: var(--text); }
+.ob-gran-menu {
+  display: none;
+  position: fixed;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 -4px 16px rgba(0,0,0,0.4);
+  z-index: 200;
+  overflow-y: auto;
+  max-height: 240px;
+  min-width: 80px;
+}
+.ob-granularity.open .ob-gran-menu { display: block; }
+.ob-gran-option {
+  padding: 10px 14px;
+  font-size: 15px;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s;
+}
+.ob-gran-option:hover { background: var(--bg-hover); color: var(--text); }
+.ob-gran-option.active { background: rgba(229,169,83,0.10); color: var(--accent); font-weight: 600; }
+.ob-cumulative-btn {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ob-cumulative-btn:hover { border-color: var(--accent); color: var(--text); }
+.ob-cumulative-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+

@@ -1,0 +1,651 @@
+/* ── Out-of-fuel banner (app-wide) ──────────────────────────────────
+   Sits above the header. Hidden until getCanisterInfo reports the canister
+   is low on, or out of, cycles. The DEX is a public good, so the message
+   tells anyone how to refuel it. */
+.fuel-banner {
+  padding: 10px 16px;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+}
+.fuel-banner strong { font-weight: 700; }
+.fuel-banner.critical {
+  background: var(--red);
+  color: var(--red-text);
+}
+.fuel-banner.warn {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+/* Self-funding note: fuel is trending down but auto-fuel + the treasury
+   cover it — informational, deliberately quieter than the warn tier. */
+.fuel-banner.info {
+  background: var(--bg-card);
+  color: var(--text-dim);
+}
+.fuel-banner.info strong { color: var(--text); }
+.fuel-banner-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.18);
+  white-space: nowrap;
+}
+/* ✕ on the status banners — hides the notice for this session (or until the
+   banner's state changes; see applyBannerDismiss). Inherits the tier color. */
+.banner-dismiss {
+  float: right;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.6;
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 0 2px;
+  margin-left: 10px;
+}
+.banner-dismiss:hover { opacity: 1; }
+
+/* ── Oracle divergence banner (app-wide) ────────────────────────────
+   Same chrome mechanics as the fuel banner (lives in #top-chrome, expands
+   --chrome-h). Amber, distinct from the fuel banner's accent, because it is
+   a data-quality alarm, not a lifecycle one: trading continues. */
+.oracle-banner {
+  padding: 10px 16px;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+}
+.oracle-banner strong { font-weight: 700; }
+.oracle-banner.warn {
+  background: #b8860b;
+  color: #fff8e7;
+}
+
+/* ── Launch notice (app-wide, #play only) ───────────────────────────
+   The play-mode story. Not an alarm — an invitation — so it's a calm
+   cyan-tinted strip rather than a solid alert fill. Same #top-chrome
+   mechanics (expands --chrome-h); persistently dismissible via ✕. */
+.launch-banner {
+  padding: 9px 16px;
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: center;
+  color: var(--text-dim);
+  /* The cyan tint sits over a SOLID --bg base so the banner is fully opaque —
+     #top-chrome is sticky and page content scrolls beneath it, so a
+     translucent background would let scrolled text bleed through. The look at
+     rest is unchanged (the tint already composited over the page's --bg). */
+  background:
+    linear-gradient(180deg, rgba(56, 189, 240, 0.10), rgba(56, 189, 240, 0.05)),
+    var(--bg);
+  border-bottom: 1px solid rgba(56, 189, 240, 0.30);
+}
+.launch-banner strong { color: var(--text); font-weight: 640; }
+.launch-banner .launch-mark { color: var(--accent); margin-right: 6px; }
+.launch-banner a.launch-more {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  margin-left: 4px;
+}
+.launch-banner a.launch-more:hover { text-decoration: underline; }
+
+/* ── Stats → Canister tab ───────────────────────────────────────── */
+.canister-id-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px 20px;
+}
+.canister-id-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.canister-id-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.canister-id-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 15px;
+  color: var(--text);
+  background: var(--bg-input);
+  padding: 6px 10px;
+  border-radius: 6px;
+  word-break: break-all;
+}
+.canister-id-copy { flex-shrink: 0; }
+.canister-id-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 12px;
+  line-height: 1.5;
+}
+.canister-id-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--bg-input);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--text);
+}
+.canister-id-hint a { color: var(--accent); text-decoration: none; }
+.canister-id-hint a:hover { text-decoration: underline; }
+
+/* ── Recent-trades feed beneath the swap box ── */
+.swap-trades-card {
+  margin-top: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.swap-trades-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 8px;
+}
+.swap-trades-market { font-size: 12px; color: var(--text-dim); font-weight: 500; }
+.swap-trades-cols {
+  display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px;
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-muted); padding: 0 2px 4px; border-bottom: 1px solid var(--border);
+}
+.swap-trades-cols span:nth-child(2) { text-align: right; }
+.swap-trades-cols span:nth-child(3) { text-align: right; min-width: 44px; }
+.swap-trades-list { max-height: 230px; overflow-y: auto; margin-top: 2px; }
+.swap-trade-row {
+  display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px;
+  font-size: 12px; padding: 3px 2px; font-variant-numeric: tabular-nums;
+  font-weight: 380;  /* match the Markets trades rows */
+}
+/* Size/Time in full --text, matching the Markets trades list. Numbers softened
+   to 0.9; fresh trades' times ramp up to that same 0.9 via tickTradeTimes. */
+.swap-trade-row > span { opacity: 0.9; }
+.swap-trade-row .q { text-align: right; color: var(--text); }
+.swap-trade-row .t { text-align: right; min-width: 44px; color: var(--text); }
+.swap-trade-row.dir-buy  .p { color: var(--green); }
+.swap-trade-row.dir-sell .p { color: var(--red); }
+.swap-trade-row.is-new { animation: swapTradeFlash 0.6s ease-out; }
+@keyframes swapTradeFlash { from { background: var(--bg-hover); } to { background: transparent; } }
+.swap-trades-empty { font-size: 12px; color: var(--text-dim); text-align: center; padding: 16px 0; }
+
+/* ── Swap-page market box: tabbed order book + recent trades for the source
+   and destination assets (4 tabs). Reuses .swap-trades-* for the trade rows. ── */
+.swap-market-box {
+  /* Faint outline only — no fill, so the order book / trades sit over the
+     page background while the box edge stays visible. */
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.swap-market-tabs {
+  display: flex;                 /* flex so hidden (ICPUSD) tabs collapse and the
+                                    visible ones share the full width */
+  border-bottom: 1px solid var(--border);
+}
+.smt-tab {
+  flex: 1;
+  background: none; border: none; border-bottom: 2px solid transparent;
+  padding: 10px 6px; font-size: 12px; font-weight: 500; color: var(--text-dim);
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.smt-tab:hover { color: var(--text); }
+.smt-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.swap-market-body { padding: 10px 14px 12px; min-height: 190px; }
+.swap-market-empty { font-size: 12px; color: var(--text-dim); text-align: center; padding: 30px 8px; line-height: 1.5; }
+/* Compact order book inside the market box. */
+.swap-ob-cols {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-muted); padding: 0 2px 4px; border-bottom: 1px solid var(--border);
+}
+.swap-ob-cols span:nth-child(2), .swap-ob-cols span:nth-child(3) { text-align: right; }
+/* Shared row chrome lives in orderbook.css (.orderbook-row, .swap-ob-row).
+   Only the compact book's own spacing differs. */
+.swap-ob-row { gap: 8px; padding: 3px 2px; }
+/* Quantity/Value in full --text, matching the Markets book rows; numbers
+   softened to 0.9 on the spans (bars/flash keep full strength). */
+.swap-ob-row .q { text-align: right; color: var(--text); }
+.swap-ob-row .v { text-align: right; color: var(--text); }
+.swap-ob-row.ask .p { color: var(--red); }
+.swap-ob-row.bid .p { color: var(--green); }
+/* Flash a row when its (cumulative) size changes, like the Markets book. The
+   keyframes animate background-COLOR, so they sit behind the depth-bar image. */
+.swap-ob-empty { font-size: 11px; color: var(--text-muted); text-align: center; padding: 6px 0; }
+/* Aggregation toolbar (reuses .orderbook-toolbar + .ob-* from orderbook.css).
+   Sits below the book body as a stable sibling; pad its sides to the body's
+   14px so the dropdown + Σ line up with the rows above. */
+.swap-ob-toolbar { padding: 8px 14px 12px; }
+
+/* ── Swap page: side-by-side on a landscape ("letterbox") viewport — the Swap
+   box and the market box sit in two columns, the open-orders card spans full
+   width below. Covers desktop and a phone held horizontally. Placed AFTER the
+   ≤900px mobile float rules so it wins (and restores the market box's card
+   chrome that the float would otherwise strip on a landscape phone). ── */
+@media (orientation: landscape) and (min-width: 720px) {
+  /* Centre the boxes horizontally, pinned to the TOP of the view: the .view
+     base padding (24px) sets the header→content gap, matching the Stats
+     page. A COLUMN flex (not row) so the .swap-strap heading stacks ABOVE
+     the box row instead of becoming a sibling flex item beside it.
+     min-height (not height) so taller content (e.g. signed-in orders) still
+     grows and scrolls instead of clipping. */
+  #swap-view.active {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    min-height: calc(100vh - var(--chrome-h));
+    box-sizing: border-box;
+  }
+  /* Flex items ignore the child's max-width-with-auto-margins centring trick
+     unless the item spans the row — make the container span so its own
+     max-width + margin:auto centring keeps working inside the column. */
+  #swap-view.active .swap-container { width: 100%; }
+  .swap-container {
+    /* Equal columns, boxes in order: Swap | Rate graph, Book/Trades spanning
+       below (narrow landscape). ≥1100px all three sit in one row (override
+       below). */
+    max-width: 920px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    gap: 24px;
+  }
+  .swap-card           { grid-column: 1; grid-row: 1; }
+  /* Match the graph and market boxes' height to the Swap box: stretch them to
+     fill the grid row (whose height the taller Swap card sets), each a flex
+     column so its body grows to fill — chart and order book/trades occupy the
+     full height instead of leaving the boxes short. Their content stays
+     bounded (chart canvas flexes; 8+8 book levels, 14 trades), so neither
+     drives the row. */
+  #swap-graph-section  { grid-column: 2; grid-row: 1; align-self: stretch; display: flex; flex-direction: column; }
+  .swap-container .swap-graph-canvas { flex: 1 1 auto; height: auto; min-height: 220px; }
+  /* 2-col mode: Book/Trades sits ALONE on row 2, so it has no sibling to
+     borrow a row height from (unlike the 3-col row it shares with the Swap
+     card). Its flex-filled lists below (flex:1 1 0) would collapse to nothing
+     without a height to divide — give the box a definite floor so it renders
+     full-size and the PAGE scrolls if the stack exceeds the viewport. Reset
+     in the ≥1100px block, where row 1 supplies the height. */
+  #swap-market-section { grid-column: 1 / -1; grid-row: 2; display: flex; flex-direction: column; min-height: 400px; }
+  #swap-orders-section { grid-column: 1 / -1; grid-row: 3; }
+  /* Wide desktop: all three boxes share one row — Swap | Graph | Book/Trades,
+     equal widths (1380 ≈ the old 920 two-box width scaled to three). */
+  @media (min-width: 1100px) {
+    .swap-container      { max-width: 1380px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    /* 3-col: Book/Trades shares row 1 with the Swap card, so the row supplies
+       the height — drop the 2-col floor so it stretches to the card, not 400px. */
+    #swap-market-section { grid-column: 3; grid-row: 1; align-self: stretch; min-height: 0; }
+    #swap-orders-section { grid-row: 2; }
+  }
+  .swap-container .swap-market-box  { background: transparent; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .swap-container .swap-market-tabs { border-bottom: 1px solid var(--border); padding-left: 0; }
+  .swap-container .swap-market-body { padding: 10px 14px 12px; min-height: 0; flex: 1 1 auto; overflow-y: auto; display: flex; flex-direction: column; }
+  /* Fill the box. The book splits the leftover height between asks and bids so
+     the spread sits in the vertical centre (best ask/bid hug it), mirroring the
+     Markets order book; the trades list stretches to fill the same height. */
+  .swap-container .swap-ob-cols,
+  .swap-container .swap-trades-cols,
+  .swap-container .orderbook-spread { flex-shrink: 0; }
+  .swap-container .swap-ob-asks,
+  .swap-container .swap-ob-bids { flex: 1 1 0; min-height: 0; overflow-y: auto; }
+  .swap-container .swap-ob-asks { display: flex; flex-direction: column; }
+  .swap-container .swap-ob-asks > :first-child { margin-top: auto; }   /* best ask hugs the spread */
+  /* flex-basis 0 (not auto): the list fills the leftover height and scrolls its
+     overflow, instead of its content driving the box taller than the Swap card. */
+  .swap-container .swap-trades-list { flex: 1 1 0; max-height: none; min-height: 0; }
+}
+
+/* ── Stats → Canisters: archive chain table ── */
+.archive-chain-head { margin-top: 20px; }
+.archive-chain-head h2 { font-size: 15px; }
+.archive-chain-wrap { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; }
+.archive-chain { width: 100%; border-collapse: collapse; font-size: 13px; }
+.archive-chain th {
+  text-align: left; padding: 9px 14px; color: var(--text-dim);
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.archive-chain td { padding: 9px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.archive-chain tbody tr:last-child td { border-bottom: none; }
+.chain-role { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); }
+.chain-role-active { color: var(--green); }
+.chain-sub { color: var(--text-muted); font-size: 11px; }
+.chain-badge {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 2px 8px; border-radius: 10px; border: 1px solid var(--border); color: var(--text-dim);
+}
+.chain-frozen { color: var(--red); border-color: var(--red); }
+.chain-ok { color: var(--green); }
+
+/* ── Stats → Status (operator-authored notices) ── */
+.status-alerts { display: flex; flex-direction: column; gap: 14px; max-width: 760px; }
+/* Earn CTA bar — sits at the top of the AMM / Insurance Fund panes and
+   links to Account → Earn, where both deposits live. */
+.stats-cta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 12px 18px;
+  background: rgba(56, 189, 240, 0.08);
+  border: 1px solid var(--accent-border);
+  border-radius: 8px;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+.stats-cta:hover { background: rgba(56, 189, 240, 0.14); border-color: var(--accent); }
+.stats-cta-arrow { flex-shrink: 0; }
+
+.status-alert {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-dim);
+  border-radius: 8px;
+  padding: 14px 18px 16px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.status-alert p { margin: 10px 0 0; color: var(--text); }
+/* Mid-sentence Docs links — the app-wide accent treatment (.pos-docs-link)
+   minus its margin-left/nowrap, which don't suit inline copy. */
+.status-alert p a { color: var(--accent); text-decoration: none; }
+.status-alert p a:hover { color: var(--accent-hover); text-decoration: underline; }
+.status-alert-head { display: flex; align-items: center; gap: 9px; }
+.status-alert-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); flex-shrink: 0; }
+.status-alert-title { font-weight: 600; color: var(--text); }
+.status-warn  { border-left-color: var(--accent); }
+.status-warn  .status-alert-dot { background: var(--accent); }
+/* All-clear card — the Issues pane's empty state. Green: nothing to report. */
+.status-ok    { border-left-color: var(--green); }
+.status-ok    .status-alert-dot { background: var(--green); }
+.status-error { border-left-color: var(--red); }
+.status-error .status-alert-dot { background: var(--red); }
+
+/* ── Stats → Events log ── */
+.events-list {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.event-row {
+  display: grid;
+  grid-template-columns: 10px 62px 76px 1fr;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 14px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.event-row:last-child { border-bottom: none; }
+.event-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); align-self: center; }
+.event-info  .event-dot { background: var(--green); }
+.event-warn  .event-dot { background: var(--accent); }
+.event-error .event-dot { background: var(--red); }
+.event-time { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.event-cat  { color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+.event-msg  { color: var(--text); }
+.event-error .event-msg { color: var(--red); }
+@media (max-width: 640px) {
+  .event-row { grid-template-columns: 10px 1fr; gap: 4px 10px; }
+  .event-time, .event-cat { grid-column: 2; }
+  .event-msg { grid-column: 2; }
+}
+.events-pager {
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  margin-top: 12px;
+}
+.events-pager .btn { padding: 6px 14px; font-size: 13px; }
+.events-pager .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.events-page-label { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+/* ── Margin Pools: account-summary pills + positions table ── */
+.margin-status-pill.margin-status-on     { color: var(--green); border-color: var(--green); }
+.margin-status-pill.margin-status-warn   { color: var(--accent); border-color: var(--accent); }
+.margin-status-pill.margin-status-danger { color: var(--red); border-color: var(--red); }
+#positions-table-wrap { overflow-x: auto; }
+.positions-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.positions-table th {
+  text-align: right; padding: 8px 10px; color: var(--text-dim);
+  font-weight: 500; border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.positions-table th:first-child, .positions-table td:first-child { text-align: left; }
+/* Side column (a pill) and Pool column (a name) — left-aligned like Asset. */
+.positions-table th.th-side, .positions-table td.td-side { text-align: left; }
+.positions-table th.th-pool, .positions-table td.pos-pool { text-align: left; }
+.pos-warn { color: var(--accent); } /* "watch" band — between healthy and at-risk */
+
+/* Pool blocks (Account → Positions and pools): one block per pool — a header
+   strip of labeled stats + fund/withdraw, with the positions that pool backs
+   nested beneath. */
+.pool-block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.pool-block-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  padding: 10px 12px;
+  background: var(--bg-input);
+}
+.pool-block-name { font-weight: 600; font-size: 14px; margin-right: auto; }
+.pbs { display: inline-flex; flex-direction: column; gap: 1px; }
+.pbs-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.pbs-value { font-size: 13px; color: var(--text); font-variant-numeric: tabular-nums; }
+.pool-block-ctl { display: inline-flex; align-items: center; gap: 6px; }
+.pool-block-ctl .pool-amt { width: 110px; padding: 6px 8px; }
+/* Pool footer: Financing disclosure (left) + Fund/Withdraw controls (right) —
+   moved out of the header so the chips row stays a clean read. */
+.pool-block-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}
+.pool-block-foot .pool-block-ctl { margin-left: auto; }
+.pool-fin-toggle {
+  background: none; border: none; cursor: pointer;
+  font-size: 12px; color: var(--text-dim); padding: 4px 0;
+}
+.pool-fin-toggle:hover { color: var(--accent); }
+.pool-fin-detail { flex-basis: 100%; font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+.pool-block-empty { padding: 10px 12px; font-size: 12px; color: var(--text-muted); }
+.pool-block .positions-table { font-size: 12.5px; }
+.pool-block .positions-table td { border-bottom: 1px solid var(--border); }
+.pool-block .positions-table tbody tr:last-child td { border-bottom: none; }
+.positions-table td { text-align: right; padding: 9px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.positions-table tbody tr:last-child td { border-bottom: none; }
+.pos-side { font-weight: 700; font-size: 11px; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 4px; margin-right: 6px; }
+.pos-long  { color: var(--green-text); background: var(--green); }
+.pos-short { color: var(--red-text); background: var(--red); }
+.pos-up    { color: var(--green); }
+.pos-down  { color: var(--red); }
+.pos-roe   { color: var(--text-dim); font-size: 12px; }
+.pos-close-btn { padding: 3px 10px; font-size: 12px; }
+
+/* Margin Pools: action controls (create / fund / open) */
+.pos-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+.pos-actions-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pos-label { font-size: 12px; color: var(--text-dim); min-width: 44px; }
+.pos-input {
+  background: rgba(255,255,255,0.03); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 7px 10px; font-size: 13px; min-width: 90px;
+}
+.pos-input:focus { outline: none; border-color: var(--accent); }
+select.pos-input { cursor: pointer; }
+
+/* Custom dropdown (enhanceSelectDropdown) — replaces a native <select> whose
+   OS-drawn popup mispositions in embedded/webview browsers. The menu is a real
+   DOM element anchored directly under the button, so it's always attached. The
+   native <select> is kept (visually hidden) as the value source. */
+.dd { position: relative; display: inline-block; }
+.dd-native { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; margin: 0; }
+.dd-btn { display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 110px; text-align: left; }
+.dd-chevron { color: var(--text-dim); font-size: 10px; transition: transform 0.12s; }
+.dd.dd-open .dd-chevron { transform: rotate(180deg); }
+.dd-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; min-width: 100%;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45); z-index: 60; padding: 4px;
+  max-height: 260px; overflow-y: auto;
+}
+.dd-opt { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--text); padding: 8px 12px; font-size: 13px; cursor: pointer; border-radius: 6px; white-space: nowrap; }
+.dd-opt:hover { background: var(--bg-hover); }
+.dd-opt-active { color: var(--accent); }
+/* Per-option asset icon before the symbol (opt-in via .dd-has-icons — the Swap
+   token selects). The auto-margin keeps the chevron pinned right; the menu rows
+   go flex so icon + symbol sit inline. */
+.dd-icon { width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0; }
+.dd-has-icons .dd-chevron { margin-left: auto; }
+.dd-has-icons .dd-opt { display: flex; align-items: center; gap: 8px; }
+#pos-pool-select, #pos-newpool-mode { min-width: 200px; }
+.pos-meta { font-size: 12px; color: var(--text-dim); margin-left: auto; font-variant-numeric: tabular-nums; }
+/* Contextual docs link in the Positions-and-pools footer. */
+.pos-docs-link { color: var(--accent); text-decoration: none; margin-left: 6px; white-space: nowrap; }
+.pos-docs-link:hover { color: var(--accent-hover); text-decoration: underline; }
+.seg-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg-btn { background: transparent; color: var(--text-dim); border: none; padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.seg-btn.seg-active { background: var(--accent); color: var(--accent-text); }
+.seg-btn.seg-active#pos-side-long  { background: var(--green); color: var(--green-text); }
+.seg-btn.seg-active#pos-side-short { background: var(--red); color: var(--red-text); }
+.pool-orders-wrap { display: flex; flex-direction: column; gap: 6px; }
+.pool-orders-wrap:empty { display: none; }   /* no phantom flex-gap slot when there are no resting orders */
+.pool-order-row { display: flex; align-items: center; gap: 10px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.pool-order-row .pool-cancel-btn { margin-left: auto; padding: 3px 10px; font-size: 12px; }
+
+
+/* ── Stats: Trading Leaderboard ─────────────────────────────────── */
+/* The Leaderboard and Phase-I titles use the same .stats-section-head as the
+   Ledger page, so all three page titles share one size and one rhythm. */
+/* Play-mode + prizes strip at the top of the Leaderboard page: the board is
+   the competition's scoreboard, so it has to say what winning is worth. */
+.lb-play-banner {
+  margin: 0 0 18px;
+  padding: 13px 18px;
+  background: rgba(56, 189, 240, 0.08);
+  border: 1px solid var(--accent-border);
+  border-radius: 8px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.lb-play-banner a { color: var(--accent); text-decoration: none; margin-left: 4px; white-space: nowrap; }
+.lb-play-banner a:hover { text-decoration: underline; }
+
+/* Two info cards under the banner: the competition's terms (Play for free)
+   and the current phase's news (Phase II). Side by side on desktop, stacked
+   on mobile. */
+.lb-info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin: 0 0 18px;
+}
+.lb-info-box {
+  padding: 14px 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+.lb-info-box h3 { font-size: 14px; color: var(--text); margin: 0 0 6px; }
+.lb-info-box p { margin: 0; }
+/* Same light blue as the Docs links; anywhere-wrap so the full repo URL
+   can't overflow a narrow card. */
+.lb-info-box a { color: var(--accent); text-decoration: none; overflow-wrap: anywhere; }
+.lb-info-box a:hover { text-decoration: underline; }
+@media (max-width: 900px) {
+  .lb-info-grid { grid-template-columns: 1fr; }
+}
+
+.lb-explain { font-size: 13px; color: var(--text-dim); line-height: 1.6; max-width: 760px; margin: 4px 0 14px; }
+/* Links in the explain lines (e.g. the Provisional Phase I pointer under the
+   board) carry the same highlight color as every other link. */
+.lb-explain a { color: var(--accent); text-decoration: none; }
+.lb-explain a:hover { text-decoration: underline; }
+.lb-my-rank {
+  margin: 0 0 12px; padding: 10px 14px; border-radius: 8px;
+  border: 1px solid var(--accent-border); background: rgba(56, 189, 240, 0.06);
+  font-size: 13px; color: var(--text-dim);
+}
+.lb-my-rank b { color: var(--text); }
+.lb-table-wrap { overflow-x: auto; }
+.lb-table { width: 100%; border-collapse: collapse; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.lb-table th {
+  text-align: left; padding: 8px 12px; color: var(--text-dim); font-weight: 500;
+  border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.lb-table th.lb-num, .lb-table td.lb-num { text-align: right; }
+.lb-table td { padding: 9px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.lb-table tr:last-child td { border-bottom: none; }
+.lb-rank { width: 52px; font-weight: 600; color: var(--text-dim); }
+.lb-row:hover td { background: var(--bg-card); }
+.lb-trader { display: flex; align-items: center; gap: 9px; font-weight: 600; color: var(--text); }
+.lb-avatar {
+  width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+  background: var(--accent); color: var(--accent-text);
+  font-size: 11px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center; overflow: hidden;
+}
+.lb-avatar.has-identicon { background: var(--bg-hover); box-shadow: inset 0 0 0 1px var(--border); }
+.lb-avatar.has-identicon svg { width: 100%; height: 100%; display: block; }
+.lb-pos { color: var(--green); }
+.lb-neg { color: var(--red); }
+/* Caller's own row: same accent language as the shed-safe banner. */
+.lb-row.lb-me td { background: rgba(56, 189, 240, 0.07); }
+.lb-row.lb-me .lb-trader { color: var(--accent); }
+.lb-updated { margin-top: 10px; font-size: 11.5px; color: var(--text-muted); }
+
+/* ── Stats → Ledger (the public hash-chained tape) ─────────────────── */
+.lg-verify-row { display: flex; gap: 10px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
+.lg-select {
+  background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 10px; font-size: 13px;
+}
+.lg-verify-out { margin-top: 10px; font-size: 13px; color: var(--text-dim); min-height: 18px; word-break: break-word; }
+.lg-verify-out.lg-ok  { color: var(--green); }
+.lg-verify-out.lg-bad { color: var(--red); font-weight: 600; }
+.lg-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; }
+.lg-sealed { background: rgba(122,134,153,0.18); color: var(--text-dim); }
+.lg-active { background: rgba(0,200,140,0.15); color: var(--green); }
+/* Hash chips: colour derives from the hash bytes, so a row's own-hash chip
+   visually reappears as the row above's prev chip — the chain, visible. */
+.lg-chip {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px; border: 1px solid; border-radius: 5px;
+  padding: 1px 6px; margin-right: 6px; white-space: nowrap;
+}
+.lg-chip-null { border-color: var(--border); color: var(--text-muted); }
+/* The tape/chain content is wide (nowrap times + hash chips) — scroll it
+   INSIDE its own box so the page body never scrolls horizontally on mobile. */
+#lg-tape, #lg-chain { overflow-x: auto; }
+.lg-tape-table td { font-size: 12.5px; }
+.lg-time { color: var(--text-dim); white-space: nowrap; }
+.lg-kind { font-size: 11.5px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.03em; }
+.lg-detail { color: var(--text-dim); }
+.lg-hashes { white-space: nowrap; }
+.lg-note { font-size: 12px; color: var(--text-muted); margin-top: 8px; line-height: 1.5; }
+.lg-pager { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+.lg-pager button:disabled { opacity: 0.4; cursor: default; }
+.lg-range { font-size: 12px; color: var(--text-dim); margin-left: 6px; font-variant-numeric: tabular-nums; }

@@ -1,0 +1,203 @@
+/* MULTI/DEX SPEC.pdf — print stylesheet
+   Tuned for letter-size print with comfortable reading typography.
+   Brand accent is the amber we already use in the app. */
+
+:root {
+  --ink:     #1B1F26;
+  --ink-dim: #4A5160;
+  --rule:    #DCDFE5;
+  --accent:  #B78235;   /* darker Uplands Amber for paper readability */
+  --code-bg: #F5F2EC;
+  --btc:     #F7931A;
+  --eth:     #627EEA;
+  --sol:     #14A37F;
+  --icp:     #B78235;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, "Helvetica Neue", "Segoe UI", system-ui, sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.55;
+  color: var(--ink);
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  font-feature-settings: "kern", "liga", "tnum";
+}
+
+/* ── Typography hierarchy ────────────────────────────────────── */
+h1, h2, h3, h4 {
+  font-family: "Iowan Old Style", Georgia, "Times New Roman", serif;
+  color: var(--ink);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  page-break-after: avoid;
+}
+
+h1 {
+  font-size: 28pt;
+  line-height: 1.15;
+  margin: 0 0 0.4em 0;
+  letter-spacing: -0.015em;
+}
+/* The first h1 acts as the cover title — sits alone on page 1. */
+h1:first-of-type {
+  margin-top: 0;
+  padding-top: 1.4in;
+  font-size: 36pt;
+  color: var(--accent);
+}
+h1:first-of-type + p strong {
+  font-size: 13pt;
+  font-weight: 500;
+  font-style: italic;
+  color: var(--ink-dim);
+}
+
+h2 {
+  font-size: 17pt;
+  margin: 1.6em 0 0.5em;
+  padding-top: 0.4em;
+  border-top: 0.5pt solid var(--rule);
+  color: var(--accent);
+}
+
+h3 {
+  font-size: 12.5pt;
+  margin: 1.4em 0 0.3em;
+  color: var(--ink);
+}
+
+h4 {
+  font-size: 11pt;
+  margin: 1em 0 0.25em;
+  font-weight: 600;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+p {
+  margin: 0.5em 0 0.7em;
+  text-align: justify;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+}
+
+strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+em { color: var(--ink); }
+
+/* ── Lists ───────────────────────────────────────────────────── */
+ul, ol {
+  margin: 0.4em 0 0.9em;
+  padding-left: 1.3em;
+}
+li {
+  margin: 0.25em 0;
+}
+li > p:first-child { margin-top: 0; }
+li > p:last-child  { margin-bottom: 0.25em; }
+ol > li { padding-left: 0.15em; }
+
+ol > li::marker {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ── Code blocks ─────────────────────────────────────────────── */
+code {
+  font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: var(--code-bg);
+  padding: 0.08em 0.32em;
+  border-radius: 2pt;
+  color: var(--ink);
+}
+
+pre {
+  background: var(--code-bg);
+  border-left: 2pt solid var(--accent);
+  padding: 0.7em 0.9em;
+  margin: 0.8em 0 1em;
+  border-radius: 0 3pt 3pt 0;
+  font-size: 9pt;
+  line-height: 1.4;
+  overflow-x: hidden;
+  page-break-inside: avoid;
+}
+pre code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* ── Tables ──────────────────────────────────────────────────── */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.8em 0 1.1em;
+  font-size: 10pt;
+  page-break-inside: avoid;
+}
+thead th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--accent);
+  padding: 0.5em 0.6em;
+  border-bottom: 1pt solid var(--accent);
+}
+tbody td {
+  padding: 0.4em 0.6em;
+  border-bottom: 0.4pt solid var(--rule);
+  vertical-align: top;
+}
+tbody tr:last-child td { border-bottom: none; }
+
+/* ── Horizontal rules ────────────────────────────────────────── */
+hr {
+  border: none;
+  border-top: 0.5pt solid var(--rule);
+  margin: 1.6em 0 1.4em;
+}
+
+/* ── Blockquotes (used for editorial callouts) ───────────────── */
+blockquote {
+  border-left: 2pt solid var(--accent);
+  padding: 0.2em 0 0.2em 1em;
+  margin: 0.8em 0;
+  color: var(--ink-dim);
+  font-style: italic;
+}
+
+/* ── Print page setup ────────────────────────────────────────── */
+@page {
+  size: letter;
+  margin: 0.75in 0.85in 0.95in;
+
+  @bottom-center {
+    content: "MULTI/DEX  ·  Specification  ·  " counter(page);
+    color: #8A8F99;
+    font-family: -apple-system, "Helvetica Neue", system-ui, sans-serif;
+    font-size: 8.5pt;
+    letter-spacing: 0.04em;
+  }
+}
+
+/* Cover page: suppress footer on page 1 if Chromium honours :first */
+@page :first {
+  margin-top: 0in;
+  @bottom-center { content: ""; }
+}
+
+/* Page breaks before each top-level section keep the document tidy
+   without padding it out too much. */
+h2 { page-break-before: auto; }
+
+/* Prevent orphan lines */
+p, li { orphans: 3; widows: 3; }

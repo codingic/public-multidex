@@ -1,0 +1,291 @@
+/* ── Header ──────────────────────────────────────────────────────── */
+/* The sticky element is the WRAPPER (fuel banner + header), so when the
+   banner shows, the whole chrome block sticks and expands together. Its
+   rendered height is published as --chrome-h (ResizeObserver in main.js);
+   viewport-sized layouts subtract the variable, never a constant. */
+#top-chrome {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  /* 16px gutter matches #markets-view's side padding, so the logo lines up
+     with the market selector (and the right side with the grid edge). */
+  padding: 0 16px;
+  height: 56px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+}
+
+.header-left { display: flex; align-items: center; gap: 32px; }
+/* Push account actions to the far right; nav stays left-grouped against the logo. */
+.header-right { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+
+.logo { display: flex; align-items: center; }
+.logo-lockup {
+  /* MULTI/DEX full brand lockup (icon + wordmark) — outlined vector, no font
+     dependency, renders identically everywhere. Fills map to the theme: icon
+     + slash → --accent, letters → --text, so it tracks any palette change.
+     width:auto, so height drives the overall scale. */
+  height: 23px;
+  width: auto;
+  display: block;
+}
+
+/* Nav sits immediately right of the logo (left-justified, Hyperliquid-style).
+   margin-left 22px so the logo→first-item gap (22 + the tab's 18px left pad =
+   40px to the label) equals the gap between menu labels (18 + 4 + 18 = 40px). */
+.tabs { display: flex; gap: 4px; margin-left: 22px; }
+.tab {
+  padding: 8px 18px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  /* Inter is a variable font — regular (400) keeps the nav light and airy. */
+  font-weight: 400;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color 0.2s, box-shadow 0.2s;
+  position: relative;
+}
+.tab:hover { color: var(--accent); }
+/* Primary nav: white items; the selected one uses the blue highlight color,
+   no underline. */
+.tab.active {
+  color: var(--accent);
+  background: transparent;
+}
+/* Account moved to the far-right user dropdown on desktop, so its tab is
+   desktop-hidden; the mobile drawer re-shows it (responsive.css). */
+.tab-mobile-only { display: none; }
+/* Second-level mobile drawer (Account sections) — mobile-only by default;
+   responsive.css reveals it when the header carries .acct-menu. */
+.drawer-acct { display: none; }
+
+/* ── Signed-in user dropdown (desktop far right) ─────────────────── */
+.user-menu { position: relative; display: none; }        /* shown when .header.authed */
+.header.authed .user-menu { display: block; }
+.header.authed #auth-btn { display: none; }               /* Sign out lives in the dropdown */
+.user-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px 5px 6px;
+  background: transparent;
+  /* Same cyan outline as the Place Order / Swap Tokens boxes (orderbook.css
+     .order-panel) — the signed-in pill belongs to that highlight family. */
+  border: 1.5px solid rgba(56, 189, 240, 0.45);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+/* Hover feedback: the border reads THICKER — a ring shadow in the same color
+   (no reflow). The pill's background must not change; the lighter fill is
+   reserved for the OPEN (menu showing) state. */
+.user-menu-trigger:hover { box-shadow: 0 0 0 1px rgba(56, 189, 240, 0.45); }
+.user-menu.open .user-menu-trigger { border-color: var(--accent); background: var(--bg-hover); }
+/* Account view active: the pill is the selected "tab" (Account isn't in the
+   desktop nav row). Full-saturation border + a 1px ring in the same colour
+   reads as a thicker outline without shifting layout. */
+.user-menu.view-active .user-menu-trigger {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.user-menu-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+/* Ident icon variant: the minidenticons SVG (seeded from the principal) carries
+   the colour; the tile is a neutral elevated surface so the squares read on the
+   dark UI. Set by setIdenticon() in identicon.js. */
+.user-menu-avatar.has-identicon {
+  background: var(--bg-hover);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.user-menu-avatar.has-identicon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.user-menu-name { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-menu-caret { color: var(--text-dim); transition: transform 0.15s; flex-shrink: 0; }
+.user-menu.open .user-menu-caret { transform: rotate(180deg); }
+.user-menu-dropdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 160px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 200;
+}
+.user-menu.open .user-menu-dropdown { display: block; }
+.user-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.12s, color 0.12s;
+}
+.user-menu-item:hover { background: var(--bg-input); color: var(--accent); }
+.user-menu-sep { border-top: 1px solid var(--border); margin: 6px 0; }
+
+/* Hamburger — hidden on desktop */
+.menu-toggle {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  padding: 4px;
+}
+
+/* Chart cell — fills its grid cell; desktop uses full height, mobile uses fixed height */
+.mini-chart {
+  /* No card chrome — the graph renders over the page background (desktop +
+     mobile). Canvas and toolbar are transparent, so nothing boxes the chart. */
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  min-height: 0;
+}
+.mini-chart-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 12px;
+  background: transparent;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.mini-chart-iv {
+  padding: 4px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+.mini-chart-iv:hover { color: var(--text); }
+.mini-chart-iv.active {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+/* View selector for the chart cell: chart | liquidations | hide. Replaces the
+   old Hide toggle. The label carries the ACCENT colour on purpose — the cell
+   holds more than a price chart now, and a dimmed control would never be
+   discovered. Same interaction shape as the order book's granularity menu. */
+.mini-chart-view {
+  position: relative;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s;
+}
+.mini-chart-view:hover { border-color: var(--accent); }
+.mcv-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 128px;
+  background: var(--bg-card, var(--bg-input));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  z-index: 40;
+  overflow: hidden;
+}
+.mini-chart-view.open .mcv-menu { display: block; }
+.mcv-item {
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.mcv-item:hover { background: var(--bg-hover); color: var(--text); }
+
+.mini-chart-canvas { width: 100%; flex: 1; min-height: 0; }
+
+/* The liquidation map shares the chart cell — only one is ever mounted. */
+.mini-chart-heat { display: none; }
+.mini-chart.mcv-showing-heat .mini-chart-heat {
+  /* Flex column so the canvas wrap (.hm2-wrap) can flex-fill the cell — the
+     surface is a canvas sized to its box, so nothing here ever scrolls. */
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 4px 8px 2px;
+  margin: 0;
+  border-bottom: none;
+}
+.mini-chart-heat .hm2-wrap { height: auto; flex: 1; min-height: 150px; }
+.mini-chart.mcv-showing-heat .mini-chart-canvas { display: none; }
+/* Interval buttons are chart-only — meaningless over the map. */
+.mini-chart.mcv-showing-heat .mini-chart-iv { display: none; }
+.mini-chart.mini-chart-collapsed {
+  /* When the user hides the chart, the cell shrinks to the toolbar height
+     (no canvas, no interval buttons), freeing the grid row for the rest
+     of the content below. */
+  min-height: 0;
+  height: auto;
+  /* The menu hangs BELOW the toolbar — which, once the cell is only as tall
+     as the toolbar, is outside the cell box. The cell's `overflow: hidden`
+     (there to contain the chart canvas) would clip the menu away, and since
+     the menu is the only way back, Hide would be a one-way door that
+     survives reloads via localStorage. Nothing needs containing here: the
+     canvas is display:none in this state. */
+  overflow: visible;
+}
+/* Same hazard whenever the menu is open over a cell shorter than the menu —
+   e.g. the map view on mobile with an empty book. The rule above is the one
+   that matters (and needs no :has()); this generalises it. */
+.mini-chart:has(.mini-chart-view.open) { overflow: visible; }
+.mini-chart.mini-chart-collapsed .mini-chart-canvas { display: none; }
+.mini-chart.mini-chart-collapsed .mini-chart-iv { display: none; }
+

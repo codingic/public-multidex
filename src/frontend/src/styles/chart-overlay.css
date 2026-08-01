@@ -1,0 +1,270 @@
+/* ── Chart Overlay ─────────────────────────────────────────────── */
+.chart-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  background: rgba(11,18,32,0.96);
+  display: flex;
+  flex-direction: column;
+  backdrop-filter: blur(8px);
+}
+.chart-overlay-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.chart-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+.chart-intervals {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  justify-content: center;
+}
+.chart-interval-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.chart-interval-btn:hover {
+  background: rgba(229,169,83,0.10);
+  border-color: var(--accent);
+  color: var(--text);
+}
+.chart-interval-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.chart-close-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.chart-close-btn:hover {
+  background: rgba(240,122,108,0.15);
+  border-color: var(--red);
+  color: var(--red);
+}
+.chart-container {
+  flex: 1;
+  min-height: 0;
+  padding: 8px;
+}
+
+/* ── Order Panel Auth Overlay ──────────────────────────────────── */
+.order-auth-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(11,18,32,0.85);
+  backdrop-filter: blur(6px);
+  border-radius: var(--radius);
+}
+.order-auth-overlay-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+  padding: 24px;
+  max-width: 260px;
+}
+.order-auth-icon {
+  color: var(--accent);
+  opacity: 0.8;
+  margin-bottom: 4px;
+}
+.order-auth-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+.order-auth-desc {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.order-auth-signin-btn {
+  margin-top: 6px;
+  padding: 10px 32px;
+  font-size: 14px;
+}
+
+/* Disabled state for order form inputs */
+.order-panel input:disabled,
+.order-panel select:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.order-type-btn:disabled,
+.side-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ───────────────────────── Stats Page ─────────────────────────
+ * Top-level dashboard. Lays out on a max-width column with stacked
+ * sections: KPI row, per-market cards, AMM pool detail, oracle feed
+ * health, order-book depth per market. Colors reuse the palette
+ * tokens so the page stays on-brand.                              */
+
+.stats-container {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 24px 16px 96px;
+}
+/* Mobile: drop the container's side padding so the page gutter matches the
+   Account page (the view's 12px is the only inset), instead of 12+16=28px. */
+@media (max-width: 900px) {
+  .stats-container { padding-left: 0; padding-right: 0; }
+}
+
+.stats-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 28px;
+}
+.kpi-tile {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+.kpi-label {
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.kpi-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.kpi-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+/* Health tinting for KPI values (insurance buffer, canister fuel/status). */
+.kpi-value.health-ok   { color: var(--green); }
+.kpi-value.health-warn { color: var(--accent); }
+.kpi-value.health-bad  { color: var(--red); }
+
+.stats-section { margin-bottom: 28px; }
+.stats-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 0 2px;
+}
+.stats-section-head h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text);
+}
+.stats-section-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.stats-empty {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  color: var(--text-dim);
+  text-align: center;
+  font-size: 13px;
+}
+.stats-insurance-explainer {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.stats-insurance-explainer strong { color: var(--text); }
+.stats-insurance-explainer em { color: var(--text-muted); font-style: italic; }
+.stats-insurance-explainer code {
+  background: var(--bg-input);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: var(--text);
+}
+.stats-insurance-explainer p + p { margin-top: 10px; }
+
+/* Treasury tab: fee ladder (table styles shared with the leaderboard's
+   .lb-table) + on-chain principal row. */
+.fee-ladder-note { margin: 10px 0 14px; font-size: 11.5px; color: var(--text-muted); }
+/* Explainer links (Status / Docs): no global anchor rule exists, so without
+   this they render in the browser's default blue. */
+.stats-insurance-explainer a { color: var(--accent); text-decoration: underline; }
+.stats-insurance-explainer a:hover { color: var(--accent-hover); }
+.tr-principal-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.tr-principal-label {
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.tr-principal-val {
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-input);
+  padding: 3px 8px;
+  border-radius: 4px;
+  word-break: break-all;
+}
+.stats-empty code {
+  background: var(--bg-input);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+

@@ -1,0 +1,132 @@
+/* ── Reset & Base ─────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/*
+ * Hide the in-field icon LastPass injects next to inputs (it ignores
+ * data-lpignore). LastPass renders the icon as <div data-lastpass-icon-root>
+ * containing an SVG inside a CLOSED shadow root, and pins the div with an inline
+ * `display: initial !important` — which beats any stylesheet `display: none`
+ * (inline !important always wins). So hide it with properties LastPass does NOT
+ * set inline: opacity + visibility both still apply through to the closed shadow
+ * tree, and pointer-events kills the (cursor:pointer) click target. Matched on
+ * the injected div directly, since it isn't always the input's next sibling.
+ */
+div[data-lastpass-icon-root],
+div[data-lastpass-infield] {
+    opacity: 0 !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+
+:root {
+  /* ── Layout ────────────────────────────────────────────────── */
+  /* Rendered height of the sticky top chrome (#top-chrome = fuel banner +
+     header). This 56px matches the desktop header height and is only the
+     no-banner FALLBACK — a ResizeObserver in main.js keeps the live value in
+     sync, so viewport-sized layouts (calc(100vh - var(--chrome-h) …)) stay
+     correct when the banner shows, wraps, or hides. */
+  --chrome-h: 56px;
+
+  /* ── Surfaces (Glacier slate) ──────────────────────────────── */
+  /* Darkened + desaturated 2026-07: cards sit near the page bg so boxes blend
+     into the field (borders carry the separation — the modern low-elevation
+     look), and the whole surface family runs at ~half its former blue
+     saturation (hue + lightness preserved per step) so the field reads
+     slate-grey, letting the cyan accent + amber CTAs carry the colour. */
+  --bg: #10151D;              /* page background */
+  --bg-card: #151B24;         /* panels, cards, modals */
+  --bg-input: #202730;        /* nested input surfaces */
+  --bg-hover: #2F3743;        /* elevated/hover rows */
+  --border: #282F3A;          /* borders, dividers, grid */
+
+  /* ── Brand / interactive accent (Glacier Cyan) ─────────────── */
+  /* Drives every interactive accent — links, active nav, focus rings,
+     toggles, crosshair. Primary CALL-TO-ACTION buttons keep amber (--cta
+     below) so the one warm action pops against the cool field. */
+  --accent: #38BDF0;          /* Glacier Cyan */
+  --accent-hover: #2C9FCE;    /* Cyan Dim — hover/pressed */
+  --accent-text: #04222E;     /* near-black text on cyan surfaces */
+  --accent-border: rgba(56,189,240,0.30); /* subtle cyan hairline — box outlines */
+
+  /* ── Primary call-to-action (Uplands Amber, retained) ──────── */
+  --cta: #E5A953;             /* Amber — primary buttons only (Swap, Place Order, Sign In) */
+  --cta-hover: #B78235;       /* Amber Dim — hover/pressed */
+  --cta-text: #1A1206;        /* near-black text on amber surfaces */
+
+  /* ── Text (Snowfall / Fog / Mist) ──────────────────────────── */
+  /* Text tiers, brightened 2026-07 for legibility on the darkened surfaces.
+     Contrast on --bg-card: primary ~13:1, secondary ~5.7:1, tertiary ~4.5:1.
+     The old tertiary (#4A5668) was ~2.3:1 — small "subtle" labels squinted;
+     it now matches the old secondary's legibility (the column-title feel). */
+  --text: #F2F5F9;            /* Snowfall — primary */
+  --text-dim: #8B96A7;        /* Fog — secondary (labels, hints) */
+  --text-muted: #78839A;      /* Mist — tertiary (small captions, disabled) */
+
+  /* ── Trading semantics (Alpine Mint / Ember Clay) ──────────── */
+  --green: #5EE6B4;           /* Alpine Mint — buys, longs, positive */
+  --green-dim: rgba(94,230,180,0.08);  /* Mint Tint — depth bars */
+  --green-text: #062418;      /* text on mint buttons */
+  --red: #F07A6C;             /* Ember Clay — sells, shorts, negative */
+  --red-dim: rgba(240,122,108,0.08);   /* Clay Tint — depth bars */
+  --red-text: #2A0C08;        /* text on clay buttons */
+
+  /* ── Info / warning accents ────────────────────────────────── */
+  --glacier: #3BB8D4;         /* links, info, crosshair */
+  --glacier-text: #07242E;    /* text on glacier buttons */
+  --heather: #C48BD9;         /* warnings, liquidation alerts */
+  --heather-tint: rgba(196,139,217,0.10);
+
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 4px 24px rgba(0,0,0,0.4);
+}
+
+/* Number inputs: no spinner arrows. ±1 steps are useless against prices/
+   quantities with 2–8 decimals, and the arrows clutter every amount field. */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;   /* Firefox */
+  appearance: textfield;
+}
+
+/* Form controls (buttons, inputs, selects) do NOT inherit the document font —
+   the browser UA stylesheet gives them its own default (Arial in Chrome),
+   which is why menu/tab buttons rendered in a different face. Make every
+   control use the app font; component rules that want something else (e.g.
+   monospace principals) still win on specificity. */
+button, input, select, textarea { font-family: inherit; }
+
+body {
+  font-family: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-optical-sizing: auto;
+  /* AURORA over the peaks: an asymmetric night-sky wash — cyan sweeping in
+     from the top-left, a heather counter-glow off the upper right, and only
+     a whisper of the old amber alpenglow left at the base. Cooler and more
+     directional than the symmetric dawn (glacier-over-alpenglow) it replaces.
+     Fixed attachment anchors the glows to the VIEWPORT so every page gets
+     the same quiet depth and the transparent cyan-outline boxes let it shine
+     through. Alphas stay ≤0.10 — solid --bg/--bg-card surfaces sitting on
+     top differ from the local gradient shade by ~1–2 RGB steps. */
+  background:
+    radial-gradient(ellipse 90% 70% at 8% -10%,
+      rgba(56,189,240,0.10) 0%,
+      rgba(56,189,240,0.04) 40%,
+      transparent 68%),
+    radial-gradient(ellipse 70% 55% at 100% 12%,
+      rgba(196,139,217,0.07) 0%,
+      rgba(196,139,217,0.03) 40%,
+      transparent 62%),
+    radial-gradient(ellipse 120% 45% at 50% 118%,
+      rgba(229,169,83,0.06) 0%,
+      transparent 65%),
+    var(--bg);
+  background-attachment: fixed;
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.5;
+}
+

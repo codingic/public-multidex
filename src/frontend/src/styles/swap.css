@@ -1,0 +1,264 @@
+/* ── Swap ─────────────────────────────────────────────────────────── */
+/* Hero strap above the boxes: big, bold, centered — the page's one-line
+   pitch. Sits OUTSIDE .swap-container (a sibling): the container becomes a
+   grid with explicit row placements on wide screens, and a child strap
+   would collide with them. clamp() scales it from phone to desktop. */
+.swap-strap {
+  text-align: center;
+  font-size: clamp(26px, 3.4vw, 40px);
+  font-weight: 640;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
+  color: var(--text);
+  max-width: 900px;
+  margin: 18px auto 0;
+}
+/* The pay-off word: a SERIF ITALIC voice (Newsreader, bundled) against the
+   geometric Inter — the editorial flourish, in the same white as the rest
+   of the strap. A touch larger and lighter than the Inter around it so the
+   two faces sit at the same optical weight and height. */
+.swap-strap .strap-accent {
+  font-family: 'Newsreader Variable', Georgia, 'Times New Roman', serif;
+  font-style: italic;
+  font-weight: 560;
+  font-size: 1.06em;
+  font-optical-sizing: auto;
+}
+
+.swap-container {
+  max-width: 480px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  /* 24px = the view's top padding, so the gap between the Swap box and the
+     market box matches the gap above the Swap box (header → Swap box). */
+  gap: 24px;
+  /* + the view's 24px = 48px below the header — the same distance the
+     Deposit page's box sits at (.deposit-container's 24px top padding). */
+  padding-top: 24px;
+}
+.swap-card, .swap-orders-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+}
+/* Swap box: transparent over the page field (matching the market box beside
+   it — its inner input groups keep their own surfaces), with a slightly
+   stronger cyan outline than the default hairline carrying the box edge. */
+.swap-card {
+  background: transparent;
+  border-color: rgba(56, 189, 240, 0.45);
+  border-width: 1.5px;   /* slightly thicker than the default 1px card border */
+}
+/* h2 defaults to bold (700); 540 gives a lighter title consistent with the
+   Place Order box heading. */
+.swap-card h2 { font-size: 20px; font-weight: 540; margin-bottom: 20px; }
+.swap-form { display: flex; flex-direction: column; gap: 4px; }
+
+/* Friendlier, less "financial" panels for the novice-facing Swap page —
+   the chosen blend (A + E): A's soft cyan-highlight gradient (0.12 → 0.04)
+   with matching hairline, on E's generous geometry (20px padding, 16px
+   radius, 28px amount type below). */
+.swap-input-group {
+  background: linear-gradient(160deg, rgba(56, 189, 240, 0.12), rgba(56, 189, 240, 0.04));
+  border: 1px solid rgba(56, 189, 240, 0.20);
+  border-radius: 16px;
+  padding: 20px;
+}
+/* Sell / Buy labels in the accent (highlight) colour. The inline "estimating…"
+   span keeps its own muted colour. */
+.swap-input-group label { font-size: 13px; color: var(--accent); display: block; margin-bottom: 8px; }
+.swap-input-row { display: flex; gap: 8px; }
+.swap-input-row input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 28px;   /* Proposal E: bigger, friendlier amount type (was 24px) */
+  font-weight: 500;
+  outline: none;
+  min-width: 0;
+}
+.swap-input-row input::placeholder { color: var(--text-muted); }
+.swap-input-row select {
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+/* Enhanced token dropdown (enhanceSelectDropdown) — match the swap-row select
+   look (bg-hover, heavier weight) instead of the lighter default .pos-input.
+   The 2-class selector outranks the base .dd-btn / .pos-input rules. */
+.swap-input-row .dd-btn {
+  background: var(--bg-hover);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+/* --text-dim (not muted): balance is actionable info, it must stay readable
+   over the input-group surface. */
+.swap-balance { font-size: 12px; color: var(--text-dim); margin-top: 8px; }
+
+/* Swap CTA takes the Buy colour — var(--green), matching .side-btn.buy.active
+   and the Place Order "Buy" submit button — instead of the amber primary.
+   Lighter weight + darker near-black text (matching #place-order-btn) keeps it
+   crisp on the mint fill. Overrides the inherited .btn-primary hover (would
+   flip to amber); disabled ("Insufficient liquidity") stays neutral. */
+#swap-execute-btn { background: var(--green); color: #060706; font-weight: 370; }
+#swap-execute-btn:hover:not(:disabled) { background: #55CFA2; color: #060706; }
+#swap-execute-btn:disabled { background: var(--bg-hover); color: var(--text-muted); }
+
+.swap-preview {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  /* --text-dim (not muted): the conversion rate is the swap's key figure. */
+  color: var(--text-dim);
+  margin-top: 6px;
+  min-height: 16px;
+}
+.swap-preview-rate {
+  /* no extra opacity — it stacked with the already-dim colour */
+}
+/* When the rate line is showing the partial-fill warning, make it clickable
+   so the user can tap to auto-fill the "From" field with the max swappable
+   amount. Subtle underline + pointer cursor signal the affordance. */
+.swap-preview-rate.clickable {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  opacity: 1;
+  transition: filter 0.15s;
+}
+.swap-preview-rate.clickable:hover { filter: brightness(1.2); }
+.swap-preview-impact {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.swap-preview-impact.low    { color: var(--green); background: var(--green-dim); }
+.swap-preview-impact.medium { color: var(--accent); background: rgba(229,169,83,0.12); }
+.swap-preview-impact.high   { color: var(--red);   background: var(--red-dim); }
+
+/* The "To" amount shows estimated in slightly dimmer text when it's an estimate */
+#swap-to-amount.estimated { color: var(--text-dim); }
+
+.swap-arrow { display: flex; justify-content: center; margin: -8px 0; position: relative; z-index: 1; }
+.swap-arrow-btn {
+  width: 36px; height: 36px;
+  background: var(--bg-card);
+  border: 3px solid var(--bg);
+  border-radius: 50%;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s;
+}
+.swap-arrow-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+.swap-options { margin-top: 12px; }
+.swap-mode-toggle {
+  display: flex;
+  /* No track fill — the tabs sit directly on the box; the glacier underline on
+     .mode-btn.active carries the selection alone. */
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  margin-bottom: 12px;
+}
+.mode-btn {
+  flex: 1;
+  padding: 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+/* Sub-tab switchers (Market/Limit) use glacier underline to reserve amber for
+   top-level nav/CTAs, per the design spec. */
+.mode-btn.active {
+  background: transparent;
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--glacier);
+  border-radius: 0;
+}
+
+.swap-mode-options { display: flex; flex-direction: column; gap: 8px; }
+.swap-mode-options label { font-size: 13px; color: var(--text-dim); }
+.swap-mode-options input[type="number"] {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+}
+
+.slippage-btns { display: flex; gap: 6px; }
+.slip-btn {
+  flex: 1;
+  padding: 6px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+/* Lighter weight (600 → 520), compensated by darker on-cyan text — matches the
+   Place Order box's toggle treatment (orderform.css). */
+.slip-btn.active { background: var(--accent); color: #010B0F; border-color: var(--accent); font-weight: 480; }
+
+.checkbox-label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--text-dim); cursor: pointer;
+}
+.checkbox-label input { accent-color: var(--accent); }
+
+.swap-orders-card h3 { font-size: 16px; margin-bottom: 12px; }
+
+/* ── Rate graph box (second box: Swap, Graph, Book/Trades) ─────────
+   Same transparent-card language as .swap-market-box (stats.css). */
+.swap-graph-box {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 12px 8px;
+}
+.swap-graph-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+/* The title IS the pair's current rate ("1 BTC = 21,412 ICP") — key figure,
+   full-strength text like .swap-preview's rate. */
+.swap-graph-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.swap-graph-ivs { display: flex; gap: 4px; }
+.swap-graph-ivs button {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.swap-graph-ivs button:hover { color: var(--text-dim); }
+.swap-graph-ivs button.active { color: var(--text); background: var(--bg-hover); }
+.swap-graph-canvas { height: 220px; }
+

@@ -1,0 +1,476 @@
+/* ── Oracle feed ── */
+.oracle-global {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+.oracle-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.oracle-k { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.oracle-v { font-size: 15px; color: var(--text); font-variant-numeric: tabular-nums; }
+.oracle-live {
+  color: var(--green);
+  font-size: 12px;
+  align-self: center;
+  animation: oracle-pulse 1.2s ease-in-out infinite;
+}
+@keyframes oracle-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+.oracle-assets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+.oracle-asset {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+}
+.oracle-asset-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.oracle-asset-price {
+  font-variant-numeric: tabular-nums;
+}
+.oracle-asset-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+/* The APPLIED refPrice line under the fetched meta — the price the AMM
+   actually quotes off, with its age. Distinct from the fetch row above:
+   a healthy-looking fetch can be vetoed by the accept gate for hours
+   while the applied price freezes and the AMM sidelines (the ICP
+   incident this row exists to make visible). */
+.oracle-asset-applied {
+  font-size: 11px;
+  color: var(--text-dim);
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+  margin: -6px 0 10px;   /* tuck under .oracle-asset-meta's bottom margin */
+  flex-wrap: wrap;
+}
+.oracle-sidelined {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--red);
+  border: 1px solid var(--red);
+  border-radius: 4px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+.oracle-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.oracle-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.oracle-table td {
+  padding: 4px 2px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.oracle-src { text-transform: capitalize; }
+.oracle-num { text-align: right; }
+.oracle-ok  { color: var(--green); text-align: right; }
+.oracle-err { color: var(--red); text-align: right; }
+
+/* Failed source: a compact trigger sits in place of the price; the full (often
+   long, multi-line) error opens in the shared .oracle-err-pop on hover / tap,
+   so it can't break the table layout. */
+.oracle-err-trigger {
+  color: var(--red);
+  cursor: pointer;
+  white-space: nowrap;
+  border-bottom: 1px dotted currentColor;
+  -webkit-tap-highlight-color: transparent;
+}
+.oracle-err-trigger::before { content: "⚠ "; }
+.oracle-err-trigger:hover,
+.oracle-err-trigger:focus-visible { color: var(--text); outline: none; }
+
+/* Shared, viewport-positioned (position:fixed → never clipped by an ancestor)
+   popover with a scrollable body, so any size of error message is readable. */
+.oracle-err-pop {
+  position: fixed;
+  z-index: 200;
+  display: none;
+  max-width: min(440px, calc(100vw - 16px));
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+.oracle-err-pop-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.oracle-err-pop-body {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 240px;
+  overflow: auto;            /* scrollable — any size error fits */
+  white-space: pre-wrap;     /* wrap long lines, keep newlines */
+  overflow-wrap: anywhere;   /* break unbroken tokens (long URLs/ids) */
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ── Depth bars ── */
+.stats-depth-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+.depth-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+}
+.depth-head {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.depth-market { font-weight: 600; color: var(--text); font-size: 14px; }
+.depth-spread { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.depth-mid { font-size: 12px; color: var(--text-dim); margin-bottom: 10px; font-variant-numeric: tabular-nums; }
+.depth-legend {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.depth-legend-bid { color: var(--green); }
+.depth-legend-ask { color: var(--red); }
+.depth-row {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 10px;
+  margin-bottom: 6px;
+  align-items: center;
+}
+.depth-pct {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.depth-bars {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+.depth-bid-cell, .depth-ask-cell {
+  position: relative;
+  height: 22px;
+  border-radius: 3px;
+  background: var(--bg-input);
+  overflow: hidden;
+}
+.depth-bid-fill {
+  position: absolute;
+  top: 0; right: 0;
+  height: 100%;
+  background: var(--green-dim);
+  border-right: 2px solid var(--green);
+}
+.depth-ask-fill {
+  position: absolute;
+  top: 0; left: 0;
+  height: 100%;
+  background: var(--red-dim);
+  border-left: 2px solid var(--red);
+}
+.depth-bid-cell span, .depth-ask-cell span {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0 8px;
+  color: var(--text);
+  font-size: 11px;
+  z-index: 1;
+}
+.depth-bid-cell span { right: 6px; }
+.depth-ask-cell span { left: 6px; }
+
+/* ─── Stats sub-tabs ─────────────────────────────────────── */
+
+.stats-subtabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+  /* Too many tabs for a phone width — scroll them horizontally on one line
+     rather than overflowing the page. */
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+/* Mobile: wrap the sub-tabs onto multiple lines instead of scrolling — a
+   horizontal scroll hides tabs the user can't tell are there. */
+@media (max-width: 900px) {
+  .stats-subtabs { flex-wrap: wrap; overflow-x: visible; }
+  .stats-subtab { padding: 9px 11px; }
+}
+.stats-subtab {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 400;  /* light nav/tab text */
+  padding: 10px 14px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 120ms, border-color 120ms;
+}
+.stats-subtab:hover { color: var(--text); }
+.stats-subtab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.stats-tab-content { display: none; }
+.stats-tab-content.active { display: block; }
+
+/* ─── P&L cards ──────────────────────────────────────────── */
+/* One per AMM pool. Larger and more graphical than the Overview
+ * pool cards — this is where you stare at the equity curve.       */
+
+.stats-pnl-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.pnl-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+.pnl-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 10px;
+  gap: 12px;
+}
+.pnl-title { display: flex; flex-direction: column; gap: 4px; }
+.pnl-title .pool-name { font-size: 16px; font-weight: 600; color: var(--text); }
+.pnl-base {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.pnl-sep { color: var(--text-muted); margin: 0 4px; }
+.pnl-stats {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.pnl-vplp {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.pnl-pct {
+  font-size: 12px;
+  font-weight: 500;
+}
+.pos { color: var(--green); }
+.neg { color: var(--red); }
+
+.pnl-chart-wrap {
+  background: var(--bg-input);
+  border-radius: 8px;
+  padding: 6px;
+  margin-bottom: 10px;
+}
+.pnl-chart {
+  width: 100%;
+  height: 88px;
+  display: block;
+}
+.pnl-area {
+  fill-opacity: 0.12;
+}
+.pnl-chart.pos .pnl-area { fill: var(--green); }
+.pnl-chart.neg .pnl-area { fill: var(--red); }
+.pnl-chart.pos .pnl-line { stroke: var(--green); fill: none; stroke-width: 1.5; }
+.pnl-chart.neg .pnl-line { stroke: var(--red);   fill: none; stroke-width: 1.5; }
+.pnl-breakeven {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  opacity: 0.6;
+}
+.pnl-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 28px 0;
+  text-align: center;
+}
+.pnl-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  align-items: baseline;
+}
+.pnl-foot-label {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+}
+.pnl-foot-val { color: var(--text); }
+.pnl-foot-sep { color: var(--text-muted); margin: 0 2px; }
+
+/* ─── Vault P&L card (replaces per-pool P&L cards) ──────────────
+ * Single card per vault. The asset-mix bar shows what the AMM is
+ * holding at this moment in quote-denominated weights, color-coded
+ * per asset so it reads at a glance. Reuses pnl-card chrome.       */
+
+.vault-card .pnl-vplp { font-size: 28px; }
+.vault-chart { height: 120px; }
+
+.vault-mix {
+  margin: 14px 0 12px;
+}
+.vault-mix-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--bg-input);
+  margin-bottom: 10px;
+}
+.vault-mix-seg {
+  height: 100%;
+  transition: width 200ms;
+}
+.vault-mix-seg.mix-btc    { background: #f7931a; }       /* bitcoin orange */
+.vault-mix-seg.mix-eth    { background: #627eea; }       /* ethereum blue  */
+.vault-mix-seg.mix-sol    { background: #9945ff; }       /* solana purple  */
+.vault-mix-seg.mix-icp    { background: #29abe2; }       /* icp cyan       */
+.vault-mix-seg.mix-icpusd { background: var(--text-dim); }/* cash neutral   */
+
+.vault-mix-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.vault-mix-key {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.vault-mix-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  vertical-align: -1px;
+}
+.vault-mix-dot.mix-btc    { background: #f7931a; }
+.vault-mix-dot.mix-eth    { background: #627eea; }
+.vault-mix-dot.mix-sol    { background: #9945ff; }
+.vault-mix-dot.mix-icp    { background: #29abe2; }
+.vault-mix-dot.mix-icpusd { background: var(--text-dim); }
+.vault-mix-sub {
+  color: var(--text-muted);
+  font-size: 10px;
+  margin-left: 3px;
+}
+
+/* ─── AMM Pools — book-commitment bars ──────────────────────────
+ * Two horizontal progress bars per pool card. Bar fills to the AMM's
+ * share of total book depth on each side. Replaces the older base-vs-
+ * quote inventory bar that conflated per-pool base with shared cash.
+ */
+
+.commitment-row {
+  display: grid;
+  grid-template-columns: 50px 1fr 110px 140px;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 6px;
+}
+.commitment-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.commitment-label.commitment-ask { color: var(--red); }
+.commitment-label.commitment-bid { color: var(--green); }
+.commitment-bar {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg-input);
+  overflow: hidden;
+}
+.commitment-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 200ms ease-out;
+}
+.commitment-fill.ask { background: var(--red); }
+.commitment-fill.bid { background: var(--green); }
+.commitment-value { color: var(--text); text-align: right; }
+.commitment-pct   { color: var(--text-dim); font-size: 11px; text-align: right; }
+
+/* Tighten the metadata grid below — fewer fields means more breathing room. */
+.pool-card .pool-kvs { margin-top: 12px; }
+
+
+/* Lent out — principal the vault has advanced to margin pools. Part of the
+   vault's value but NOT inventory it can quote with, so it is deliberately
+   distinct from the asset colours: a muted amber that reads as "committed
+   elsewhere" rather than as another token in the basket. */
+.vault-mix-seg.mix-lent { background: repeating-linear-gradient(45deg, #b4822899, #b4822899 4px, #b4822866 4px, #b4822866 8px); }
+.vault-mix-dot.mix-lent { background: #b48228; }

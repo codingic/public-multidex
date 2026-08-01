@@ -1,0 +1,368 @@
+/* ── Docs tab ──────────────────────────────────────────────────────
+   Multi-page on-site documentation. Content lives in src/docs.js; the shell
+   (sidebar + page) is in index.html and rendered by docsRoute() in main.js.
+   EVERY rule is scoped under #docs-view so the doc's generic element styling
+   (h1, h2, p, table, code…) can't leak into the rest of the app. Design
+   tokens come from the global :root. */
+
+/* Shell: sidebar column + readable measure. */
+.docs-shell {
+  max-width: 1130px;
+  margin: 0 auto;
+  padding: 8px 4px 80px;
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 44px;
+  align-items: start;
+  line-height: 1.65;
+}
+#docs-view .docs-page { max-width: 860px; min-width: 0; position: relative; }
+
+/* ── Welcome-page aurora ───────────────────────────────────────────
+   Two blurred colour blobs drifting slowly behind the hero (the welcome
+   page only — the div ships in that page's html). Decorative: behind the
+   text, no pointer events, transform-only animation, and prefers-reduced-
+   motion freezes it. Alphas stay low so body text keeps its contrast. */
+.docs-aurora {
+  position: absolute;
+  inset: -40px -60px auto -60px;
+  height: 340px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: -1;
+}
+.docs-aurora i {
+  position: absolute;
+  width: 420px;
+  height: 260px;
+  border-radius: 50%;
+  filter: blur(70px);
+  will-change: transform;
+}
+.docs-aurora i:first-child {
+  left: -60px;
+  top: -40px;
+  background: radial-gradient(closest-side, rgba(56, 189, 240, 0.16), transparent);
+  animation: aurora-a 22s ease-in-out infinite alternate;
+}
+.docs-aurora i:last-child {
+  right: -40px;
+  top: 20px;
+  background: radial-gradient(closest-side, rgba(196, 139, 217, 0.12), transparent);
+  animation: aurora-b 26s ease-in-out infinite alternate;
+}
+@keyframes aurora-a {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(140px, 40px) scale(1.15); }
+}
+@keyframes aurora-b {
+  from { transform: translate(0, 0) scale(1.1); }
+  to   { transform: translate(-120px, -30px) scale(0.95); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .docs-aurora i { animation: none; }
+}
+
+/* ── Sidebar navigation ─────────────────────────────────────────────
+   A static column: no inner scrollbox — expanding groups just makes the
+   page taller, and the whole page scrolls. Part headers are collapsible
+   toggles (desktop only; the mobile chip row hides them). */
+#docs-view .docs-side {
+  padding: 2px 2px 16px;
+  font-size: 13px;
+}
+#docs-view .docs-filter {
+  width: 100%;
+  margin-bottom: 14px;
+  padding: 6px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12.5px;
+}
+#docs-view .docs-filter::placeholder { color: var(--text-muted); }
+#docs-view .docs-filter:focus { outline: none; border-color: var(--accent); }
+#docs-view .docs-side-group { margin-bottom: 14px; }
+#docs-view .docs-side-part {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-muted);
+  margin: 0 0 4px 2px;
+}
+#docs-view .docs-side-part:hover { color: var(--text-dim); }
+#docs-view .docs-side-part::before {
+  content: "▸";
+  font-size: 9px;
+  transition: transform 0.15s;
+}
+#docs-view .docs-side-group:not(.collapsed) .docs-side-part::before { transform: rotate(90deg); }
+@media (min-width: 901px) {
+  #docs-view .docs-side-group.collapsed .docs-side-link { display: none; }
+}
+#docs-view .docs-side-link {
+  display: block;
+  padding: 5px 10px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#docs-view .docs-side-link:hover { background: var(--bg-hover); color: var(--text); }
+#docs-view .docs-side-link.active {
+  background: rgba(56, 189, 240, 0.12);
+  color: var(--accent);
+  font-weight: 600;
+}
+/* Fixed-size chips: reserve the width of the BOLD label with a hidden ghost
+   line, so the .active font-weight bump can't change the box and reflow the
+   wrapped mobile rows (data-nav is set by renderDocsSidebar). */
+#docs-view .docs-side-link::after {
+  content: attr(data-nav);
+  display: block;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-weight: 600;
+}
+
+/* ── Page header block (crumb + h1 + lead) ────────────────────────── */
+#docs-view .docs-crumb {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+#docs-view h1 {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: var(--text);
+  margin: 0 0 10px;
+}
+#docs-view .docs-lead {
+  color: var(--text-dim);
+  font-size: 15px;
+  margin: 0 0 30px;
+}
+
+/* ── Welcome-page reading map ─────────────────────────────────────── */
+#docs-view .docs-map {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+/* Start-here box on the Launch page — the first thing a new visitor should
+   act on, so it reads as a panel rather than prose, with the deposit CTA as
+   its terminal step. */
+#docs-view .docs-start {
+  margin: 22px 0 26px;
+  padding: 18px 22px 20px;
+  background: rgba(56, 189, 240, 0.06);
+  border: 1px solid var(--accent-border);
+  border-radius: 12px;
+}
+#docs-view .docs-start-head {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+#docs-view .docs-start-steps { margin: 0 0 16px 20px; }
+#docs-view .docs-start-steps li { margin: 7px 0; }
+#docs-view .docs-start-cta {
+  display: inline-block;
+  padding: 10px 20px;
+  background: var(--accent);
+  color: var(--accent-text);
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.15s;
+}
+#docs-view .docs-start-cta:hover { background: var(--accent-hover); color: var(--accent-text); }
+
+/* Four-card grids read better as balanced pairs than auto-fill's 3+1. */
+#docs-view .docs-map--pair { grid-template-columns: repeat(2, 1fr); }
+@media (max-width: 640px) {
+  #docs-view .docs-map--pair { grid-template-columns: 1fr; }
+}
+#docs-view .docs-map-card {
+  display: block;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  text-decoration: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+#docs-view .docs-map-card:hover { border-color: var(--accent); background: var(--bg-hover); }
+#docs-view .docs-map-part {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+#docs-view .docs-map-title {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 5px 0 4px;
+}
+#docs-view .docs-map-blurb {
+  display: block;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+/* ── Prev / Next pager (the sequential-story path) ────────────────── */
+#docs-view .docs-pager {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 52px;
+}
+#docs-view .docs-pager-link {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 0 1 46%;
+  padding: 12px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  text-decoration: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+#docs-view .docs-pager-link:hover { border-color: var(--accent); background: var(--bg-hover); }
+#docs-view .docs-pager-link span { font-size: 11px; color: var(--text-muted); }
+#docs-view .docs-pager-link b { font-size: 13.5px; font-weight: 600; color: var(--accent); }
+#docs-view .docs-pager-next { align-items: flex-end; text-align: right; margin-left: auto; }
+
+/* ── In-page table of contents (long pages, e.g. Levels) ──────────── */
+#docs-view .docs-toc {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px 18px; margin-bottom: 36px; font-size: 14px;
+}
+#docs-view .docs-toc a { color: var(--accent); text-decoration: none; margin-right: 16px; white-space: nowrap; cursor: pointer; }
+#docs-view .docs-toc a:hover { color: var(--accent-hover); text-decoration: underline; }
+
+/* ── Page content: generic element styling ────────────────────────── */
+#docs-view h2 {
+  font-size: 19px; margin: 42px 0 12px; padding-top: 18px;
+  border-top: 1px solid var(--border); color: var(--text);
+  scroll-margin-top: calc(var(--chrome-h) + 16px);   /* clear the sticky chrome when a TOC link scrolls here */
+}
+#docs-view h2 .docs-num { color: var(--accent); margin-right: 8px; font-weight: 600; }
+#docs-view h3 { font-size: 15px; margin: 22px 0 8px; color: var(--accent); }
+#docs-view p { margin: 10px 0; color: var(--text); }
+#docs-view p.docs-dim, #docs-view li.docs-dim { color: var(--text-dim); }
+/* ol too — outside-positioned markers hang left of the text block unless the
+   list carries the indent (the global reset zeroes list margins/padding). */
+#docs-view ul, #docs-view ol { margin: 10px 0 10px 22px; }
+#docs-view ul.docs-dim { color: var(--text-dim); }
+#docs-view li { margin: 5px 0; }
+#docs-view a { color: var(--accent); }
+#docs-view code {
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px;
+  padding: 1px 6px; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent);
+}
+#docs-view .docs-formula {
+  background: var(--bg-input); border: 1px solid var(--accent-border); border-radius: 8px;
+  padding: 12px 16px; margin: 14px 0; overflow-x: auto;
+  font: 14px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text);
+}
+#docs-view .docs-formula b { color: var(--accent); font-weight: 600; }
+#docs-view .docs-tablebox { overflow-x: auto; margin: 14px 0; }
+#docs-view table { border-collapse: collapse; width: 100%; font-size: 14px; }
+#docs-view th, #docs-view td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+#docs-view th { background: var(--bg-card); color: var(--text-dim); font-weight: 600; white-space: nowrap; }
+#docs-view td { background: rgba(18, 30, 51, 0.45); color: var(--text); }
+#docs-view td.docs-c, #docs-view th.docs-c { text-align: center; }
+#docs-view .docs-lvl { color: var(--accent); font-weight: 700; white-space: nowrap; }
+#docs-view .docs-badge-name { color: var(--cta); font-weight: 600; white-space: nowrap; }
+#docs-view .docs-good { color: var(--green); }
+#docs-view .docs-bad { color: var(--red); }
+#docs-view .docs-anchor { color: var(--accent); text-decoration: none; cursor: pointer; }
+#docs-view .docs-foot {
+  margin-top: 60px; padding-top: 18px; border-top: 1px solid var(--border);
+  color: var(--text-muted); font-size: 13px;
+}
+
+/* ── Mobile: sidebar becomes a wrapping chip row above the page ─────
+   Wrap onto multiple lines instead of scrolling — a horizontal scroll hides
+   tabs the user can't tell are there (same pattern as .stats-subtabs). */
+@media (max-width: 900px) {
+  .docs-shell { display: block; padding-left: 0; padding-right: 0; }
+  #docs-view .docs-side {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 4px;
+    padding: 0 0 10px;
+    margin-bottom: 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  #docs-view .docs-filter { display: none; }
+  #docs-view .docs-side-group { display: contents; }
+  #docs-view .docs-side-part { display: none; }
+  #docs-view .docs-side-link { flex-shrink: 0; }
+  #docs-view .docs-pager { flex-direction: column; }
+  #docs-view .docs-pager-link { flex-basis: auto; }
+  #docs-view .docs-pager-next { margin-left: 0; }
+}
+
+/* Command blocks on docs pages (the verifier instructions). */
+.docs-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 10px 0 14px;
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--text);
+}
+
+/* Callout — a claim the reader must not miss or misread. Used where the docs
+   describe a DESIGN that is not built yet and a wrong reading costs real
+   money (chain-key custody: the deposit addresses shown today are simulated
+   placeholders). Deliberately louder than .docs-dim, which is for asides. */
+#docs-view .docs-callout {
+  margin: 18px 0;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--border);
+  background: var(--bg-input);
+  line-height: 1.55;
+}
+#docs-view .docs-callout--warn {
+  border-left-color: var(--red);
+  background: rgba(240, 122, 108, 0.09);
+}
+#docs-view .docs-callout--warn b { color: var(--red); }

@@ -1,0 +1,200 @@
+/* ── Account view ───────────────────────────────────────────────── */
+.account-container {
+  max-width: 900px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.account-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+}
+/* Profile (header) card takes the Swap Sell/Buy box treatment — soft cyan
+   highlight gradient + cyan hairline + 16px radius (matches .swap-input-group).
+   Scoped to this one card; the other account cards keep the neutral surface. */
+#account-profile-card {
+  background: linear-gradient(160deg, rgba(56, 189, 240, 0.12), rgba(56, 189, 240, 0.04));
+  border: 1px solid rgba(56, 189, 240, 0.20);
+  border-radius: 16px;
+}
+
+.account-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.account-card-header h3 { font-size: 16px; font-weight: 600; }
+
+/* ── All tab: venue rows (Wallet / Positions / Pools / Earn stakes) ─
+   Same row language as the Wallet balances list; the muted sub-label says
+   what each venue is, and the row TITLE is a link to its tab — accent is
+   the app's link language, hover underlines. */
+.all-venue-link { color: var(--accent); text-decoration: none; }
+.all-venue-link:hover { color: var(--accent-hover); text-decoration: underline; }
+.all-row-sub {
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--text-muted);
+  margin-left: 8px;
+}
+/* Trophy-case empty state spans the badge grid. */
+.badge-shelf .empty-state { grid-column: 1 / -1; }
+
+/* ── Account tabs (All | Wallet | Spot | Positions | Earn | …) ─────
+   Domain panes under the Account-value card; same underline language as the
+   primary nav. */
+.account-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin: 2px 0 14px;
+}
+.acct-tab {
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;   /* uniform tab size app-wide */
+  font-weight: 500;  /* light tab text (kept a touch above the nav) */
+  cursor: pointer;
+  transition: color 0.15s, box-shadow 0.15s;
+}
+.acct-tab:hover { color: var(--text); }
+.acct-tab.active { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+/* Panes hold the tab's cards — same vertical rhythm the container gave the
+   cards before they were nested (.account-container gap: 20px). */
+.acct-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.acct-intro {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.55;
+  margin: 0 2px;   /* the pane gap provides the spacing below */
+  max-width: 880px;
+}
+/* Links inside intros (e.g. the Fee Level tab's docs link): there is no global
+   anchor rule, so without this they render in the browser's default blue.
+   Matches .pos-docs-link — the standard Docs-link treatment app-wide: accent,
+   no underline at rest, underline on hover. */
+.acct-intro a { color: var(--accent); text-decoration: none; }
+.acct-intro a:hover { color: var(--accent-hover); text-decoration: underline; }
+/* Liquidated-episode tag in Positions History. */
+.liq-tag {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--red);
+  border: 1px solid var(--red);
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-left: 6px;
+  letter-spacing: 0.04em;
+}
+/* Pools History event log rows. */
+.pool-event-row {
+  display: flex;
+  gap: 14px;
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.pool-event-row:last-child { border-bottom: none; }
+.pe-time { color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pe-text { color: var(--text-dim); }
+.pe-text b { color: var(--text); font-weight: 600; }
+.pool-event-warn .pe-text { color: var(--heather); }
+
+
+/* ── Status tab: Fee Level & Access card (Account → Status) ────── */
+.tier-badge {
+  font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
+  padding: 3px 10px; border-radius: 999px; text-transform: uppercase;
+  background: var(--bg-input); color: var(--text-dim); border: 1px solid var(--border);
+}
+.tier-badge.tier-trader { color: var(--accent); border-color: var(--accent-border); }
+.tier-badge.tier-marketMaker { color: var(--accent-text); background: var(--accent); border-color: var(--accent); }
+.access-rows { display: flex; flex-direction: column; }
+.access-row {
+  display: flex; gap: 16px; align-items: baseline;
+  padding: 10px 2px; border-bottom: 1px solid var(--border);
+}
+.access-row:last-child { border-bottom: none; }
+/* Row titles sit on a card background one layer up from the page, where the
+   muted grey loses too much contrast — use the accent so they stay legible. */
+.access-label { flex: 0 0 150px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; color: var(--accent); }
+.access-value { flex: 1; font-size: 13px; color: var(--text-dim); line-height: 1.5; }
+.access-value b { color: var(--text); }
+.access-value.access-warn { color: var(--heather); }
+.access-bar {
+  display: block; margin-top: 6px; height: 6px; border-radius: 3px;
+  background: var(--bg-input); overflow: hidden;
+}
+.access-bar-fill { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width .3s; }
+.access-fineprint { margin: 12px 2px 0; font-size: 11px; line-height: 1.6; color: var(--text-muted); }
+.access-shed-banner {
+  margin: 10px 0 4px; padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 1.5;
+}
+.access-shed-banner.shed-affected { background: rgba(255, 120, 120, 0.12); border: 1px solid rgba(255, 120, 120, 0.4); color: var(--text); }
+.access-shed-banner.shed-safe { background: rgba(56, 189, 240, 0.08); border: 1px solid var(--accent-border); color: var(--text-dim); }
+
+/* min-order hint under the swap form */
+.min-order-hint { margin: 8px 2px 0; font-size: 11px; color: var(--text-dim); line-height: 1.5; }
+
+/* ── Status tab: level badge tints + badge shelf ─────────────────── */
+/* Earned-level badge tints: muted → cyan-outline → solid cyan → amber (L4). */
+.tier-badge.tier-l0 { color: var(--text-dim); }
+.tier-badge.tier-l1 { color: var(--accent); border-color: var(--accent-border); }
+.tier-badge.tier-l2 { color: var(--accent); border-color: var(--accent); }
+.tier-badge.tier-l3 { color: var(--accent-text); background: var(--accent); border-color: var(--accent); }
+.tier-badge.tier-l4 { color: var(--cta-text); background: var(--cta); border-color: var(--cta); }
+
+.badge-shelf {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px; margin-top: 10px;
+}
+.badge-chip {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);
+  background: var(--bg-input); min-height: 78px;
+}
+.badge-chip .badge-icon { font-size: 20px; line-height: 1.2; }
+.badge-chip .badge-name { font-size: 12px; font-weight: 700; color: var(--text); letter-spacing: 0.02em; }
+/* The earning condition matters (it tells you how to get the badge), and it
+   sits on the chip's twice-layered (lighter) background — so it gets the
+   secondary tone, not the near-invisible muted one. Subordination to the
+   title is carried by size and weight, never by dropping below legibility. */
+.badge-chip .badge-sub { font-size: 11px; line-height: 1.45; color: var(--text-dim); }
+.badge-chip.badge-earned { border-color: var(--cta); background: rgba(229, 169, 83, 0.08); }
+.badge-chip.badge-earned .badge-name { color: var(--cta); }
+/* Locked chips read as locked via the greyscale icon and plain border only —
+   a blanket chip opacity would drag the condition text back to illegible. */
+.badge-chip.badge-locked .badge-icon { filter: grayscale(1); opacity: 0.6; }
+.badge-mini-bar {
+  display: block; width: 100%; height: 4px; margin-top: 6px;
+  border-radius: 2px; background: var(--bg-card); overflow: hidden;
+}
+.badge-mini-bar > span { display: block; height: 100%; border-radius: 2px; background: var(--accent); }
+.badge-next {
+  margin: 10px 0 2px; padding: 10px 12px; border-radius: 8px;
+  border: 1px solid var(--accent-border); background: rgba(56, 189, 240, 0.06);
+  font-size: 13px; color: var(--text-dim); line-height: 1.5;
+}
+.badge-next b { color: var(--text); }
+.badge-next .badge-icon { font-size: 15px; }
+
+/* ── Mobile: multi-line account tabs ───────────────────────────────
+   Six tabs overflow a phone width. Wrap them onto multiple lines rather than
+   scrolling horizontally (a scroll hides tabs the user can't tell are there).
+   The per-tab active underline (inset box-shadow) works on any line. */
+@media (max-width: 900px) {
+  .account-tabs { flex-wrap: wrap; row-gap: 2px; }
+  .acct-tab { padding: 9px 13px; }
+}

@@ -1,0 +1,324 @@
+/* ── Phase 2: borrowing / health UI ─────────────────────────── */
+.margin-subhead {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  margin: 16px 0 8px;
+  font-weight: 600;
+}
+.margin-subhead-warn { color: var(--red); }
+.margin-divider {
+  border-top: 1px solid var(--border);
+  margin: 18px 0 2px;
+}
+.margin-health-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.earn-section { margin-bottom: 4px; }
+
+/* Liquidation heat surface — time × price canvas, mark trace overlaid.
+   Shared by the chart cell (fills it) and the Positions card (fixed height). */
+.heatmap {
+  margin: 4px 0 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.heatmap-head { font-size: 12px; font-weight: 600; color: var(--text); }
+.heatmap-sub, .heatmap-note {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.heatmap-note { margin-top: 6px; }
+.hm2-wrap {
+  position: relative;
+  height: 220px;   /* Positions-card default; the chart cell overrides to fill */
+  margin-top: 8px;
+}
+.hm2-canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+.hm2-tip {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(11, 18, 32, 0.94);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  z-index: 30;
+}
+.hm2-tip b { color: var(--text); font-weight: 600; }
+.hm2-tip span { color: var(--text-muted); font-size: 10px; }
+.hm2-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-wrap: wrap;
+}
+.hm2-scale { display: inline-flex; align-items: center; gap: 6px; }
+/* The ramp's ceiling in dollars. Brightness only means something against a
+   stated scale, and the scale steps up as the book deepens — so the number
+   is part of the key, not decoration. */
+.hm2-scale-lab { white-space: nowrap; }
+.hm2-scale-lab b { color: var(--text); font-weight: 600; }
+.hm2-scale-bar {
+  width: 90px;
+  height: 6px;
+  border-radius: 3px;
+  /* Must match HEAT_STOPS in main.js — this strip is the colour key. */
+  background: linear-gradient(90deg, #0f1728, #1d4e9c, #0694ba, #22c55e, #eab308, #f97316, #ef4444, #fee4dc);
+}
+
+/* "What this vault underwrites" — aggregate margin exposure on the Earn card.
+   Visually separated from the LP's OWN position stats above it: this block is
+   about the book the vault is lending to, not about you. */
+.margin-risk {
+  margin: 14px 0 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.margin-risk-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+.margin-risk-sub {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+/* Utilisation / distress accents — these are the two figures an LP should
+   react to, so they get colour; everything else stays neutral. */
+.margin-risk .mr-warm { color: var(--yellow, #d9a441); }
+.margin-risk .mr-hot  { color: var(--red); }
+.margin-risk-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+.earn-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin: 10px 0 12px;
+}
+.margin-health-bar-wrap {
+  position: relative;
+  height: 8px;
+  background: var(--bg);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.margin-health-bar {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease, background 0.3s ease;
+}
+.margin-health-bar.health-ok   { background: var(--green); }
+.margin-health-bar.health-warn { background: var(--accent); }
+.margin-health-bar.health-bad  { background: var(--red); }
+/* Liquidation threshold marker at 1.15/2.0 = 57.5% of the bar. */
+.margin-health-threshold {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  left: 57.5%;
+  width: 2px;
+  background: var(--text-muted);
+  opacity: 0.6;
+}
+/* Initial-margin floor marker at 1.25/2.0 = 62.5% of the bar. */
+.margin-health-threshold-initial {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  left: 62.5%;
+  width: 2px;
+  background: var(--accent);
+  opacity: 0.7;
+}
+.margin-netted-stat {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+.margin-health-caption {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+.margin-health-caption.health-bad  { color: var(--red); }
+.margin-health-caption.health-warn { color: var(--accent); }
+.margin-stat-value.health-ok   { color: var(--green); }
+.margin-stat-value.health-warn { color: var(--accent); }
+.margin-stat-value.health-bad  { color: var(--red); }
+.margin-borrow-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 8px;
+  line-height: 1.45;
+}
+.margin-liq-history { margin-top: 16px; }
+.balance-token-card {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+}
+.balance-token-card .token-name {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.balance-token-card .token-amount {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+  font-family: 'Inter Variable', system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Locked variant — token has some of its balance posted as margin
+   collateral. Show free amount as the primary number, then a dashed
+   divider, then locked / total sub-rows. Border tinted with --accent
+   so the locked card reads as "this slot is committed". */
+.balance-token-card--locked {
+  border-color: var(--accent);
+  outline: 1px solid rgba(180, 130, 40, 0.22);
+}
+.balance-token-tag {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+.balance-token-divider {
+  border-top: 1px dashed var(--border);
+  margin: 10px 0 8px 0;
+}
+.balance-token-line {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.balance-token-line--muted { color: var(--text-muted); }
+
+/* History tables */
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.history-table th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  padding: 0 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+}
+.history-table td {
+  padding: 9px 8px;
+  border-bottom: 1px solid rgba(34,46,64,0.5);
+  color: var(--text-dim);
+  vertical-align: middle;
+}
+.history-table tr:last-child td { border-bottom: none; }
+.history-table .mono { font-family: 'Inter Variable', system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+.history-table .buy-side  { color: var(--green); font-weight: 500; }
+.history-table .sell-side { color: var(--red);   font-weight: 500; }
+.history-table .deposit-kind { color: var(--green); }
+.history-table .cancel-flag  { color: var(--red); font-size: 11px; }
+.history-table .adj-flag     { color: var(--heather); font-size: 11px; }
+
+.history-scroll { max-height: 320px; overflow-y: auto; }
+
+/* Badges */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.badge-red    { background: rgba(240,122,108,0.15); color: var(--red); }
+.badge-yellow { background: var(--heather-tint); color: var(--heather); }
+.badge-green  { background: rgba(94,230,180,0.15); color: var(--green); }
+
+/* ── Mobile: stat tiles become label/value ROWS ──────────────────
+   Defined HERE, not in responsive.css: that file is imported earlier, so at
+   equal specificity its rules lose to the base grid above. */
+@media (max-width: 900px) {
+  /* ── Stat tiles → label/value ROWS ───────────────────────────
+     .earn-stats is a hard `repeat(4, 1fr)` grid, so its six tiles ("What this
+     vault underwrites") could neither wrap nor shrink below their content and
+     pushed the Earn page wider than the phone screen. Four tiles across a
+     ~360px viewport is ~80px each — too narrow for "$1,234,567" whatever the
+     wrapping rules.
+     A tile is only a label and a number, so on mobile drop the boxes and lay
+     each one out as a row: label left, value right, hairline between. Reads
+     like a statement, needs no horizontal space, and the values keep their
+     tabular alignment down the right edge. */
+  .earn-stats {
+    grid-template-columns: 1fr;
+    gap: 0;
+    margin: 8px 0 12px;
+  }
+  .margin-stat {
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    padding: 9px 2px;
+  }
+  .margin-stat:last-child { border-bottom: none; }
+  .margin-stat-label {
+    letter-spacing: 0.04em;
+    /* The label may wrap to two lines ("Insurance first-loss"); keep it from
+       squeezing the number, which must stay on one line. */
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .margin-stat-value {
+    margin-top: 0;
+    padding-top: 0;
+    font-size: 15px;
+    text-align: right;
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+}

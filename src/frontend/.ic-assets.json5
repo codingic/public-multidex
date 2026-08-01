@@ -1,0 +1,29 @@
+[
+  {
+    "match": "**/*",
+    "security_policy": "standard",
+    "headers": {
+      "Cache-Control": "public, max-age=0, must-revalidate"
+    },
+    "allow_raw_access": false
+  },
+  {
+    "match": "assets/**/*",
+    "headers": {
+      "Cache-Control": "public, max-age=31536000, immutable"
+    }
+  },
+  {
+    // IC App Connect bridge page (ai-connect.html): forbid framing so a
+    // clickjacking overlay can't trick the user into approving the II sign-in.
+    // The page self-enforces too; this header covers older browsers/proxies.
+    "match": "ai-connect.html",
+    "headers": {
+      "Content-Security-Policy": "frame-ancestors 'none'"
+    }
+  },
+  {
+    "match": "**/*",
+    "enable_aliasing": true
+  }
+]

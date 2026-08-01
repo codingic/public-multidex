@@ -1,0 +1,150 @@
+/* Deposit tab — talks to the STUB Bridge canister (src/bridge/main.mo). */
+.deposit-container { max-width: 760px; margin: 0 auto; padding: 24px 16px; }
+/* Mobile: match the Account page's page gutter (view's 12px only), not 12+16. */
+@media (max-width: 900px) {
+  .deposit-container { padding-left: 0; padding-right: 0; }
+}
+/* Same treatment as the Swap box (swap.css .swap-card): transparent over the
+   page field, with the slightly-stronger, slightly-thicker cyan outline
+   carrying the box edge. */
+.deposit-card {
+  background: transparent;
+  border: 1.5px solid rgba(56, 189, 240, 0.45);
+  border-radius: 12px;
+  padding: 24px;
+}
+.deposit-card h2 { margin: 0 0 8px; font-size: 22px; color: var(--text); }
+.deposit-intro { font-size: 13px; line-height: 1.6; color: var(--text-dim); margin: 0 0 16px; }
+.deposit-intro strong { color: var(--text); }
+/* The docs link is too long to ride the paragraph's last line, so inline it
+   drops with a stray 6px indent (.pos-docs-link margin-left). Give it a
+   deliberate own line, flush with the paragraph edge. */
+.deposit-intro .pos-docs-link { display: block; margin: 8px 0 0; }
+.deposit-status { font-size: 13px; color: var(--text-muted); margin-bottom: 16px; }
+/* Play on-ramp box: ONE border around the allowance strip + the deposit
+   simulation that exercises it (quiet info tone, cyan family). The children
+   are borderless; the flex gap only spaces the ones that are visible. */
+.deposit-onramp {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid rgba(56, 189, 240, 0.35);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+.deposit-allowance {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.deposit-allowance strong { color: var(--text); }
+
+.deposit-list { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.dep-row {
+  display: grid;
+  grid-template-columns: 104px 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  /* Same soft cyan-gradient panel as the Swap page's Sell/Buy boxes. */
+  background: linear-gradient(160deg, rgba(56, 189, 240, 0.12), rgba(56, 189, 240, 0.04));
+  border: 1px solid rgba(56, 189, 240, 0.20);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.dep-asset { display: flex; flex-direction: column; gap: 2px; }
+.dep-asset-code { display: flex; align-items: center; gap: 6px; font-weight: 600; color: var(--text); font-size: 14px; }
+.dep-logo { width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0; }
+.dep-chain { font-weight: 400; font-size: 11px; color: var(--text-dim); }  /* --text-dim, not muted — must stay legible on the tinted row */
+
+/* address + "simulated" badge share the second column */
+.dep-addr-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* STUB addresses (faux strings from the dummy Bridge): BLURRED and
+   unselectable — someone who missed that the exchange is in play mode must
+   not be able to read or copy one and send real assets to it. The badge
+   beside it says why it looks that way; the row tooltip spells it out.
+   A real Bridge serving real, spendable addresses should remove the blur
+   (and restore the Copy affordance that was removed with it). */
+.dep-addr {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  filter: blur(4px);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.dep-sim-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+/* The numbered on-ramp steps disable when they're not the current step
+   (deposit → finalize → deposit → …); Claim shares the same quiet look. */
+.deposit-card .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.dep-amounts { display: flex; flex-direction: column; align-items: flex-end; font-size: 12px; gap: 2px; }
+.dep-claimable { color: var(--green); font-variant-numeric: tabular-nums; }
+.dep-pending { color: var(--accent); font-variant-numeric: tabular-nums; }
+.dep-claimed { color: var(--text-dim); font-variant-numeric: tabular-nums; }  /* legible on the tinted row */
+
+/* Lives INSIDE .deposit-onramp (the allowance is enforced at "Deposit
+   amount" time, so allowance + simulator share the one box) — borderless;
+   the wrapper carries the outline. Buttons are .btn.btn-sm — the same
+   geometry as the Claim buttons in the rows below. */
+.deposit-dev { margin: 0; padding: 0; }
+.deposit-dev-label { font-size: 11px; color: var(--accent); margin-bottom: 8px; letter-spacing: 0.02em; }
+.deposit-dev-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.deposit-dev-row select,
+.deposit-dev-row input {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.deposit-dev-row input { width: 140px; }
+/* Live value hint under the simulator row: the entered amount at the current
+   mark (the same refPrice the allowance charges at "1. Deposit amount" time),
+   flipping red when the deposit would overrun the remaining allowance. */
+.deposit-sim-value { font-size: 12px; color: var(--text-dim); margin-top: 8px; }
+.deposit-sim-value.warn { color: var(--red); }
+
+@media (max-width: 640px) {
+  .dep-row { grid-template-columns: 88px 1fr; grid-auto-rows: auto; }
+  .dep-amounts { grid-column: 1 / -1; align-items: flex-start; flex-direction: row; gap: 10px; flex-wrap: wrap; }
+  .dep-claim-btn { grid-column: 1 / -1; }
+}
+
+/* ── Play anti-Sybil unlock card (docs/play-anti-sybil-design.md) ──
+   Replaces the on-ramp for signed-in-but-unverified accounts. Same cyan
+   card language as the Swap box — an invitation, not an error state. */
+.deposit-verify {
+  border: 1.5px solid rgba(56, 189, 240, 0.45);
+  border-radius: 16px;
+  padding: 20px;
+  margin: 14px 0;
+  background: linear-gradient(160deg, rgba(56, 189, 240, 0.10), rgba(56, 189, 240, 0.03));
+}
+.deposit-verify-head { font-size: 17px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+.deposit-verify-why  { font-size: 13px; color: var(--text-dim); line-height: 1.5; margin-bottom: 14px; }
+.deposit-verify-err  {
+  font-size: 13px; line-height: 1.5; margin-bottom: 14px;
+  color: var(--red); background: var(--red-dim);
+  border-radius: 8px; padding: 8px 10px;
+}
+.deposit-verify .btn { margin-bottom: 12px; }
+.deposit-verify-fine { font-size: 12px; color: var(--text-dim); line-height: 1.5; margin-top: 6px; }
+.deposit-verify-fine a { color: var(--accent); text-decoration: none; }
+.deposit-verify-fine a:hover { text-decoration: underline; }
+.deposit-verify .btn + .btn { margin-left: 10px; }

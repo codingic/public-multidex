@@ -1,0 +1,188 @@
+/* ── Buttons ─────────────────────────────────────────────────────── */
+.btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 440;  /* variable-font intermediate — slightly lighter than medium */
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.btn-primary { background: var(--cta); color: var(--cta-text); font-weight: 440; }
+.btn-primary:hover { background: var(--cta-hover); color: var(--cta-text); }
+.btn-primary:disabled { background: var(--bg-hover); color: var(--text-muted); cursor: not-allowed; }
+/* Accent (cyan) filled buttons — emphasised utility actions (Verify ledger,
+   Withdraw). Amber .btn-primary stays reserved for the page CTAs (Swap,
+   Place Order, Sign In). */
+.btn-accent { background: var(--accent); color: var(--accent-text); font-weight: 440; }
+.btn-accent:hover { background: var(--accent-hover); color: var(--accent-text); }
+.btn-accent:disabled { background: var(--bg-hover); color: var(--text-muted); cursor: not-allowed; }
+.btn-secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
+.btn-secondary:hover { background: var(--bg-hover); }
+.btn-lg { padding: 14px 24px; font-size: 16px; width: 100%; border-radius: var(--radius); }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn-danger { background: var(--red-dim); color: var(--red); border: 1px solid rgba(240,122,108,0.3); }
+.btn-danger:hover { background: rgba(240,122,108,0.18); }
+
+/* ── Hover bloom ───────────────────────────────────────────────────
+   The cyan-outlined ACTION cards (Swap, Place Order, Deposit) catch the
+   light on hover: the outline saturates a step and a soft outer glow
+   blooms. Pointer devices only — on touch, :hover sticks after a tap. */
+@media (hover: hover) {
+  .swap-card, .order-panel, .deposit-card {
+    transition: box-shadow 0.25s ease, border-color 0.25s ease;
+  }
+  .swap-card:hover, .order-panel:hover, .deposit-card:hover {
+    border-color: rgba(56, 189, 240, 0.65);
+    box-shadow:
+      0 0 28px rgba(56, 189, 240, 0.13),
+      0 0 3px rgba(56, 189, 240, 0.22);
+  }
+}
+
+/* ── Odometer (header account value) ───────────────────────────────
+   Each digit is a 1em window over a stacked 0–9 strip; retargeting the
+   strip's translateY rolls the wheel. Tabular numerals keep the wheel
+   widths equal so nothing jitters horizontally while rolling. */
+/* BASELINE ALIGNMENT: overflow:hidden moves an inline-block's baseline to
+   its BOTTOM EDGE, so a baseline-aligned wheel rides ~0.2em high next to
+   plain glyphs. Instead, wheels AND flat chars are identical 1em boxes,
+   bottom-aligned to the line box — with the same font and line-height the
+   glyphs inside land on the same visual baseline. .odo-char keeps overflow
+   visible so the comma's descender can't be clipped by the 1em box. */
+.odo-digit {
+  display: inline-block;
+  height: 1em;
+  overflow: hidden;
+  vertical-align: bottom;
+  font-variant-numeric: tabular-nums;
+}
+.odo-strip {
+  display: block;
+  transition: transform 0.9s cubic-bezier(0.22, 0.61, 0.22, 1);
+  will-change: transform;
+}
+.odo-strip i {
+  display: block;
+  height: 1em;
+  line-height: 1em;
+  font-style: normal;
+}
+.odo-char {
+  display: inline-block;
+  height: 1em;
+  line-height: 1em;
+  vertical-align: bottom;
+}
+@media (prefers-reduced-motion: reduce) {
+  .odo-strip { transition: none; }
+}
+
+/* ── Balance Display ─────────────────────────────────────────────── */
+.balance-display {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ── Initial loader ─────────────────────────────────────────────── */
+/* Shown while the page boots and the routed view is being prepared.
+   Hidden as soon as any .view receives the `active` class (which
+   activateTab() does once init() has loaded markets and resolved the
+   URL hash). This avoids the "wrong page flash" on refresh: the user
+   sees Loading… → the correct page, never Swap → correct page. */
+#app-loader {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 14px;
+  letter-spacing: 0.3px;
+  z-index: 1000;
+}
+/* Logo shimmer: a one-shot light band sweeps the lockup glyphs. The ::after
+   is MASKED to the lockup asset, so the band lights only the letters — never
+   the background. Two triggers, one iteration each per page load:
+     · splash logo — right after first paint;
+     · header logo — the moment the app reveals (the :has(.view.active)
+       selector starts matching, which is when the splash lifts), so the
+       sweep never plays invisibly underneath the splash. Tab switches don't
+       re-trigger: activateTab swaps .active classes synchronously, so the
+       selector never unmatches between renders. */
+.logo-shimmer { position: relative; display: inline-block; line-height: 0; }
+.logo-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg,
+    transparent 38%,
+    rgba(255, 255, 255, 0.85) 50%,
+    transparent 62%);
+  background-size: 250% 100%;
+  background-repeat: no-repeat;
+  background-position: 130% 0;   /* band parked off-glyph until a trigger animates it */
+  -webkit-mask: url(/assets/lockup.svg) center / contain no-repeat;
+  mask: url(/assets/lockup.svg) center / contain no-repeat;
+  pointer-events: none;
+}
+#app-loader .logo-shimmer::after {
+  animation: logo-sweep 1.2s ease-out 0.35s 1 both;
+}
+body:has(.view.active) .header .logo-shimmer::after {
+  animation: logo-sweep 1.2s ease-out 0.3s 1 both;
+}
+@keyframes logo-sweep {
+  from { background-position: 130% 0; }
+  to   { background-position: -60% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .logo-shimmer::after { animation: none !important; background: none; }
+}
+
+/* Loader logo matches the header (same .logo-lockup height). */
+/* App version under the logo — replaces the old "Loading…" line. Wide
+   tracking so it reads as a quiet lockup caption, not body text. */
+#app-loader .app-version {
+  font-size: 12px;
+  font-weight: 440;
+  color: var(--text-dim);
+  letter-spacing: 0.35em;
+  text-indent: 0.35em;   /* re-centre: tracking adds a trailing gap */
+}
+body:has(.view.active) #app-loader { display: none; }
+
+/* ── Views ───────────────────────────────────────────────────────── */
+.view { display: none; padding: 24px; }
+.view.active { display: block; }
+/* View-switch entrance: a quick fade + 4px settle when a view ACTIVATES
+   (the animation runs when .active is added — activateTab adds it only on a
+   real switch, so data refreshes inside a view never re-trigger it). */
+.view.active { animation: view-enter 0.14s ease-out; }
+@keyframes view-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .view.active { animation: none; }
+}
+/* Markets view: tighter padding so the Hyperliquid-style grid can breathe. */
+#markets-view { padding: 12px 16px 16px; }
+#markets-view.active {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+/* On the Markets tab, let the body scroll so the top of the header scrolls
+   off the page and the market-header (below) sticks to the top. */
+body:has(#markets-view.active) .header {
+  position: static;
+}
+

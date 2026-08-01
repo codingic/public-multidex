@@ -1,0 +1,42 @@
+[toolchain]
+moc = "1.9.0"
+lintoko = "0.5.1"
+
+[dependencies]
+core = "2.5.0"
+json = "1.4.0"
+sha2 = "0.2.5"
+identity-attributes = "0.4.1"
+
+[canisters.backend]
+main = "src/backend/main.mo"
+# candid: where `mops generate candid backend` (gen-did.sh) writes the raw
+# interface — an intermediate, gitignored; the PUBLISHED copy is candid/backend.did.
+candid = "src/backend/backend.did"
+# --public-metadata candid:service: publish the Candid interface as PUBLIC
+# canister metadata (moc defaults it to private), so remote tooling — e.g. the
+# IC MCP connector's ic_describe_api — can fetch the typed method surface from
+# the live canister. The committed copy is candid/backend.did (scripts/gen-did.sh);
+# the SEMANTICS behind the signatures live in the getApiDoc() query.
+# --max-stable-pages 131072 (8 GiB): raises moc's default 4 GiB stable-memory
+# cap, which the embedded Archive actor class's event Region hit at ~7.0M
+# events (July 2026 subnet incident) — 3M short of the 10M-event seal trigger.
+# 8 GiB clears the full 10M-event rotation (~6.1 GB at the observed 611 B/event)
+# with margin; the archive additionally seals early on #full (checked grow).
+args = [ "--default-persistent-actors", "--implicit-package=core", "--public-metadata", "candid:service", "--max-stable-pages", "131072" ]
+
+[canisters.bridge]
+main = "src/bridge/main.mo"
+args = [ "--default-persistent-actors", "--implicit-package=core" ]
+
+[canisters.arb]
+main = "src/arb/main.mo"
+args = [ "--default-persistent-actors", "--implicit-package=core" ]
+
+[canisters.xrc-mock]
+main = "src/xrc-mock/main.mo"
+args = [ "--default-persistent-actors", "--implicit-package=core" ]
+
+[canisters.fuel-mock]
+main = "src/fuel-mock/main.mo"
+args = [ "--default-persistent-actors", "--implicit-package=core" ]

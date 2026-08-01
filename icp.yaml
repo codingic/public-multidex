@@ -1,0 +1,127 @@
+canisters:
+  - name: backend
+    recipe:
+      type: "@dfinity/motoko@v5.0.0"
+      # canister config (main, args) lives in mops.toml [canisters.backend]
+    settings:
+      environment_variables:
+        # II attribute bundles (play anti-Sybil — docs/play-anti-sybil-design.md).
+        # trusted_attribute_signers: the Internet Identity backend canister —
+        # the replica verifies the bundle SIGNATURE; these vars scope WHO we
+        # trust and WHICH frontends may relay bundles. frontend_origins must
+        # list EVERY origin the app is served from (the bundle records the
+        # exact browser origin; matching is exact-string) — a missing origin
+        # fails closed as #FrontendOriginMismatch (the error names the
+        # expected list), which strands play users on the Deposit unlock card:
+        # "Sign in using Google" succeeds as a sign-in but the verification
+        # handshake is refused, so the account never binds.
+        #
+        # LOCAL-DEV ORIGINS ONLY here, deliberately: the replica caps env-var
+        # VALUES at 128 chars, so local + live origins don't fit in one list
+        # (and the live backend shouldn't trust localhost-minted bundles
+        # anyway). These settings apply on create/sync in WHICHEVER
+        # environment you deploy to — a create-class install (first install
+        # or --mode reinstall) re-stamps this local-dev list over a live
+        # deployment's origins. scripts/deploy.sh guards this: it remembers
+        # each target's production origins ({CE,SN}_FRONTEND_ORIGINS in the
+        # git-ignored confs, seeded via the FRONTEND_ORIGINS env var) and
+        # re-asserts them after every cloud/subnet deploy. Manual form:
+        #   icp canister settings update backend -e ic --add-environment-variable \
+        #     "frontend_origins=https://hcv4s-uaaaa-aaabq-qaaba-cai.icp0.io,https://hcv4s-uaaaa-aaabq-qaaba-cai.icp.net,https://multidex.ai"
+        # (the custom domain + the live #play frontend canister on the
+        # icp0.io / icp.net gateways; 107 chars — check the ceiling before
+        # appending more. www.multidex.ai must REDIRECT to the apex, not serve
+        # the app: as a fourth origin the list would be 131 chars, over the
+        # cap).
+        trusted_attribute_signers: "rdmx6-jaaaa-aaaaa-aaadq-cai"
+        frontend_origins: "http://frontend.local.localhost:8000,http://localhost:3100"
+        # __META_*: cloud-engine console grouping (deploy-to-cloud-engine skill,
+        # Step 2) — same __META_PROJECT on every canister folds them into one
+        # named app on the Applications page. Inert everywhere else.
+        __META_PROJECT: "MULTI/DEX"
+        __META_NAME: "Backend"
+
+  - name: bridge
+    recipe:
+      type: "@dfinity/motoko@v5.0.0"
+      # DUMMY/STUB deposit-custody canister (src/bridge/main.mo). Real chain-key
+      # custody is a separate team's job — see docs/bridge-and-cks-design.md.
+      # canister config (main, args) lives in mops.toml [canisters.bridge]
+    settings:
+      environment_variables:
+        __META_PROJECT: "MULTI/DEX"
+        __META_NAME: "Bridge"
+
+  - name: arb
+    recipe:
+      type: "@dfinity/motoko@v5.0.0"
+      # Arbitrage canister (src/arb/main.mo) — the simulated cross-venue
+      # arbitrageur for SYNTHETIC assets (docs/amm-vault-design.md). Wired by
+      # play_start.sh: backend.setArbitrageur + arb.setDex + fundArbitrageur +
+      # arb.setEnabled(true). Belongs on every #play target — it is the force
+      # that pins venue prices to the oracle mark. A #production deployment
+      # with REAL assets has real arbitrageurs and must NOT wire it (the
+      # backend's extMarketSwap mints/burns synthetic supply).
+    settings:
+      environment_variables:
+        __META_PROJECT: "MULTI/DEX"
+        __META_NAME: "Arbitrage"
+
+  - name: xrc-mock
+    recipe:
+      type: "@dfinity/motoko@v5.0.0"
+      # DEV-ONLY stand-in for the mainnet exchange-rate canister so the DEX's
+      # real XRC call path is exercised locally (src/xrc-mock/main.mo). Wired
+      # via setXrcCanister by cold_start; NEVER deploy to a value-bearing
+      # target. canister config lives in mops.toml [canisters.xrc-mock].
+
+  - name: fuel-mock
+    recipe:
+      type: "@dfinity/motoko@v5.0.0"
+      # DEV-ONLY stand-in for the ICP ledger + CMC so the treasury→cycles
+      # Stage-2 loop runs for real locally, incl. an actual deposit_cycles
+      # (src/fuel-mock/main.mo). Wired via setFuelRoute by cold_start; NEVER
+      # deploy to a value-bearing target. config in mops.toml.
+
+  - name: frontend
+    recipe:
+      type: "@dfinity/asset-canister@v2.2.1"
+      configuration:
+        dir: dist
+        build:
+          - npm install
+          - npm run build
+    settings:
+      environment_variables:
+        __META_PROJECT: "MULTI/DEX"
+        __META_NAME: "Frontend"
+        # The console reads the Open-button URL + icon from the MAIN canister
+        # only. __META_BASE_URL is PER-DEPLOYMENT (this is the cloud engine's
+        # frontend gateway) — like frontend_origins above, a create on another
+        # deployment should follow with a settings update pointing at its own
+        # URL.
+        __META_MAIN_CANISTER: "true"
+        __META_BASE_URL: "https://seapz-kiaaa-aaaa6-qaamq-cai.icp.net"
+        __META_ICON_PATH: "/favicon.svg"
+
+networks:
+  - name: local
+    mode: managed
+    # No local Internet Identity canister — we authenticate against the
+    # hosted id.ai even in local dev. icp-cli >= 0.2.4 trusts mainnet
+    # subnet sigs on the local replica, so delegations issued by the
+    # real id.ai are accepted. Saves ~2 pocket-ic sandbox processes.
+
+# The two mainnet stacks are SEPARATE environments with separate canister-id
+# mappings (.icp/data/mappings/<env>.ids.json), so a deploy to one can never
+# resolve to the other's canisters (the old shared `ic` mapping made that a
+# one-file-swap accident). scripts/deploy.sh picks the environment from the
+# target: cloud → engine, subnet → subnet. Both list ONLY the value-bearing
+# canisters — the xrc/fuel mocks are dev-only and must never reach mainnet.
+environments:
+  - name: engine    # OpenCloud cloud engine (frontend seapz-…)
+    network: ic
+    canisters: [backend, bridge, frontend, arb]
+  - name: subnet    # dedicated subnet serving multidex.ai (frontend hcv4s-…)
+    network: ic
+    canisters: [backend, bridge, frontend, arb]

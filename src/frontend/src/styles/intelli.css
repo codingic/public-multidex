@@ -1,0 +1,359 @@
+/* ── Intelli section (Data explorer + Ask AI) ────────────────────── */
+.intelli-container { max-width: 980px; margin: 0 auto; }
+.intelli-head { margin-bottom: 16px; }
+.intelli-title { font-size: 22px; font-weight: 700; }
+.intelli-sub { color: var(--text-dim); font-size: 13.5px; margin-top: 4px; }
+/* Mid-sentence link — the app-wide accent treatment (.pos-docs-link) minus
+   its margin-left/nowrap, which don't suit an inline phrase. */
+.intelli-sub a { color: var(--accent); text-decoration: none; }
+.intelli-sub a:hover { color: var(--accent-hover); text-decoration: underline; }
+/* Tabs reuse the underline language of the primary nav / account tabs. */
+.intelli-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 2px 0 18px; }
+.intelli-tab {
+  padding: 10px 16px; border: none; background: transparent;
+  color: var(--text-muted); font-size: 13px; cursor: pointer;   /* uniform tab size */
+  font-weight: 500;  /* light tab text (kept a touch above the nav) */
+  transition: color 0.15s, box-shadow 0.15s;
+}
+.intelli-tab:hover { color: var(--text); }
+.intelli-tab.active { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.intelli-intro { color: var(--text-dim); font-size: 13px; line-height: 1.5; margin-bottom: 16px; }
+/* The trailing Docs link stays inline (nowrap keeps it whole) but drops the
+   base .pos-docs-link 6px margin-left — otherwise, when it wraps to its own
+   line, that margin reads as a stray indent. Flush at line start either way. */
+.intelli-intro .pos-docs-link { margin-left: 0; }
+
+/* Schema-at-a-glance strip: entity/field/join counts + the no-database story
+   (rows come straight out of the canister's persistent heap). */
+.dx-stats {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 8px 14px; margin-bottom: 14px;
+  font-size: 12px; color: var(--text-dim);
+}
+.dx-stat strong { color: var(--text); font-size: 13px; }
+.dx-stats-note { margin-left: auto; color: var(--text-muted); font-size: 11.5px; }
+
+/* Data explorer — signed-in identity line (read/copy your principal, filter to me) */
+.dx-identity {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 10px 14px; margin-bottom: 14px;
+}
+.dx-identity-label { font-size: 12px; color: var(--text-dim); }
+.dx-identity-name { font-size: 13px; font-weight: 700; color: var(--text); }
+.dx-identity-principal {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; color: var(--text-dim);
+  background: var(--bg-input); padding: 4px 8px; border-radius: 6px;
+  word-break: break-all; flex: 1; min-width: 180px;
+}
+.dx-identity .btn { flex-shrink: 0; }
+
+/* Data explorer — generic OQL query builder + results */
+.dx-controls {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; gap: 14px;
+}
+.dx-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.dx-label { font-size: 13px; font-weight: 600; color: var(--text-dim); }
+.dx-label-pad { margin-left: 12px; }
+.dx-hint { font-size: 12px; color: var(--text-muted); }
+.dx-select, .dx-input {
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); padding: 7px 10px; font: inherit; font-size: 13px;
+}
+.dx-input { width: 90px; }
+.dx-filters-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.dx-filters { display: flex; flex-direction: column; gap: 8px; }
+.dx-filter { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dx-filter .dx-f-field { min-width: 130px; }
+.dx-filter .dx-f-val { flex: 1; min-width: 120px; width: auto; }
+.dx-f-rm {
+  background: var(--bg-hover); color: var(--text-dim); border: none; border-radius: 6px;
+  width: 28px; height: 28px; font-size: 13px; cursor: pointer;
+}
+.dx-f-rm:hover { background: var(--accent); color: var(--accent-text); }
+.dx-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* Faint dividers between the builder sections: Columns | Filters | Group by |
+   Aggregate | Sort | Run query (each section-start is a direct child of .dx-main;
+   the 2nd-onward .dx-cols-row is Group by, not Columns). */
+.dx-main > .dx-filters-head,
+.dx-main > .dx-cols-row ~ .dx-cols-row,
+.dx-main > .dx-actions {
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+.dx-raw {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); padding: 10px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; resize: vertical; width: 100%; box-sizing: border-box;
+}
+.dx-status { font-size: 12.5px; color: var(--text-dim); margin: 14px 0 8px; min-height: 1em; }
+.dx-status-err { color: var(--accent); }
+.dx-results { }
+.dx-empty { color: var(--text-muted); font-size: 13px; padding: 12px 0; }
+.dx-signin {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 22px; text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+}
+.dx-signin-title { font-size: 15px; font-weight: 700; color: var(--text); }
+.dx-signin-body { font-size: 13px; color: var(--text-dim); line-height: 1.5; max-width: 540px; }
+.dx-signin .btn { margin-top: 4px; }
+/* Bounded height makes the sticky header actually engage: long result sets
+   (Load more accumulates) scroll INSIDE the card with the column names pinned,
+   instead of scrolling the header off the page. */
+.dx-table-wrap {
+  overflow: auto; max-height: 480px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-card);
+}
+.dx-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.dx-table th, .dx-table td { border-bottom: 1px solid var(--border); padding: 7px 12px; text-align: left; white-space: nowrap; }
+.dx-table th { color: var(--text-dim); font-weight: 600; background: var(--bg-input); position: sticky; top: 0; z-index: 1; }
+.dx-table td { font-variant-numeric: tabular-nums; }
+.dx-table tbody tr:hover { background: var(--bg-hover); }
+.dx-more { margin-top: 12px; }
+
+/* ── Data Explorer (Phase 1): presets, column chips, edge drill-through,
+   typed cells, operator help ── */
+.dx-presets { min-width: 280px; max-width: 360px; }
+
+/* Column (projection) chips — click to toggle a field into `select`. */
+.dx-cols-row { align-items: flex-start; }
+.dx-cols { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; flex: 1; }
+.dx-col {
+  background: var(--bg-input); border: 1px solid var(--border); color: var(--text-dim);
+  border-radius: 999px; padding: 3px 10px; font-size: 11.5px; cursor: pointer;
+  font-variant-numeric: tabular-nums; transition: background .12s, color .12s, border-color .12s;
+}
+.dx-col:hover { color: var(--text); border-color: var(--accent-border, var(--accent)); }
+.dx-col.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+/* Split edge chip: the body toggles the FK column, the "→ target" tail opens
+   the joined-fields panel. Dashed border keeps the edge signal; solid when
+   the FK column is selected. */
+.dx-col-edge { border-style: dashed; display: inline-flex; align-items: stretch; padding: 0; overflow: hidden; }
+.dx-col-edge.on { border-style: solid; }
+.dx-col-edge .dx-col-body, .dx-col-edge .dx-col-tail {
+  background: transparent; border: none; color: inherit; cursor: pointer;
+  font: inherit; font-size: 11.5px; padding: 3px 8px;
+}
+.dx-col-edge .dx-col-body { padding-left: 10px; }
+.dx-col-edge .dx-col-tail { border-left: 1px dashed var(--border); color: var(--accent); padding-right: 9px; white-space: nowrap; }
+.dx-col-edge:not(.on) .dx-col-body:hover, .dx-col-edge:not(.on) .dx-col-tail:hover { background: var(--bg-hover); color: var(--text); }
+.dx-col-edge:not(.on) .dx-col-tail:hover { color: var(--accent); }
+.dx-col-edge.open { border-color: var(--accent); }
+.dx-col-edge.open .dx-col-tail { background: var(--accent); color: var(--accent-text); }
+.dx-col-edge.on .dx-col-body { font-weight: 600; }
+.dx-col-edge.on .dx-col-tail { color: var(--accent-text); border-left-color: var(--accent-text); opacity: 0.9; }
+.dx-cols-hint { font-size: 11px; color: var(--text-muted); margin-left: 4px; }
+
+/* Quick search row (above the column chips). */
+.dx-search-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.dx-search { flex: 1; width: auto; min-width: 160px; }
+.dx-search:disabled { opacity: 0.5; }
+
+/* Operator cheatsheet under the raw query box. */
+.dx-help { font-size: 11.5px; color: var(--text-muted); line-height: 1.7; margin-top: 8px; }
+.dx-help code {
+  background: var(--bg-input); border-radius: 4px; padding: 1px 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--text-dim);
+}
+.dx-help kbd {
+  background: var(--bg-input); border: 1px solid var(--border); border-bottom-width: 2px;
+  border-radius: 4px; padding: 0 5px; font-size: 11px; color: var(--text-dim);
+}
+
+/* Typed result cells. */
+.dx-null { color: var(--text-muted); }
+.dx-principal { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.dx-badge {
+  display: inline-block; border-radius: 4px; padding: 0 7px; font-size: 11px; font-weight: 600;
+}
+.dx-badge-on  { background: rgba(94, 230, 180, 0.16); color: var(--green); }
+.dx-badge-off { background: var(--bg-input); color: var(--text-muted); }
+
+/* Edge drill-through: foreign-key cells are links to the related entity. */
+.dx-link { color: var(--accent); cursor: pointer; text-decoration: none; }
+.dx-link:hover { text-decoration: underline; }
+.dx-th-edge { color: var(--accent); font-weight: 400; cursor: default; }
+
+/* ── Data Explorer (Phase 2): AND/OR, NOT, aggregate/sort rows, clickable
+   header sort ── */
+.dx-combinator { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.dx-comb-btn {
+  background: var(--bg-input); border: none; color: var(--text-dim);
+  padding: 3px 10px; font-size: 11.5px; font-weight: 600; cursor: pointer;
+}
+.dx-comb-btn + .dx-comb-btn { border-left: 1px solid var(--border); }
+.dx-comb-btn.active { background: var(--accent); color: var(--accent-text); }
+/* NOT toggle on a filter row. */
+.dx-f-not {
+  background: var(--bg-input); border: 1px solid var(--border); color: var(--text-muted);
+  border-radius: 6px; padding: 4px 9px; font-size: 11.5px; font-weight: 600; cursor: pointer; flex-shrink: 0;
+}
+.dx-f-not.on { background: var(--red); border-color: var(--red); color: #fff; }
+/* Aggregate-row field select greys out for count (no field needed). */
+.dx-agg .dx-a-field:disabled { opacity: 0.4; }
+.dx-agg .dx-a-as { width: 130px; flex: 0 0 auto; }
+/* Clickable result headers (sort), with a direction marker. */
+.dx-th-sort { cursor: pointer; user-select: none; }
+.dx-th-sort:hover { color: var(--text); background: var(--bg-hover); }
+.dx-th-sortmark { color: var(--accent); }
+
+/* ── Data Explorer (Phase 3): entity rail, edge-expansion panel, share/export ── */
+.dx-workbench { display: flex; gap: 14px; align-items: flex-start; }
+.dx-rail {
+  flex: 0 0 184px; max-height: 460px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 3px;
+  border: 1px solid var(--border); border-radius: 9px; padding: 6px; background: var(--bg-input);
+}
+.dx-rail-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%;
+  background: transparent; border: 1px solid transparent; border-radius: 6px;
+  padding: 6px 8px; cursor: pointer; color: var(--text-dim); text-align: left;
+}
+.dx-rail-item:hover { background: var(--bg-hover); color: var(--text); }
+.dx-rail-item.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.dx-rail-name { font-size: 13px; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.dx-rail-item.active .dx-rail-name { font-weight: 400; }   /* selected root reads calm, not bold */
+.dx-rail-badges { display: inline-flex; gap: 4px; flex-shrink: 0; }
+.dx-rail-badge { font-size: 10px; color: var(--text-muted); }
+.dx-rail-item.active .dx-rail-badge { color: var(--accent-text); opacity: 0.85; }
+.dx-rail-badge-edge { color: var(--accent); }
+.dx-rail-item.active .dx-rail-badge-edge { color: var(--accent-text); }
+.dx-rail-badge-lock { color: var(--cta); }
+.dx-main { flex: 1 1 auto; min-width: 0; }
+.dx-entity-meta { font-size: 12px; color: var(--text-dim); margin-bottom: 8px; }
+.dx-entity-meta strong { color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+/* Edge-expansion sub-panel: pick joined fields to add to the projection. */
+.dx-edge-panel {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin: -2px 0 10px; padding: 8px 10px;
+  border: 1px dashed var(--accent-border); border-radius: 8px; background: var(--bg-input);
+}
+.dx-edge-panel-label { font-size: 12px; color: var(--accent); font-weight: 600; margin-right: 2px; }
+.dx-subcol {
+  background: var(--bg-card); border: 1px solid var(--border); color: var(--text-dim);
+  border-radius: 6px; padding: 3px 9px; font-size: 12px; cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.dx-subcol:hover { border-color: var(--accent); color: var(--text); }
+.dx-subcol.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.dx-actions-spacer { flex: 1 1 auto; }
+@media (max-width: 720px) {
+  .dx-workbench { flex-direction: column; }
+  .dx-rail { flex-basis: auto; width: 100%; max-height: 168px; flex-direction: row; flex-wrap: wrap; }
+  .dx-rail-item { width: auto; }
+}
+
+/* Ask AI — in-tab chat (relocated from the former floating panel) */
+.asst-messages {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+  height: 460px; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px;
+}
+.asst-msg { padding: 9px 12px; border-radius: 12px; font-size: 13px; line-height: 1.45; max-width: 88%; white-space: pre-wrap; word-break: break-word; }
+.asst-user { align-self: flex-end; background: var(--glacier); color: var(--glacier-text); border-bottom-right-radius: 4px; }
+.asst-assistant { align-self: flex-start; background: var(--bg-hover); color: var(--text); border-bottom-left-radius: 4px; }
+.asst-note { align-self: flex-start; font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: pre-wrap; word-break: break-word; }
+.asst-table-wrap { align-self: stretch; overflow-x: auto; }
+.asst-table { border-collapse: collapse; font-size: 11px; width: 100%; }
+.asst-table th, .asst-table td { border: 1px solid var(--border); padding: 3px 6px; text-align: left; white-space: nowrap; }
+.asst-table th { color: var(--text-dim); font-weight: 600; }
+/* confirm card — the gate before any state-changing action runs */
+.asst-confirm { align-self: stretch; border: 1px solid var(--accent); border-radius: 10px; padding: 10px 12px; background: var(--bg-input); }
+.asst-confirm-title { font-size: 12px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; }
+.asst-confirm-summary { font-size: 13px; margin: 6px 0; color: var(--text); }
+.asst-confirm-args { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.5; color: var(--text-dim); background: var(--bg); border-radius: 6px; padding: 8px 10px; overflow-x: auto; margin: 0 0 8px; white-space: pre-wrap; word-break: break-word; }
+.asst-confirm-btns { display: flex; gap: 8px; justify-content: flex-end; }
+.asst-confirm-btns button { border: none; border-radius: 7px; padding: 6px 14px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.asst-btn-confirm { background: var(--accent); color: var(--accent-text); }
+.asst-btn-cancel { background: var(--bg-hover); color: var(--text-dim); }
+.asst-confirm.asst-confirmed { border-color: var(--green); opacity: 0.7; }
+.asst-confirm.asst-cancelled { border-color: var(--text-muted); opacity: 0.6; }
+.asst-thinking { padding: 8px 4px 0; font-size: 12px; color: var(--text-dim); }
+.asst-input-row { display: flex; align-items: flex-end; gap: 8px; margin-top: 12px; }
+.asst-input { flex: 1; resize: none; background: var(--bg-input); border: 1px solid var(--border); border-radius: 10px; color: var(--text); padding: 11px 13px; font: inherit; font-size: 13px; max-height: 140px; }
+/* Square icon submit button (up-arrow), in the app's amber accent. */
+.asst-send {
+  flex-shrink: 0; width: 42px; height: 42px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent); color: var(--accent-text);
+  border: none; border-radius: 12px; cursor: pointer;
+  transition: background 0.15s;
+}
+.asst-send:hover { background: var(--accent-hover); }
+.asst-send:disabled { opacity: 0.5; cursor: default; }
+
+/* Ask AI tab fills the viewport below the header, with the prompt box pinned to
+   the bottom and only the message list scrolling. Applied (via the .intelli-fill
+   class toggled in showIntelliTab) ONLY on the AI tab — the Data explorer keeps
+   normal page flow so its query builder + results table can grow and scroll. */
+/* Keep the view AND its container a flex column on BOTH tabs so switching never
+   changes the header/tabs box model — a block↔flex flip on .intelli-fill was
+   nudging the tab row down ~2px. .intelli-fill then only bounds the height and
+   lets the AI pane grow to fill it. */
+#intelli-view.active { display: flex; flex-direction: column; }
+#intelli-view.active .intelli-container { display: flex; flex-direction: column; }
+#intelli-view.active.intelli-fill {
+  height: calc(100vh - var(--chrome-h)); box-sizing: border-box; overflow: hidden;
+}
+#intelli-view.intelli-fill .intelli-container { flex: 1; min-height: 0; width: 100%; }
+#intelli-view.intelli-fill #intelli-pane-ai { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#intelli-view.intelli-fill .asst-messages { flex: 1; min-height: 0; height: auto; }
+
+@media (max-width: 640px) {
+  .dx-input { width: 70px; }
+  .asst-messages { height: 60vh; }
+}
+
+/* ── Assistant error notes + details dialog ─────────────────────────
+   Failures render as one compact line + "Show details"; the raw trace
+   (replica rejections run to pages) lives in a scrollable dialog. */
+.asst-err-note { color: var(--red); }
+.asst-err-more { color: var(--accent); text-decoration: none; white-space: nowrap; }
+.asst-err-more:hover { text-decoration: underline; }
+.asst-err-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+.asst-err-dialog {
+  width: min(720px, 92vw); max-height: 76vh;
+  display: flex; flex-direction: column;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+}
+.asst-err-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
+  font-size: 13px; font-weight: 600; color: var(--text);
+}
+.asst-err-head .asst-err-copy { margin-left: auto; }
+.asst-err-head button {
+  background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text-dim); font-size: 12px; padding: 3px 10px; cursor: pointer;
+}
+.asst-err-head button:hover { color: var(--text); border-color: var(--text-muted); }
+.asst-err-body {
+  margin: 0; padding: 12px 14px; overflow: auto;
+  font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+  color: var(--text-dim); user-select: text;
+}
+
+/* "Show workings" — the collapsed intermediate query/account/candles results
+   that used to render inline before every answer. The link (.asst-err-more)
+   sits under the answer; the dialog reuses the error dialog's shell and lists
+   the turn's steps, each a labelled table (or a recovered tool error). */
+.asst-workings-body {
+  margin: 0; padding: 12px 14px; overflow: auto;
+  display: flex; flex-direction: column; gap: 18px;
+}
+.asst-workings-step { display: flex; flex-direction: column; gap: 6px; }
+.asst-workings-label { font-size: 12px; font-weight: 600; color: var(--text-dim); }
+.asst-workings-err {
+  margin: 0; font-size: 12px; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-word; color: var(--red); user-select: text;
+}

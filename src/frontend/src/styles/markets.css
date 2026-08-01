@@ -1,0 +1,454 @@
+/* ── Markets ─────────────────────────────────────────────────────── */
+.markets-container {
+  /* Full-width on desktop per Hyperliquid reference — the inner 3-col grid
+     uses the whole screen rather than capping at a center column. */
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── Market Selector Dropdown ─────────────────────────────────────── */
+.market-selector {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0; /* don't shrink/clip the name — overflow drives auto-compact */
+}
+.market-selector h2 { margin: 0; }
+/* Base-asset logo (public/assets/<TOKEN>.svg) shown in the selector title and
+   dropdown rows. Inline (not flex) so "BTC/ICPUSD" stays one text run. */
+.market-logo {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  vertical-align: -4px;
+  margin-right: 8px;
+}
+.market-logo-sm {
+  width: 16px;
+  height: 16px;
+  vertical-align: -3px;
+  margin-right: 6px;
+}
+/* Desktop only: shrink the market-selector title (it's oversized on wide
+   layouts). Uses the #id so it beats the later `.market-header h2` 28px
+   rule regardless of source order. Mobile keeps its own size. */
+@media (min-width: 901px) {
+  #market-title { font-size: 19px; font-weight: 600; }
+  /* The Account tab carries the username on desktop — the header-right chip
+     would be a duplicate. !important beats the JS inline display:flex. */
+  #user-chip { display: none !important; }
+}
+.market-selector-chevron {
+  color: var(--text-dim);
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+.market-selector.open .market-selector-chevron {
+  transform: rotate(180deg);
+}
+.market-dropdown {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 8px;
+  width: 280px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  z-index: 60;
+}
+.market-selector.open .market-dropdown {
+  display: block;
+}
+.market-dropdown-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  padding: 10px 14px 4px;
+  font-weight: 500;
+}
+.market-dropdown-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.market-dropdown-item:hover {
+  background: var(--bg-hover);
+}
+.market-dropdown-item.active {
+  background: rgba(229,169,83,0.10);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.market-dropdown-item .dd-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+.market-dropdown-item .dd-price {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.market-dropdown-section + .market-dropdown-section {
+  border-top: 1px solid var(--border);
+}
+
+.market-detail { min-width: 0; display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.market-quote { color: var(--text-muted); font-weight: 400; }
+/* Sticky market-header: pinned to the top of the viewport while the rest
+   of the Markets page scrolls. On desktop the grid fits the viewport so
+   stickiness is usually a no-op; on mobile (or short screens) it keeps the
+   market identity visible while the content scrolls. */
+.market-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  margin: 0 0 8px;
+  /* Transparent ON PURPOSE: the flat --bg fill read as a darker band across
+     the top of the page. Desktop's grid fits the viewport, so the sticky
+     header never actually floats over content there — nothing needs
+     occluding. Mobile DOES scroll under it; responsive.css restores a
+     backdrop in that layout. */
+  background: transparent;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+.market-header h2 { font-size: 28px; font-weight: 600; letter-spacing: -0.3px; }
+.market-header-price {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  transition: color 0.3s ease;
+}
+.market-price-change {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  white-space: nowrap;
+  transition: color 0.3s ease;
+}
+.market-header-spacer { flex: 1; }
+.market-header #chart-btn { display: none; }
+
+/* Hyperliquid-style stat cells: small label on top, larger value below.
+   Shown on desktop only; mobile keeps the existing inline price + change. */
+.market-stats {
+  display: flex;
+  align-items: center;
+  gap: 36px;
+  margin-left: 16px;
+  flex-shrink: 0; /* overflow (not shrink) when cramped → triggers auto-compact */
+}
+
+/* Price/stats dropdown component (price stacked over 24h change → tap opens a
+   labeled stats popup). Hidden by default; shown on mobile (media query) and
+   on desktop when the header is too narrow for the full stat cells
+   (.market-header-compact, set by JS via a ResizeObserver). Structural styles
+   are global so they serve both contexts; only `display` is toggled. */
+.market-stats-mobile {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.msm-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end; /* price stacked over change, right-aligned */
+  gap: 1px;
+  line-height: 1.15;
+}
+.market-stats-mobile .market-selector-chevron { color: var(--text-dim); flex-shrink: 0; }
+.market-stats-mobile.open .market-selector-chevron { transform: rotate(180deg); }
+.market-stats-dropdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  width: max-content;
+  min-width: 200px;
+  max-width: calc(100vw - 24px);
+  box-sizing: border-box;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  padding: 4px 6px;
+}
+.market-stats-mobile.open .market-stats-dropdown { display: block; }
+.msd-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 9px 10px;
+}
+.msd-row + .msd-row { border-top: 1px solid var(--border); }
+.msd-row .ms-label { font-size: 12px; flex-shrink: 0; }
+/* Value fills the rest of the row and right-aligns, so every value's right
+   edge lines up (Price/Mark and the longer 24h Change/Volume alike). */
+.msd-row .ms-value { font-size: 13px; flex: 1; text-align: right; white-space: nowrap; }
+
+/* Desktop auto-compact: not even Price…24h Change fit → show the single
+   dropdown instead (JS toggles .market-header-compact). Before that point the
+   header degrades PROGRESSIVELY: updateMarketHeaderMode hides trailing stat
+   cells (those after 24h Change) one by one, and the last cell still visible
+   becomes .market-stat-more — a dropdown trigger listing the hidden stats. */
+.market-header-compact .market-stats { display: none; }
+.market-header-compact .market-stats-mobile { display: flex; }
+.market-header-compact .market-header-spacer { display: none; }
+.market-stat .ms-more-chevron { display: none; }
+.market-stat-more {
+  position: relative; /* anchors the overflow popup */
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+/* The chevron lives inside the label line (labels are narrower than their
+   values), so the trigger affordance adds NO width to the cell — the floor
+   set (Price…24h Volume) measures exactly like the plain bar. */
+.market-stat-more .ms-more-chevron {
+  display: inline-block;
+  margin-left: 4px;
+  vertical-align: -1px;
+  color: var(--text-dim);
+}
+.market-stat-more:hover .ms-more-chevron { color: var(--text); }
+.market-stat-more.open .ms-more-chevron { transform: rotate(180deg); }
+/* Reuses the mobile popup's structural styles; only `display` is toggled.
+   right:0 on the popup means it grows LEFTWARD from the trigger cell, away
+   from the header's right edge. */
+.market-stat-more.open .market-stats-dropdown { display: block; }
+.market-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.ms-label {
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-dim);
+  font-weight: 400;
+  letter-spacing: 0.2px;
+}
+.ms-value {
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 500;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.ms-value.up   { color: var(--green); }
+.ms-value.down { color: var(--red); }
+/* Selector-bar price flash on a price move (background pulse, like the
+   order-book rows / HyperLiquid). Applied to #dt-market-price (desktop) and
+   #market-header-price (mobile inline). */
+/* Flash the price TEXT colour (no background): saturated green/red, fading
+   back to the resting white over the animation. */
+@keyframes msFlashUp {
+  0%   { color: var(--green); }
+  55%  { color: var(--green); }
+  100% { color: var(--text); }
+}
+@keyframes msFlashDown {
+  0%   { color: var(--red); }
+  55%  { color: var(--red); }
+  100% { color: var(--text); }
+}
+.ms-flash-up   { animation: msFlashUp   0.9s ease-out; }
+.ms-flash-down { animation: msFlashDown 0.9s ease-out; }
+/* Hide the desktop stat cells on mobile and rely on the inline spans. */
+@media (max-width: 900px) {
+  .market-stats { display: none; }
+}
+/* The mobile price/stats dropdown stays hidden on desktop (base rule
+   .market-stats-mobile { display:none } already covers it). */
+
+/* ── Desktop: Hyperliquid-style 4-column grid ───────────────────────
+   Columns:  chart (flex) | resizer (6px) | book/trades (dynamic) | order (fixed)
+   Rows:     market-header (auto) | main workspace (1fr) | activity (auto)
+   The Order Book and Place Order panels span rows 1-2 so they extend UP
+   past the market-selector row — this gives them ~60px more vertical space
+   (Hyperliquid's framing: market selector lives inside the chart column). */
+.market-content {
+  display: grid;
+  /* Book column width is user-resizable via the drag handle, persisted in
+     localStorage. Default = the Place Order column's width (280px), so the
+     book/trades and order panels read as a matched pair and the chart takes
+     all remaining space. Dragging the ◄ ► handle overrides per user. */
+  --book-col-width: 280px;
+  /* Cap the main row (chart / order book / place-order) so it doesn't stretch
+     to fill a very tall screen — that left the order book vertically centred in
+     a huge empty panel. Extra height instead flows to the bottom activity row
+     (Open Orders / History / Positions), which now takes 1fr. */
+  --market-main-max: 680px;
+  /* The header row is a FIXED height, not `auto`. The order-book and order
+     panels span rows 1-2 (to extend up past the selector — see below). A grid
+     item spanning an `auto` track contributes its content height to that track
+     UNLESS the span also includes a flexible (fr) track. Capping the main row
+     above made row 2 non-flexible, so with an `auto` header row the (tall)
+     order-book panel inflated the header to hundreds of px on a populated book,
+     squashing the chart. Pinning the header row takes it out of that intrinsic
+     sizing entirely so its height can't change when the book panel splits. */
+  --market-header-h: 48px;
+  grid-template-columns: minmax(0, 1fr) 6px var(--book-col-width) 280px;
+  grid-template-rows: var(--market-header-h) minmax(340px, var(--market-main-max)) minmax(180px, 1fr);
+  gap: 8px;
+  /* Fills the viewport minus the global top chrome (--chrome-h = header +
+     fuel banner when shown, live-measured in main.js) and #markets-view's
+     top+bottom padding (12 + 16). Since .market-header now lives INSIDE the
+     grid, there is no additional subtraction for it — its row is accounted
+     for within this height via `grid-template-rows`. */
+  height: calc(100vh - var(--chrome-h) - 28px);
+  min-height: 620px;
+}
+.market-content > .market-header { grid-column: 1; grid-row: 1; }
+.chart-cell        { grid-column: 1;      grid-row: 2;          overflow: hidden; }
+.col-resizer       { grid-column: 2;      grid-row: 1 / span 2; }
+.book-trades-panel { grid-column: 3;      grid-row: 1 / span 2; overflow: hidden;
+  display: flex; flex-direction: column;
+  /* Establish a size containment context so the panel's inner layout can
+     respond to its OWN width (user drags the resizer → container query
+     triggers side-by-side split). No visual card styling lives here —
+     that's on the inner .bt-card (tabbed mode) or on each pane (split
+     mode), so the container query can switch between them. */
+  container-type: inline-size;
+  container-name: booktrades;
+}
+/* Card chrome for the tabbed layout. Sits inside .book-trades-panel and is
+   stripped by the container query in split mode so each pane can own its
+   own card below. */
+.bt-card {
+  /* No card chrome — the Order Book / Trades panel renders over the page
+     background (desktop + mobile), like the chart. */
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.order-panel       { grid-column: 4;      grid-row: 1 / span 2; overflow: hidden; }
+.user-orders-mobile{ grid-column: 1 / -1; grid-row: 3;          overflow: hidden; }
+
+/* When the market-header lives inside the grid (desktop), drop its padding
+   since the card chrome is provided by the grid cell itself. */
+.market-content > .market-header {
+  padding: 4px 0 10px;
+  margin: 0;
+  /* Thin rule separating the header data from the graph below. */
+  border-bottom: 1px solid var(--border);
+}
+
+/* Chart hidden (desktop) — grid reshapes to place market-header and
+   chart-bar on stacked full-width strips; book/order move to a new main
+   row below and the resizer collapses away (book already gets col-1 space).
+   Scoped to min-width:901px so mobile keeps its own layout. */
+@media (min-width: 901px) {
+  .market-content:has(.mini-chart.mini-chart-collapsed) {
+    grid-template-columns: minmax(0, 1fr) 280px;
+    grid-template-rows: auto auto minmax(340px, var(--market-main-max)) minmax(180px, 1fr);
+  }
+  .market-content:has(.mini-chart.mini-chart-collapsed) > .market-header { grid-column: 1 / -1; grid-row: 1; }
+  .market-content:has(.mini-chart.mini-chart-collapsed) .chart-cell        { grid-column: 1 / -1; grid-row: 2; }
+  .market-content:has(.mini-chart.mini-chart-collapsed) .col-resizer       { display: none; }
+  .market-content:has(.mini-chart.mini-chart-collapsed) .book-trades-panel { grid-column: 1;      grid-row: 3; }
+  .market-content:has(.mini-chart.mini-chart-collapsed) .order-panel       { grid-column: 2;      grid-row: 3; }
+  .market-content:has(.mini-chart.mini-chart-collapsed) .user-orders-mobile{ grid-column: 1 / -1; grid-row: 4; }
+}
+
+/* Narrow the order-panel and default book-width at roughly half a desktop
+   screen so the chart still has usable width. Equal-width math here:
+     mc width = 100vw − 32px
+     chart + 6 (resizer) + book + 240 (order) + 18 (3 × 6px gaps) = mc width
+     → for chart == book: book = (100vw − 296px) / 2 */
+@media (min-width: 901px) and (max-width: 1400px) {
+  .market-content {
+    /* Default mirrors this breakpoint's narrower order column (240px). */
+    --book-col-width: 240px;
+    grid-template-columns: minmax(0, 1fr) 6px var(--book-col-width) 240px;
+    gap: 6px;
+  }
+}
+
+/* ── Column resizer (desktop only) ─────────────────────────────────
+   A 6px hit target with a 2px Ridge line centered inside. Brightens to
+   Uplands Amber on hover / while dragging. */
+.col-resizer {
+  position: relative;
+  cursor: col-resize;
+  background: transparent;
+  /* Keep the hit target slightly wider than the visible line for easier grabbing. */
+  margin: 0 -2px;
+  z-index: 1;
+}
+.col-resizer::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--border);
+  border-radius: 1px;
+  transition: background 0.15s;
+}
+.col-resizer:hover::before,
+.col-resizer.dragging::before {
+  background: var(--accent);
+}
+/* Grip glyph above the divider line: two tiny opposing equilateral triangles
+   (◄ ►) flanking the line's top end — the drag-affordance cue. Equilateral:
+   for side s the border cross-axis is s/2 and the point extends s·√3/2, so
+   3px / 5px ≈ a 6px side. Wider than the 6px strip by design; it floats over
+   the adjacent cards' padding (pointer-events off, so hit target unchanged). */
+.col-grip {
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.col-grip::before,
+.col-grip::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  transition: border-color 0.15s;
+}
+.col-grip::before { right: 3px; border-right: 5px solid var(--text-muted); }
+.col-grip::after  { left: 3px;  border-left: 5px solid var(--text-muted); }
+.col-resizer:hover .col-grip::before, .col-resizer.dragging .col-grip::before { border-right-color: var(--accent); }
+.col-resizer:hover .col-grip::after,  .col-resizer.dragging .col-grip::after  { border-left-color: var(--accent); }
+/* While dragging, ensure the cursor stays col-resize even outside the handle. */
+.market-content.resizing,
+.market-content.resizing * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+

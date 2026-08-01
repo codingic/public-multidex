@@ -1,0 +1,443 @@
+/* ── Responsive ──────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  /* ── Account cards: keep content inside the viewport ─────────── */
+  /* NOTE: .earn-stats' mobile layout is NOT here — margin-ui.css defines its
+     base grid and is imported LATER, so a rule in this file loses the cascade
+     at equal specificity. It lived here for a while doing nothing; the real
+     override now sits beside the base rule in margin-ui.css. */
+  .margin-health-stats { grid-template-columns: 1fr 1fr; }
+  .margin-token-select { flex: 1 1 90px; min-width: 0; }
+  /* Tables (collateral breakdown, vault weights, debt) scroll rather
+     than push the card off the right edge. */
+  #earn-vault-weights, #margin-breakdown, #margin-debt-table { overflow-x: auto; }
+  /* Wide positions-style tables (pool transfers, positions/pools history,
+     archive) scroll horizontally inside their card instead of overflowing the
+     page. These wraps hold the table as a direct child. */
+  #pool-transfers-wrap, #positions-history-wrap, #pools-history-wrap,
+  #archive-list { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  /* The per-pool positions table shares its container with the pool's header
+     row, so make the table itself the horizontal scroll region. */
+  .pool-block .positions-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  /* ── Header: hamburger dropdown ──────────────────────────────── */
+  .menu-toggle { display: block; }
+  .header {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 56px;
+    padding: 10px 12px;
+    /* stickiness lives on #top-chrome (banner + header stick together) */
+  }
+  .header-left { width: 100%; justify-content: space-between; }
+  /* tabs and header-right are direct children of header; hide by default.
+     Reset the desktop left-justify margins so the stacked dropdown is flush. */
+  .tabs,
+  .header-right {
+    display: none;
+    width: 100%;
+    margin-left: 0;
+  }
+  /* When menu open, show tabs then auth button as one unified dropdown */
+  .header.menu-open .tabs {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 0 0;
+    order: 10;
+  }
+  .header.menu-open .header-right {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 0 0 8px;
+    order: 11;
+  }
+  /* Account appears in the mobile drawer (desktop hides it in favour of the
+     far-right user dropdown). Shown regardless of auth state; when signed in
+     it renders as the username pill — avatar + name (renderProfileChip). */
+  .header.menu-open .tabs .tab-mobile-only {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .header.menu-open .tabs .tab-account-pill .user-menu-avatar { flex-shrink: 0; }
+  /* Signed in, the Account entry IS the username pill: a faint capsule
+     outline, set off from the nav items above by a full-width divider
+     (drawn as a ::before so it doesn't merge with the pill's own border). */
+  .header.authed.menu-open .tabs .tab-account-pill {
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    position: relative;
+    margin-top: 22px;   /* room for the divider + clear air beneath it */
+  }
+  .header.authed.menu-open .tabs .tab-account-pill::before {
+    content: "";
+    position: absolute;
+    top: -14px;
+    left: 2px;
+    right: 2px;
+    height: 1px;
+    background: var(--border);
+  }
+  /* The desktop user dropdown never appears on mobile — the drawer carries
+     Account (a tab) and Sign out (the auth button) instead. */
+  .header .user-menu { display: none !important; }
+  /* …so restore the auth button in the drawer even when signed in (desktop
+     hides it because Sign out lives in the dropdown). The parent header-right
+     is display:none until the menu opens, so this only shows in the drawer. */
+  .header.authed #auth-btn { display: block; }
+  /* All menu items — tabs and auth btn — share the same row style */
+  .header.menu-open .tabs .tab,
+  .header.menu-open .header-right #auth-btn {
+    width: 100%;
+    text-align: left;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .header.menu-open .tabs .tab:hover,
+  .header.menu-open .header-right #auth-btn:hover {
+    background: var(--bg-input);
+    color: var(--text);
+  }
+  .header.menu-open .tabs .tab.active {
+    background: var(--accent);
+    color: var(--accent-text);
+  }
+  .balance-display { display: none !important; }
+
+  /* ── Drawer level 2: Account sections ─────────────────────────
+     Tapping the username pill swaps the nav list for this one (main.js sets
+     .acct-menu on the header). Hidden entirely on desktop — the far-right
+     user dropdown carries the same list there. */
+  .drawer-acct { display: none; flex-direction: column; gap: 4px; }
+  .header.menu-open.acct-menu .tabs .tab { display: none; }
+  .header.menu-open.acct-menu .drawer-acct { display: flex; }
+  .header.menu-open.acct-menu .header-right { display: none; }
+  .drawer-acct-back,
+  .drawer-acct-item {
+    width: 100%;
+    text-align: left;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .drawer-acct-back {
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    padding-bottom: 12px;
+  }
+  /* Indent the section rows under the back/title row so the list reads as a
+     LEVEL below it, not as a replacement for the top-level nav it swapped out. */
+  .drawer-acct-item { padding-left: 28px; }
+  .drawer-acct-back:hover,
+  .drawer-acct-item:hover { background: var(--bg-input); color: var(--text); }
+  .drawer-acct-item.active { background: var(--accent); color: var(--accent-text); }
+
+
+  /* ── Markets container mobile ────────────────────────────────── */
+  .markets-container { flex-direction: column; gap: 0; margin: 0; max-width: none; width: 100%; }
+  .market-dropdown {
+    width: calc(100vw - 12px);
+    left: 0;
+    border-radius: var(--radius-sm);
+  }
+
+  /* ── Mini chart mobile override ──────────────────────────────── */
+  /* Box chrome removal now lives in the base .mini-chart rule (desktop +
+     mobile); this just sizes the cell for mobile. */
+  .market-content .chart-cell.mini-chart {
+    height: 220px;
+    min-height: 220px;
+    margin: 0;
+    padding: 0;
+  }
+  /* When hidden on mobile, shrink the chart cell to just the toolbar
+     so the rest of the page scrolls up. */
+  .market-content .chart-cell.mini-chart.mini-chart-collapsed {
+    height: auto;
+    min-height: 0;
+  }
+  /* The liquidation map is a short list, not a canvas — 220px would trap it
+     in a nested scroller inside an already-scrolling page. Let the cell grow
+     to the map's natural height; the cap only bites on pathologically wide
+     books, and then it scrolls. */
+  .market-content .chart-cell.mini-chart.mcv-showing-heat {
+    height: auto;
+    min-height: 0;
+    max-height: 68vh;
+  }
+
+  /* ── Market content: single-column stack on mobile ──────────── */
+  .market-content {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    /* Row 1: market-header (now inside the grid). Row 2: chart.
+       Row 3: book/trades + place-order. Row 4: bottom activity. */
+    grid-template-rows: auto auto minmax(320px, 420px) auto;
+    gap: 8px;
+    /* Tight horizontal page edge on mobile — every pixel of data room helps. */
+    padding: 0 6px;
+    width: 100%;
+    box-sizing: border-box;
+    height: auto;
+    min-height: 0;
+  }
+  /* Market header sits above the chart on mobile, full-width. Slim vertical
+     padding keeps the row short (this higher-specificity rule is the one that
+     actually wins over .market-header). */
+  /* padding-left 6px (was 12px) so the market selector lines up with the logo. */
+  /* background restored on mobile: unlike desktop, this header is sticky over
+     a page that actually scrolls beneath it — transparent here would smear
+     the order book through the market name. */
+  .market-content > .market-header { grid-column: 1 / -1; grid-row: 1; padding: 3px 6px 3px 6px; margin: 0 0 6px; background: var(--bg); }
+  /* Chart takes row 2, full-width on top */
+  .market-content .chart-cell.mini-chart {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  /* Resizer is desktop-only */
+  .market-content .col-resizer { display: none; }
+  /* Order book / trades tabbed panel on the left, place-order on the right.
+     On mobile the panel drops its card chrome (background, border, radius)
+     to give the data more room — every pixel counts on a 390px viewport. */
+  .market-content .book-trades-panel {
+    grid-column: 1;
+    grid-row: 3;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    /* Explicit flex column so the inner trades-list / orderbook can
+       flex-fill and scroll within the bounded row. */
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  /* (.bt-card and .bt-tabs box chrome removal now lives in the base rules —
+     desktop + mobile.) Inner panes just need their mobile padding here. */
+  .market-content .book-trades-panel .orderbook-panel,
+  .market-content .book-trades-panel .trades-panel {
+    padding: 6px 0 0;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+  }
+  /* Tab bar: tighter and edge-to-edge on mobile */
+  .market-content .book-trades-panel .bt-tabs {
+    padding: 0 0 0 2px;
+  }
+  .market-content .order-panel {
+    grid-column: 2;
+    grid-row: 3;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    /* Same treatment as desktop: transparent + stronger cyan outline. */
+    background: transparent;
+    border: 1.5px solid rgba(56, 189, 240, 0.45);
+    border-radius: var(--radius);
+    padding: 10px;
+  }
+  .market-content .user-orders-mobile {
+    grid-column: 1 / -1;
+    grid-row: 4;
+    padding: 8px 0;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    /* Keep the activity box a real section even when empty (its grid row is
+       `auto`, so without a floor it collapses to the tab bar + empty note).
+       The page scrolls, so the reserved space costs nothing above the fold.
+       240px ≈ the desktop row's 180px floor + the tab bar. */
+    min-height: 240px;
+  }
+
+  /* User orders mobile size overrides. Restore the full-width tab spread on
+     mobile (desktop is left-justified content-width). */
+  .uom-tabs { gap: 0; flex-wrap: wrap; }
+  .uom-tab { font-size: 12px; flex: 1; text-align: center; }
+  /* No market-scope toggle on mobile — the panel always shows all markets
+     there (the render-time filter no-ops below this breakpoint too, so a
+     preference ticked on desktop can't invisibly hide rows here). */
+  .uom-scope { display: none; }
+  /* Narrower shared Asset/Side/Pool widths — the grid AND table tabs follow. */
+  #user-orders-mobile { --uom-col-asset: 64px; --uom-col-side: 56px; --uom-col-pool: 104px; }
+  .uom-row { grid-template-columns: var(--uom-col-asset) var(--uom-col-side) 1fr 1fr 1fr 28px; font-size: 11px; }
+  .uom-header { grid-template-columns: var(--uom-col-asset) var(--uom-col-side) 1fr 1fr 1fr 28px; font-size: 12px; }
+  .uom-empty { font-size: 11px; }
+  .uom-pagination { font-size: 10px; }
+  .uom-pagination button { font-size: 10px; }
+
+  /* Mobile (portrait stack): halve the vertical gap between the Swap box and
+     the market box (24px → 12px). Landscape phones get the side-by-side layout
+     below, which re-sets the gap. */
+  .swap-container { gap: 12px; }
+
+  /* ── Swap page: the market box floats over the page background on mobile ──
+     Strip the card chrome (background / border / radius) so the order book and
+     recent trades sit directly on the page background, like the Markets
+     book/trades. Keep the active-tab underline but drop the tab-bar divider,
+     and run the content edge-to-edge within the swap column. (The `.swap-container`
+     prefix lifts specificity above the base .swap-market-* rules, which appear
+     LATER in the file than this media query.) */
+  .swap-container .swap-market-box { background: transparent; border: none; border-radius: 0; overflow: visible; }
+  .swap-container .swap-market-tabs { border-bottom: none; padding-left: 2px; }
+  .swap-container .swap-market-body { padding: 8px 0 0; min-height: 0; }
+  /* Match the Markets mobile book: hide the Value column on narrow screens. */
+  .swap-container .swap-ob-cols,
+  .swap-container .swap-ob-row { grid-template-columns: 1fr 1fr; }
+  .swap-container .swap-ob-cols span:nth-child(3),
+  .swap-container .swap-ob-row .v { display: none; }
+  /* The book shows ALL levels (like Markets), so bound each side (~7 levels,
+     matching the Markets mobile book) and scroll the depth — otherwise the
+     floating box would grow to the full book depth. The asks are snapped to
+     their bottom in JS so the best ask hugs the spread. Suppress the global
+     always-on scrollbar on these panes, exactly as the Markets mobile book does. */
+  .swap-container .swap-ob-asks,
+  .swap-container .swap-ob-bids { max-height: 150px; overflow-y: auto; scrollbar-width: none; }
+  .swap-container .swap-ob-asks::-webkit-scrollbar,
+  .swap-container .swap-ob-bids::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
+  /* Order book: fill grid cell */
+  .market-content .orderbook {
+    flex: 1;
+    min-height: 0;
+  }
+  .orderbook-asks, .orderbook-bids {
+    flex: 1 1 0px;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .orderbook .orderbook-header,
+  .orderbook .orderbook-spread {
+    flex-shrink: 0;
+    flex-grow: 0;
+  }
+  /* Orderbook mobile: hide Total column, 2-column layout */
+  .orderbook-row { font-size: 11px; grid-template-columns: 1fr 1fr; }
+  .orderbook-row span:nth-child(3) { display: none; }
+  .orderbook-header { font-size: 9px; grid-template-columns: 1fr 1fr; }
+  .orderbook-header span:nth-child(3) { display: none; }
+  /* Spread row is already centered (base rule); just drop the "Spread"
+     legend on mobile where space is tight. */
+  .orderbook-spread .ob-spread-label { display: none; }
+  /* Suppress the global custom scrollbar on the book's scroll panes: it forces
+     an always-visible classic scrollbar, overriding the native auto-hide
+     overlay. Hiding it lets touch scrolling show/hide the indicator natively
+     instead of parking the drag thumb on screen by default. */
+  .orderbook-asks, .orderbook-bids { scrollbar-width: none; }
+  .orderbook-asks::-webkit-scrollbar,
+  .orderbook-bids::-webkit-scrollbar { width: 0; height: 0; display: none; }
+  .orderbook-panel h3 { display: none; }
+  .ob-granularity { font-size: 12px; padding: 4px 8px; }
+  .ob-gran-option { padding: 12px 16px; font-size: 16px; }
+  .ob-cumulative-btn { font-size: 11px; padding: 2px 6px; }
+  .orderbook-toolbar { padding: 4px 0 0; }
+
+  /* Order form compact on mobile */
+  .order-panel h3 { display: none; }
+  .order-type-toggle, .order-side-toggle { margin-bottom: 6px; }
+  .order-type-btn, .side-btn { padding: 5px; font-size: 11px; }
+  .order-form { gap: 6px; }
+  .order-form label { font-size: 10px; }
+  .order-form input, .order-form select { padding: 6px 8px; font-size: 12px; }
+  .order-pct-slider-row { gap: 6px; margin-top: 4px; }
+  .order-pct-slider-row input[type="range"] { padding: 0; }
+  .order-pct-readout { font-size: 9px; min-width: 30px; }
+  .order-total { font-size: 11px; }
+  .order-available { font-size: 10px; margin-bottom: 4px; }
+  .market-content .order-panel {
+    display: flex;
+    flex-direction: column;
+  }
+  .market-content .order-panel .order-form {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+  #place-order-btn { padding: 8px 12px; font-size: 12px; }
+  .order-auth-overlay-content { padding: 12px; max-width: 160px; }
+  .order-auth-title { font-size: 13px; }
+  .order-auth-desc { font-size: 11px; }
+
+  /* Trades compact */
+  .trades-panel h3 { font-size: 12px; margin-bottom: 6px; }
+  .trades-header { font-size: 9px; }
+  .trade-row { font-size: 11px; }
+  .trades-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+
+  /* ── Market header mobile ────────────────────────────────────── */
+  .market-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 8px;
+    width: 100%;
+    min-width: 0;
+    /* Left edge matches the global header (12px) so the market selector
+       sits directly under the UPLANDS logo; right edge stays tight (6px)
+       to match the market-content grid. Slim vertical padding keeps the row
+       short. */
+    padding: 3px 6px 3px 12px;
+    margin: 0 0 6px;
+    box-sizing: border-box;
+  }
+  .market-header h2 { font-size: 22px; flex-shrink: 0; }
+
+  /* Mobile always uses the dropdown (component styles are global). Show it,
+     hide the spacer so it fills, and size the price/change a touch larger. */
+  .market-stats-mobile { display: flex; }
+  .market-header-spacer { display: none; }
+  .market-header-price { font-size: 16px; font-weight: 600; }
+  .market-price-change { font-size: 12px; }
+
+  .market-header #chart-btn { flex-shrink: 0; }
+
+  /* ── View padding ────────────────────────────────────────────── */
+  .view { padding: 12px; }
+  #markets-view { padding: 8px 0 0; }
+
+  /* ── Markets view: let body scroll on mobile so the header scrolls off
+       and .market-header can pin to the top of the viewport. ──────── */
+  #markets-view.active {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    box-sizing: border-box;
+  }
+  #markets-view .markets-container {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  #markets-view .market-detail {
+    min-width: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Account tables scroll ───────────────────────────────────── */
+  .history-scroll { overflow-x: auto; }
+
+}
