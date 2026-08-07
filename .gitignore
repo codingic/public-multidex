@@ -5,13 +5,23 @@ dist/
 
 # Skills are a machine-synced mirror of skills.internetcomputer.org, kept
 # current by the SessionStart hook (.claude/sync-ic-skills.sh) — never commit.
-.claude/skills/
+# Glob the CONTENTS rather than the directory so the exceptions below can be
+# re-included: git does not descend into an excluded directory, so `!` on a
+# path underneath `.claude/skills/` would never be consulted.
+.claude/skills/*
+# ...except skills this repo OWNS. These are ours, not mirrored, and the sync
+# script only prunes what it installed (.claude/skills/.ic-managed.json), so
+# they survive a sync. Keep this list explicit — a blanket un-ignore would
+# start committing the mirror.
+!.claude/skills/mdex-process-safety/
 # Per-developer Claude Code local overrides (machine paths, personal allowlist).
 .claude/settings.local.json
 
-# moc build cache + per-machine moc-resolution marker (not source).
-.mops/.build/
-.mops/moc-*
+# Installed Motoko packages, the moc build cache, and the per-machine
+# moc-resolution marker — none of it is source. `mops install` reproduces the
+# whole tree from mops.toml + mops.lock, and the lockfile carries a SHA-256 per
+# file, so integrity is verified rather than vendored.
+.mops/
 
 # icp-cli machine/deploy state (canister-id mappings, local network data).
 # .icp/data/ (mainnet canister-id mappings) is COMMITTED — it is the link
@@ -19,6 +29,9 @@ dist/
 # deploy to CREATE new canisters instead of upgrading multidex.ai's (skill:
 # icp-cli pitfall 5). Only the ephemeral cache (incl. the local replica's
 # mapping, which changes on every network reset) stays ignored.
+# 2026-08-06: the legacy shared `ic.ids.json` mapping was DELETED, safely —
+# it held a strict subset of subnet.ids.json (identical live ids). Stacks are
+# addressed only via their declared environments (-e engine | -e subnet).
 .icp/cache/
 
 # Cloud-engine / subnet deploy config (machine/target-specific)

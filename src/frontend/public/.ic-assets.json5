@@ -19,8 +19,17 @@
   // names the content-hashed bundle), and refuse raw.icp0.io, whose responses
   // BYPASS certification: a raw URL can serve modified JS to a signed-in
   // trader with no cryptographic check.
+  //
+  // security_policy "standard" is what actually emits a Content-Security-Policy
+  // (plus X-Content-Type-Options, Referrer-Policy, X-Frame-Options and friends).
+  // Without it the deployed app shipped NO CSP at all — certified assets prove
+  // the bytes came from the canister, but say nothing about what those bytes are
+  // then allowed to load. `script-src 'self'` is only affordable because the app
+  // now bundles every script it runs (the lightweight-charts CDN <script> is
+  // gone) and emits no inline event-handler attributes.
   {
     "match": "**/*",
+    "security_policy": "standard",
     "headers": {
       "Cache-Control": "public, max-age=0, must-revalidate",
     },
@@ -36,13 +45,27 @@
     },
   },
 
-  // IC App Connect bridge page (ai-connect.html): forbid framing so a
-  // clickjacking overlay can't trick the user into approving the II sign-in.
-  // The page self-enforces too; this header covers older browsers/proxies.
+  // IC App Connect bridge page (ai-connect.html) — its OWN policy, which
+  // replaces the `standard` one above for this file. Two reasons it cannot just
+  // inherit: the page carries an inline handshake script (pinned by hash below
+  // rather than allowed wholesale with 'unsafe-inline'), and `standard`
+  // includes `upgrade-insecure-requests`, which would rewrite the connector
+  // callback `http://127.0.0.1:<port>/callback` to https and break every
+  // sign-in. So: nothing loads by default; the one script that may run is that
+  // exact byte sequence; the only place the page may talk to is loopback.
+  //
+  // THE HASH PINS THE SCRIPT BYTES. Editing the script without updating it here
+  // takes the page down — `node tests/frontend_security.test.mjs` checks the
+  // two are in step and prints the replacement value.
+  //
+  // frame-ancestors 'none' was already here and stays: a clickjacking overlay
+  // must not be able to trick the user into approving the II sign-in.
   {
     "match": "ai-connect.html",
     "headers": {
-      "Content-Security-Policy": "frame-ancestors 'none'",
+      // One line on purpose: JSON5 has no string concatenation, and a
+      // backslash line-continuation is not worth betting a deploy on.
+      "Content-Security-Policy": "default-src 'none'; script-src 'sha256-YY0FxVEZZGX4B7VXw46OCzcr71FbF2tHAW7ZedmJnAk='; style-src 'unsafe-inline'; connect-src http://127.0.0.1:*; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     },
   },
 ]

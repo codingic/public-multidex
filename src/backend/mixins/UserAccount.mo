@@ -55,6 +55,12 @@ mixin (
   recordDeposit   : (Principal, Types.DepositRecord) -> (),
 ) {
 
+  // Bounds on the one payload a free, unregistered identity can persist.
+  // 8 is generous against a frontend that slices to 3; a market id like
+  // "BTC-ICPUSD" is 10 chars, so 32 leaves room without admitting a blob.
+  transient let PREFS_MAX_RECENT_MARKETS : Nat = 8;
+  transient let PREFS_MAX_MARKET_LEN : Nat = 32;
+
   // ── Profile ─────────────────────────────────────────────────
   // Update call (may create profile on first hit). Auto-generates a
   // friendly username; the user can regenerate up to MAX_USERNAME_REGENS
@@ -106,8 +112,24 @@ mixin (
     };
   };
 
+  // VALIDATED BEFORE IT PERSISTS. requireAuth rejects only the anonymous
+  // principal — it is not an authorization boundary — so this was the one write
+  // endpoint reachable before any anti-Sybil control, storing an unbounded,
+  // unvalidated blob per free identity with no eviction and no purge path
+  // (performWorldWipe clears ~60 maps and never touched this one). The only
+  // ceiling was the ~2 MiB ingress limit, so a few thousand calls from rotating
+  // throwaway identities reached the memory wall the order-map leak already hit
+  // once. The frontend's slice-to-3 is a client convention, not a control.
   public shared (msg) func setUserPreferences(prefs : Types.UserPreferences) : async () {
     requireAuth(msg.caller);
+    if (prefs.recentMarkets.size() > PREFS_MAX_RECENT_MARKETS) { return };
+    for (m in prefs.recentMarkets.vals()) {
+      if (m.size() > PREFS_MAX_MARKET_LEN) { return };
+    };
+    switch (prefs.lastMarket) {
+      case (?m) { if (m.size() > PREFS_MAX_MARKET_LEN) { return } };
+      case null { };
+    };
     let key = Principal.toText(msg.caller);
     Map.add(userPreferences, Text.compare, key, prefs);
   };

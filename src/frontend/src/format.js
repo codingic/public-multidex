@@ -34,6 +34,31 @@ export function priceDecimals(values) {
   return Math.max(0, 5 - minIntDigits);
 }
 
+// A single price at Order Book / Trades precision — the priceDecimals rule:
+// ≥5 significant digits (2.6945 · 82.808 · 1,234.5 · 73,862), comma-grouped,
+// trailing zeros kept. For the cross-market activity tables (open orders /
+// histories / positions), where precision varies BY ROW with the row's market.
+// `anchor` is the price the decimal count derives from — pass the row's
+// MARKET price so the row prints at its market's convention: an off-market
+// $500 BTC limit still prints BTC-style ("500"), not at small-price precision.
+// Defaults to the value itself when the market price isn't known.
+export function formatBookPrice(p, anchor) {
+  if (p == null || isNaN(p) || p === 0) return "—";
+  const dp = priceDecimals([anchor > 0 ? anchor : p]);
+  return p.toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp });
+}
+
+// A quantity at Order Book "Quantity" / Trades "Amount" precision: decimals =
+// integer digits of the market's price (the obQtyDecimals / trades-qtyDp
+// rule), capped at 8 like the book's stink-order guard. `anchor` as in
+// formatBookPrice — the row's market price.
+export function formatBookQty(q, anchor) {
+  if (q == null || isNaN(q)) return "—";
+  const a = Math.abs(anchor || 0);
+  const dp = Math.min(a >= 1 ? String(Math.floor(a)).length : 1, 8);
+  return q.toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp });
+}
+
 // Compute the number of decimal places needed for a set of values to be uniform
 export function uniformDecimals(values) {
   if (!values.length) return 2;

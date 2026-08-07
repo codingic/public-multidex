@@ -30,6 +30,13 @@ func optNull(name : Text, actual : ?Float) {
   };
 };
 
+func eqBool(name : Text, actual : Bool, expected : Bool) {
+  if (actual != expected) {
+    Runtime.trap("FAIL: " # name # " — expected " # debug_show expected # " got " # debug_show actual);
+  };
+  Debug.print("  ✓ " # name);
+};
+
 Debug.print("── PriceFeed.test ──");
 
 // ── parseLeadingFloat ────────────────────────────────────────────
@@ -48,6 +55,27 @@ optClose("zero",                    PriceFeed.parseLeadingFloat("0.0"),         
 optNull("rejects empty",            PriceFeed.parseLeadingFloat(""));
 optNull("rejects all whitespace",   PriceFeed.parseLeadingFloat("    "));
 optNull("rejects letters only",     PriceFeed.parseLeadingFloat("abc"));
+
+// ── Scientific notation must be REFUSED, never truncated ─────────
+// A "stop at the first non-numeric character" loop treats `e` as a terminator
+// and returns the MANTISSA: "1.5e3" → 1.5 for a true 1500 (1000× low),
+// "1.2e-8" → 1.2 (10^8 high). That value is the oracle mark behind
+// liquidations and collateral valuation, and nothing downstream can tell a
+// plausible wrong price from a right one — whereas a MISSING reading is
+// something the aggregator already handles (the source drops out of the
+// sample). So these must be null, not a mantissa.
+optNull("refuses 1.5e3 (must not truncate to 1.5)",   PriceFeed.parseLeadingFloat("1.5e3"));
+optNull("refuses 1.2e-8 (must not truncate to 1.2)",  PriceFeed.parseLeadingFloat("1.2e-8"));
+optNull("refuses 6.4E4 (must not truncate to 6.4)",   PriceFeed.parseLeadingFloat("6.4E4"));
+optNull("refuses bare-int exponent 2e5",              PriceFeed.parseLeadingFloat("2e5"));
+optNull("refuses exponent inside a quoted value",     PriceFeed.parseLeadingFloat("1.5e3\",\"v\":1"));
+// Controls: the plain-decimal forms every wired source actually emits are
+// untouched, and a trailing letter that ISN'T an exponent still terminates.
+optClose("control: plain decimal still parses", PriceFeed.parseLeadingFloat("64046.03"), 64046.03, 0.0001);
+optClose("control: 1.5 with no exponent",       PriceFeed.parseLeadingFloat("1.5"),      1.5,      0.0001);
+optClose("control: still stops at a letter",    PriceFeed.parseLeadingFloat("75000.5xyz"), 75000.5, 0.0001);
+// Leading 'e' was never a number to begin with.
+optNull("refuses a bare exponent with no mantissa", PriceFeed.parseLeadingFloat("e5"));
 
 // ── findAfter ────────────────────────────────────────────────────
 // Returns the substring after the first occurrence of `needle`.
@@ -206,6 +234,120 @@ optClose("numberAfterKey pretty quoted",  PriceFeed.numberAfterKey("{\"a\" : \"2
 optNull("numberAfterKey missing key", PriceFeed.numberAfterKey("{\"b\":1}", "\"a\""));
 optNull("numberAfterKey non-numeric value", PriceFeed.numberAfterKey("{\"a\":\"ok\"}", "\"a\""));
 
+// ── First-match fragility, and the anchored form that fixes it ────
+// findAfter is first-occurrence BY CONSTRUCTION, so a short key matches any
+// earlier field that shares its name — and the wrong value parses perfectly.
+// This is the exact reported case: `"a"` occurs once as a top-level field and
+// again as the ticker's price.
+let ambiguous = "{\"a\":\"99.90\",\"ticker\":{\"a\":\"2.29\"}}";
+// Pinning the documented (fragile) behaviour of the bare-key form, so nobody
+// "fixes" it into something surprising: it reads the FIRST "a".
+optClose("numberAfterKey is first-occurrence (reads the earlier 99.90)",
+         PriceFeed.numberAfterKey(ambiguous, "\"a\""), 99.90, 0.0001);
+// The anchored form names the containing object and reaches the INTENDED one.
+optClose("numberAfterPath reaches the INTENDED ticker \"a\" (2.29, not 99.90)",
+         PriceFeed.numberAfterPath(ambiguous, ["\"ticker\"", "\"a\""]), 2.29, 0.0001);
+// A path whose container is absent is a miss, not a fallback to a loose match:
+// the whole point is that drift yields NO reading rather than a wrong one.
+optNull("numberAfterPath: absent container → null (never falls back)",
+        PriceFeed.numberAfterPath(ambiguous, ["\"quotes\"", "\"a\""]));
+optNull("numberAfterPath: absent leaf key → null",
+        PriceFeed.numberAfterPath(ambiguous, ["\"ticker\"", "\"zzz\""]));
+optNull("numberAfterPath: empty path → null", PriceFeed.numberAfterPath(ambiguous, []));
+optClose("numberAfterPath: a single segment is exactly numberAfterKey",
+         PriceFeed.numberAfterPath(ambiguous, ["\"a\""]), 99.90, 0.0001);
+
+// findAfter must return the WHOLE remainder, not the text up to the needle's
+// NEXT occurrence — numberAfterPath chains it, and a truncating intermediate
+// segment would cut the target key out before the next segment looked for it.
+optEq("findAfter returns the full remainder past a repeated needle",
+      PriceFeed.findAfter("a1b1c", "1"), "b1c");
+// The multi-key path that depends on it (Crypto.com's shape).
+optClose("numberAfterPath survives a repeated intermediate key",
+         PriceFeed.numberAfterPath(
+           "{\"data\":0,\"result\":{\"data\":[{\"i\":\"BTC_USDT\",\"a\":\"64084.20\"}]}}",
+           ["\"result\"", "\"data\"", "\"a\""]),
+         64084.20, 0.0001);
+
+// ── Extractor anchoring: the 8 WIRED sources ─────────────────────
+// PRICE_SOURCES in main.mo wires coinbase, okx, kucoin, coingecko, htx,
+// cryptocom, binance and kraken. Each extractor now names the CONTAINING
+// object of the field it reads, so a same-named field appearing EARLIER in the
+// body — an envelope field an upstream adds above the container, a second coin
+// in the response, provider text inside an error array — can no longer be the
+// match. The realistic-body tests above pin that the anchors still parse the
+// live shapes; these pin that the anchor is load-bearing. Every one of these
+// bodies would have yielded the DECOY price under the old first-match form.
+
+// Coinbase: v2 responses can carry a `warnings` array ahead of `data`.
+let coinbaseDecoy = Text.encodeUtf8(
+  "{\"warnings\":[{\"id\":\"missing_version\",\"amount\":\"0.01\"}],\"data\":{\"amount\":\"75517.39\",\"base\":\"BTC\",\"currency\":\"USD\"}}"
+);
+optClose("coinbase: reads data.amount, not an earlier warnings amount",
+         PriceFeed.extractFromBody(#coinbase, coinbaseDecoy, "BTC"), 75517.39, 0.001);
+
+// Coingecko: `ids=` takes a LIST, so a body carrying more than one coin is the
+// provider's own documented shape — the extractor must read the coin it asked
+// for. Anchoring on the mapped id ("bitcoin" for BTC) does that.
+let geckoTwoCoins = Text.encodeUtf8(
+  "{\"internet-computer\":{\"usd\":2.29},\"bitcoin\":{\"usd\":64046.03}}"
+);
+optClose("coingecko: picks the REQUESTED coin's usd (BTC → 64046.03)",
+         PriceFeed.extractFromBody(#coingecko, geckoTwoCoins, "BTC"), 64046.03, 0.001);
+optClose("coingecko: same body, ICP → 2.29",
+         PriceFeed.extractFromBody(#coingecko, geckoTwoCoins, "ICP"), 2.29, 0.0001);
+optNull("coingecko: body that answers a DIFFERENT coin → null",
+        PriceFeed.extractFromBody(#coingecko, Text.encodeUtf8("{\"solana\":{\"usd\":142.5}}"), "BTC"));
+
+// OKX / KuCoin / HTX / Crypto.com: an envelope field added above the container.
+let okxDecoy = Text.encodeUtf8(
+  "{\"code\":\"0\",\"msg\":\"\",\"last\":\"0.01\",\"data\":[{\"instId\":\"ICP-USDT\",\"last\":\"2.779\",\"lastSz\":\"0.15\"}]}"
+);
+optClose("okx: reads data[].last, not an envelope \"last\"",
+         PriceFeed.extractFromBody(#okx, okxDecoy, "ICP"), 2.779, 0.0001);
+let kucoinDecoy = Text.encodeUtf8(
+  "{\"code\":\"200000\",\"price\":\"0.01\",\"data\":{\"time\":1780597674154,\"price\":\"2.777\",\"bestBid\":\"2.777\",\"bestAsk\":\"2.779\"}}"
+);
+optClose("kucoin: reads data.price, not an envelope \"price\"",
+         PriceFeed.extractFromBody(#kucoin, kucoinDecoy, "ICP"), 2.777, 0.0001);
+let htxDecoy = Text.encodeUtf8(
+  "{\"ch\":\"market.icpusdt.detail.merged\",\"status\":\"ok\",\"close\":0.0,\"tick\":{\"open\":2.33,\"close\":2.29,\"low\":2.27}}"
+);
+optClose("htx: reads tick.close, not an envelope \"close\"",
+         PriceFeed.extractFromBody(#htx, htxDecoy, "ICP"), 2.29, 0.0001);
+let cryptocomDecoy = Text.encodeUtf8(
+  "{\"id\":-1,\"method\":\"public/get-tickers\",\"a\":\"0.01\",\"code\":0,\"result\":{\"data\":[{\"i\":\"ICP_USDT\",\"h\":\"2.3780\",\"a\":\"2.2965\"}]}}"
+);
+optClose("crypto.com: reads result.data[].a — the 3-char key that made this urgent",
+         PriceFeed.extractFromBody(#cryptocom, cryptocomDecoy, "ICP"), 2.2965, 0.0001);
+
+// Kraken: `"c"` is a ONE-character key, so anything named "c" added above the
+// result container captures it. (Quotes inside the leading "error" array's
+// strings are JSON-escaped, so provider text there cannot collide — the real
+// exposure is an envelope key, which is what this pins.)
+let krakenDecoy = Text.encodeUtf8(
+  "{\"error\":[],\"c\":[\"0.01\"],\"result\":{\"ICPUSD\":{\"a\":[\"2.77600\",\"1\"],\"c\":[\"2.77500\",\"0.5\"]}}}"
+);
+optClose("kraken: reads result…c[0], not an envelope \"c\"",
+         PriceFeed.extractFromBody(#krakenLike, krakenDecoy, "ICP"), 2.775, 0.0001);
+
+// Binance's body is flat with no container, so it anchors on the sibling key
+// that always precedes the price. A document carrying a "price" but no
+// "symbol" is not the ticker response and must not be read as one.
+optNull("binance: a non-ticker document with a \"price\" → null",
+        PriceFeed.extractFromBody(#binance, Text.encodeUtf8("{\"price\":\"0.01\",\"code\":-1121}"), "BTC"));
+
+// End to end: a source that starts emitting scientific notation yields NO
+// reading (the source drops out and the aggregate carries on), never a
+// mantissa 1000× low that would silently become the mark.
+optNull("binance body in scientific notation → no reading, not 1.5",
+        PriceFeed.extractFromBody(#binance, Text.encodeUtf8("{\"symbol\":\"BTCUSDT\",\"price\":\"1.5e3\"}"), "BTC"));
+optNull("htx body in scientific notation → no reading",
+        PriceFeed.extractFromBody(#htx, Text.encodeUtf8("{\"status\":\"ok\",\"tick\":{\"close\":6.4E4}}"), "BTC"));
+
+// The two UNWIRED extractors (coinpaprika, cryptocompare) are deliberately
+// untouched; their realistic-body tests above are the no-regression check.
+
 // kindText: the candid-stable tag the public API exposes instead of the
 // SourceKind variant. Spot-check the mapping, including the one rename
 // (#krakenLike → "kraken").
@@ -294,6 +436,157 @@ if (PriceFeed.trimOutliers([], 2.0).size() != 0) {
   Runtime.trap("FAIL: trimOutliers of empty must be empty");
 };
 Debug.print("  ✓ trimOutliers of empty is empty");
+
+// ── Small-sample masking: the trim must reject at n=3 and n=4 ────
+// The band used to be ±sigmaTrim·stddev of the WHOLE set, outlier included,
+// which at small n is masking so total it is provable. n=3 samples (a, a, b)
+// with d = |b − a| give sd = d/√3, so a 2σ band is ±1.1547·d while the outlier
+// sits at exactly d — strictly inside, for ANY d, since the relation is
+// homogeneous. n=4 (a, a, a, b) gives sd = d/2 and a band edge of exactly ±d,
+// landing on the outlier, which the inclusive keep test then admits. So the
+// trim could not reject one bad reading until n=5 — while a source
+// rate-limiting in and out puts the fleet at 3-4 as a matter of routine.
+//
+// Banding against the MAD instead fixes this by construction: no single
+// sample, at any magnitude, can move a median-of-deviations.
+func trimKeeps(name : Text, xs : [Float], expected : Nat) {
+  let got = PriceFeed.trimOutliers(xs, 2.0).size();
+  if (got != expected) {
+    Runtime.trap("FAIL: " # name # " — expected to keep " # debug_show expected # ", kept " # debug_show got);
+  };
+  Debug.print("  ✓ " # name);
+};
+
+// n=3, two venues agreeing exactly and one off. MAD is 0 here (more than half
+// the samples share a value), so this also exercises the band floor.
+trimKeeps("n=3: rejects a 1.8% outlier against an exact pair", [2.27, 2.27, 2.31], 2);
+// Scale invariance was the sharpest edge of the old defect: because the
+// masking relation was homogeneous in d, a 100% outlier was kept just as
+// surely as a 0.1% one. Magnitude must now decide.
+trimKeeps("n=3: rejects a 100% outlier", [2.27, 2.27, 4.54], 2);
+trimKeeps("n=3: rejects a 10x outlier", [2.27, 2.27, 22.7], 2);
+// …but a reading INSIDE the caller's own dispersion tolerance is not an
+// outlier, whatever the MAD says. This is the band floor doing its job.
+trimKeeps("n=3: keeps a 10bps disagreement (inside the caller's gate)", [2.27, 2.27, 2.2723], 3);
+
+// n=4, the exact band-edge case. sd = d/2 puts the old 2σ edge precisely on
+// the outlier and `x <= hi` admitted it; here d is chosen to sit exactly
+// there (2.2927 − 2.27 = 0.0227 = 2·sd for this set).
+trimKeeps("n=4: rejects the outlier sitting exactly on the old 2σ band edge",
+          [2.27, 2.27, 2.27, 2.2927], 3);
+
+// The consequence the defect actually produced in service: a lone venue ~1%
+// off the cluster inflated the dispersion past the caller's 50bps gate and
+// FROZE the mark, which is the precise failure the trim was added to prevent.
+// At n=4 the trim now removes it and the surviving cluster clears the gate.
+let n4Freeze = PriceFeed.aggregate("ICP", [
+  { sourceId = "a"; asset = "ICP"; price = 2.270;  fetchedAtNs = 0; ok = true; errMessage = null },
+  { sourceId = "b"; asset = "ICP"; price = 2.272;  fetchedAtNs = 0; ok = true; errMessage = null },
+  { sourceId = "c"; asset = "ICP"; price = 2.271;  fetchedAtNs = 0; ok = true; errMessage = null },
+  { sourceId = "d"; asset = "ICP"; price = 2.2904; fetchedAtNs = 0; ok = true; errMessage = null },
+], 0);
+if (n4Freeze.sourceCount != 3) {
+  Runtime.trap("FAIL: n=4 one-outlier fleet expected 3 survivors, got " # debug_show n4Freeze.sourceCount);
+};
+Debug.print("  ✓ n=4 with one ~0.9% outlier: 3 survivors");
+if (n4Freeze.stddevBps > 50.0) {
+  Runtime.trap("FAIL: surviving cluster must clear the 50bps gate, got " # debug_show n4Freeze.stddevBps);
+};
+Debug.print("  ✓ n=4 with one ~0.9% outlier: survivors clear the 50bps gate (mark no longer freezes)");
+eqBool("n=4 with one outlier: 3 survivors may still move the mark",
+       PriceFeed.canMoveMark(n4Freeze), true);
+close("n=4 with one outlier: mark is the honest cluster's median", n4Freeze.price, 2.271, 0.0005);
+
+// The other direction matters just as much: a genuinely wide but SYMMETRIC
+// market is real disagreement, not an outlier, and must survive intact so the
+// caller's gate sees honest dispersion and refuses to price.
+trimKeeps("wide symmetric market is not trimmed", [2.20, 2.24, 2.27, 2.30, 2.34], 5);
+let wideAgg = PriceFeed.aggregate("X", [
+  { sourceId = "a"; asset = "X"; price = 2.20; fetchedAtNs = 0; ok = true; errMessage = null },
+  { sourceId = "b"; asset = "X"; price = 2.27; fetchedAtNs = 0; ok = true; errMessage = null },
+  { sourceId = "c"; asset = "X"; price = 2.34; fetchedAtNs = 0; ok = true; errMessage = null },
+], 0);
+if (wideAgg.stddevBps <= 50.0) {
+  Runtime.trap("FAIL: honest wide disagreement must keep dispersion above the gate, got " # debug_show wideAgg.stddevBps);
+};
+Debug.print("  ✓ honest wide disagreement keeps its dispersion (gate still refuses)");
+
+// mad() itself: the property the whole fix rests on is that one sample cannot
+// move it, however far out it is.
+optClose("mad of a tight cluster", PriceFeed.mad([100.0, 101.0, 102.0]), 1.0, 0.0001);
+optClose("mad is unmoved by an arbitrarily distant outlier",
+         PriceFeed.mad([100.0, 101.0, 102.0, 1.0e9]), 1.0, 0.0001);
+optClose("mad is 0 when a majority share a value", PriceFeed.mad([5.0, 5.0, 9.0]), 0.0, 0.0001);
+optNull("mad of empty", PriceFeed.mad([]));
+
+// ── Robustness floor (n < 3 cannot MOVE a mark) ──────────────────
+// trimOutliers is inoperative below 3 samples — a trim can only reject a
+// MINORITY, and it locates the cluster with a median and a MAD, both of which
+// need the good readings to outnumber the bad. At n=2 there is no majority to
+// find. The underlying protection is the MEDIAN's breakdown point, which at
+// n=2 is exactly zero: the median of two is their mean, so one rogue venue
+// moves the mark by half its error, unbounded and untrimmed. The predicate
+// makes that floor explicit so a caller can refuse to MOVE a mark on 2 sources
+// while still letting it HOLD.
+eqBool("robust floor: n=0 is not robust", PriceFeed.isRobustSourceCount(0), false);
+eqBool("robust floor: n=1 is not robust", PriceFeed.isRobustSourceCount(1), false);
+eqBool("robust floor: n=2 is NOT robust (median breakdown point = 0)",
+       PriceFeed.isRobustSourceCount(2), false);
+eqBool("robust floor: n=3 IS robust (tolerates one arbitrarily-wrong source)",
+       PriceFeed.isRobustSourceCount(3), true);
+eqBool("robust floor: n=8 is robust", PriceFeed.isRobustSourceCount(8), true);
+if (PriceFeed.MIN_ROBUST_SOURCES != 3) {
+  Runtime.trap("FAIL: MIN_ROBUST_SOURCES expected 3, got " # debug_show PriceFeed.MIN_ROBUST_SOURCES);
+};
+Debug.print("  ✓ MIN_ROBUST_SOURCES = 3");
+eqBool("robust floor over a sample set: 2 samples → false",
+       PriceFeed.isRobustSample([100.0, 110.0]), false);
+eqBool("robust floor over a sample set: 3 samples → true",
+       PriceFeed.isRobustSample([100.0, 110.0, 105.0]), true);
+
+// The demonstration behind the floor: at n=2 the "aggregate" is the MEAN of the
+// two, so a single rogue reading drags the mark half its error — and
+// trimOutliers passes the pair through untouched, so nothing catches it.
+let twoWithRogue = PriceFeed.aggregate("X", [
+  { sourceId = "good";  asset = "X"; price = 100.0; fetchedAtNs = 0; ok = true; errMessage = null },
+  { sourceId = "rogue"; asset = "X"; price = 200.0; fetchedAtNs = 0; ok = true; errMessage = null },
+], 0);
+close("n=2: one rogue source drags the mark to the midpoint", twoWithRogue.price, 150.0, 0.0001);
+eqBool("n=2 aggregate must NOT be allowed to move a mark",
+       PriceFeed.canMoveMark(twoWithRogue), false);
+// Add one honest source and the rogue no longer reaches the mark at all: the
+// trim rejects it (MAD locates the honest pair), and the median of what
+// survives is an honest price. Both mechanisms point the same way here.
+let threeWithRogue = PriceFeed.aggregate("X", [
+  { sourceId = "good1"; asset = "X"; price = 100.0; fetchedAtNs = 0; ok = true; errMessage = null },
+  { sourceId = "good2"; asset = "X"; price = 101.0; fetchedAtNs = 0; ok = true; errMessage = null },
+  { sourceId = "rogue"; asset = "X"; price = 200.0; fetchedAtNs = 0; ok = true; errMessage = null },
+], 0);
+close("n=3: the rogue is trimmed, leaving the honest pair's median",
+      threeWithRogue.price, 100.5, 0.0001);
+if (PriceFeed.trimOutliers([100.0, 101.0, 200.0], 2.0).size() != 2) {
+  Runtime.trap("FAIL: at n=3 the trim must reject the rogue, keeping 2 of 3");
+};
+Debug.print("  ✓ n=3: the trim rejects the rogue (MAD cannot be inflated by it)");
+
+// And then the floor refuses to MOVE on the result — deliberately. Rejecting a
+// sample COSTS a source, so a 3-source fleet with one rogue leaves 2
+// survivors, which is below MIN_ROBUST_SOURCES. That is the honest reading of
+// what is on hand: two corroborating readings, and by the breakdown-point
+// argument above two is not enough to move a mark. The mark HOLDS rather than
+// moving on a pair, which is exactly the distinction the floor exists to draw.
+//
+// Worth being clear that this is not a freeze the trim introduced: before the
+// trim could reject anything, this same fleet was vetoed by the caller's
+// dispersion gate instead (the rogue's own distance blew stddevBps far past
+// 50). Same outcome, but now for a reason that names what is actually wrong.
+eqBool("n=3 with one rogue: 2 survivors cannot move a mark",
+       PriceFeed.canMoveMark(threeWithRogue), false);
+// The count that matters is SURVIVORS, not readings received.
+if (threeWithRogue.sourceCount != 2) {
+  Runtime.trap("FAIL: expected 2 survivors of 3, got " # debug_show threeWithRogue.sourceCount);
+};
+Debug.print("  ✓ n=3 with one rogue: sourceCount = 2 (survivors, not readings)");
 
 // Two sources far apart (untrimmable, n<3): dispersion must stay HONEST —
 // big stddev survives so the quality floor correctly refuses to price.

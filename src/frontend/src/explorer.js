@@ -5,6 +5,7 @@
 // reads shared singletons via appState (state.js) and OQL display helpers
 // via oql.js.
 import { appState } from "./state.js";
+import { E8 } from "./money.js";
 import { oqlRowsToObjects, oqlFormatCell, oqlErrorMessage, dxEsc } from "./oql.js";
 
 let _dxCanister = "exchange";   // "exchange" (live state) | "history" (your archived events)
@@ -43,7 +44,13 @@ const DX_PRESETS = [
   { g: "📊 Aggregates", label: "Open orders: avg price + depth by market", q: { start: "order", groupBy: ["marketId"], aggregate: [{ fn: "count" }, { fn: "avg", field: "price", as: "avgPrice" }, { fn: "sum", field: "quantity", as: "depth" }], orderBy: [{ field: "depth", dir: "desc" }] } },
   { g: "🔍 Text search", label: 'Events mentioning "oracle"', q: { start: "event", where: { icontains: { field: "message", value: "oracle" } }, orderBy: [{ field: "id", dir: "desc" }], limit: 25 } },
   { g: "🔍 Text search", label: 'Markets starting with "BTC"', q: { start: "market", where: { startsWith: { field: "id", value: "BTC" } } } },
-  { g: "🔍 Text search", label: "Buy orders above 1000, priciest first", q: { start: "order", where: { and: [{ eq: { field: "side", value: "buy" } }, { gt: { field: "price", value: 1000 } }] }, orderBy: [{ field: "price", dir: "desc" }], limit: 25 } },
+  // OQL compares numbers exactly as the backend projects them, and `order.price`
+  // is projected raw — e8 base units, the same integer the results table prints.
+  // A threshold therefore has to be written in base units: a bare 1000 is a
+  // filter at $0.00001, which matches every resting bid and reads as a working
+  // example while doing nothing. This is the explorer's only numeric-filter
+  // preset, so it is also where anyone writing one by hand learns the unit.
+  { g: "🔍 Text search", label: "Buy orders above $1,000, priciest first", q: { start: "order", where: { and: [{ eq: { field: "side", value: "buy" } }, { gt: { field: "price", value: 1000 * E8 } }] }, orderBy: [{ field: "price", dir: "desc" }], limit: 25 } },
   { g: "🔒 Your data (sign in)", label: "My pools", q: { start: "pool", limit: 25 } },
   { g: "🔒 Your data (sign in)", label: "My positions — newest", q: { start: "position", orderBy: [{ field: "openedAt", dir: "desc" }], limit: 25 } },
   { g: "🔒 Your data (sign in)", label: "My wallet balances", q: { start: "balance", orderBy: [{ field: "amount", dir: "desc" }], limit: 25 } },

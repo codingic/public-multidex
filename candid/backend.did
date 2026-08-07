@@ -892,6 +892,11 @@ service : {
       done: bool;
       folded: nat;
     });
+  adminResetLiquidationBreaker: () -> ();
+  adminResetPlayAllowances: () -> (variant {
+                                     err: text;
+                                     ok: text;
+                                   });
   adminRetryFuelNotify: (block: opt nat) -> (variant {
                                                err: text;
                                                ok: nat;
@@ -1070,11 +1075,13 @@ service : {
   getAllTrades: (marketId: MarketId) -> (vec PublicTrade) query;
   getAmmAutoInventory: () -> (bool) query;
   getAmmBookShare: (marketId: MarketId) -> (opt AmmBookShare) query;
+  getAmmEverEnabled: () -> (bool) query;
   getAmmPool: (marketId: MarketId) -> (opt Pool) query;
   getAmmPools: () -> (vec Pool) query;
   getAmmPrincipal: () -> (principal) query;
   getAmmRebalanceEnabled: () -> (bool) query;
   getApiDoc: () -> (text) query;
+  getAppVersion: () -> (text) query;
   getArbStats: () ->
    (record {
       balances: vec record {
@@ -1108,6 +1115,7 @@ service : {
    (CandleResponse) query;
   getCanisterInfo: () ->
    (record {
+      appVersion: text;
       arbCycles: nat;
       arbLifetimeTopUp: nat;
       archiveCanisterId: opt text;
@@ -1181,6 +1189,16 @@ service : {
                               nat;
                               int;
                             }) query;
+  getLiquidationSweepHealth: () ->
+   (record {
+      backoffNs: int;
+      completions: nat;
+      cursorActive: bool;
+      dispatches: nat;
+      failStreak: nat;
+      lastCompletedNs: int;
+      pending: nat;
+    }) query;
   getMarginHeatmap: (marketId: MarketId) -> (opt MarginHeatmap) query;
   getMarginHeatmapHistory: (marketId: MarketId, sinceNs: int) ->
    (vec MarginHeatmap) query;

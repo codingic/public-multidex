@@ -28,6 +28,7 @@ import Types "Types";
 import Fixed "Fixed";
 import Int "mo:core/Int";
 import Nat "mo:core/Nat";
+import List "mo:core/List";
 import Accounts "Accounts";
 import MarginEngine "MarginEngine";
 import BorrowEngine "BorrowEngine";
@@ -36,6 +37,50 @@ import SafeMath "SafeMath";
 module {
 
   public type PriceLookup = Types.TokenId -> ?Nat;
+
+  // How many (debt, collateral) seizes one tryLiquidate pass may perform. This
+  // is a MESSAGE-SIZE bound, not a solvency judgement: each iteration re-runs a
+  // full getHealth and walks the collateral set, so the budget is what keeps a
+  // pass inside the instruction limit. With 5 collateral tokens against 5
+  // borrowable ones a genuinely mixed portfolio can want more than this, so
+  // hitting the bound is an ordinary outcome and must be classified as an
+  // unfinished close (see the classifier at the foot of tryLiquidate), never as
+  // insolvency. Raising it would make exhaustion rarer without making the
+  // distinction less necessary.
+  public let MAX_SEIZE_ITERS : Nat = 8;
+
+  // How a pass that DID seize something is reported, given whether the user is
+  // still liquidatable and whether the seize loop ran out of its iteration
+  // budget. Split out as a pure function because this one line is the whole
+  // difference between a partial close and a write-off, and driving the loop
+  // all the way to its bound from a unit test needs a portfolio shape that is
+  // fiddly to construct and easy to invalidate — the decision deserves to be
+  // assertable directly.
+  //
+  // #insolvent is a claim that COLLATERAL is exhausted, and health alone does
+  // not establish that. The loop has two very different terminal states that
+  // both leave a user liquidatable: it walked every collateral and none could
+  // move the debt (genuinely insolvent), or it simply ran out of iterations
+  // mid-walk with seizable collateral still standing. Reporting the second as
+  // #insolvent hands the caller a user whose debt it then writes off WHOLESALE
+  // — main.mo answers #insolvent with absorbBadDebt, which clears every
+  // remaining loan and socialises the residual to the insurance pool and then
+  // to AMM LPs — while the user keeps the collateral the pass never reached.
+  // That books a fully-collateralised position as a loss.
+  //
+  // A budget-exhausted pass is a PARTIAL close, which is what #liquidated
+  // already means here ("possibly partial-to-target"): real value moved, the
+  // penalty was really earned, and the user stays in `loans`, so the next sweep
+  // resumes from the improved health. Progress is monotonic per pass, so a user
+  // needing more than one budget converges across ticks rather than being
+  // written off inside one.
+  public func classifySeizingPass(
+    stillLiquidatable : Bool,
+    budgetExhausted   : Bool,
+    event             : Types.LiquidationEvent,
+  ) : Types.LiquidationOutcome {
+    if (stillLiquidatable and not budgetExhausted) { #insolvent(event) } else { #liquidated(event) };
+  };
 
   func priceOf(token : Types.TokenId, priceLookup : PriceLookup) : Nat {
     if (token == Types.QUOTE_TOKEN) { return Fixed.SCALE };
@@ -64,19 +109,81 @@ module {
     ?best;
   };
 
+  // ── The repay a seize would actually produce ───────────────────
+  // Principal (in DEBT-token units) that seizing `qty` units of `coll` would
+  // write off. Mirrors seizeOnce's derivation EXACTLY — same order, same
+  // roundings — and is called by BOTH, so the selection filter and the
+  // execution can never drift apart.
+  //
+  // The floor to zero is the whole of the §1.3 defect. A cross-token seize
+  // converts through USD, `Fixed.div` rounds DOWN, and a collateral balance
+  // worth less than ONE base unit of the debt token therefore converts to
+  // grossDebtUnits = 0 → toRepay = 0 → BorrowEngine.writeOffLoan rejects a
+  // zero amount. This is NOT a "one base unit of ICPUSD" window: ANY dust
+  // under the debt token's unit price lands in it. And it is TWICE as wide as
+  // that, because /pm floors a second time — against BTC at $84,000, q ICPUSD
+  // units give ⌊q/84_000⌋ gross and then ⌊gross/1.05⌋, which is zero for every
+  // q < 168_000, i.e. anything below $0.00168. The same-token path floors the
+  // same way, at qty ≤ 1.
+  func derivedRepay(
+    qty         : Nat,
+    coll        : Types.CollateralValuation,
+    debt        : Types.DebtEntry,
+    priceLookup : PriceLookup,
+  ) : Nat {
+    if (qty == 0 or debt.principal == 0) { return 0 };
+    let collPrice = coll.refPrice;
+    if (collPrice == 0) { return 0 };
+    let pm = Fixed.SCALE + Types.LIQUIDATION_PENALTY;   // 1.05 at 10^8
+    if (debt.token == coll.token) {
+      // Direct path: the seized units ARE the gross proceeds.
+      return Nat.min(debt.principal, Fixed.div(qty, pm, false));
+    };
+    let dPrice = priceOf(debt.token, priceLookup);
+    if (dPrice == 0) { return 0 };
+    // Seized collateral value, expressed in debt-token units.
+    let grossDebtUnits = Fixed.div(Fixed.mul(qty, collPrice, false), dPrice, false);
+    Nat.min(debt.principal, Fixed.div(grossDebtUnits, pm, false));
+  };
+
+  func isTried(tried : List.List<Types.TokenId>, token : Types.TokenId) : Bool {
+    for (t in List.values(tried)) { if (t == token) { return true } };
+    false;
+  };
+
   // Pick the collateral token to seize against this debt. Preference:
-  //   1. Same token as the debt (direct repay, no conversion).
-  //   2. ICPUSD when the debt is a base asset (and vice-versa).
-  //   3. any other base asset — e.g. a short owing X but holding only another
-  //      base asset, which must be liquidatable rather than accrue bad debt.
-  // Cross-token seizes (2 + 3) are absorbed into the vault at the oracle mid
-  // by seizeOnce, so no token actually trades; this just chooses the richest
-  // seizable token. Returns null only if the user holds NO seizable collateral.
+  //   1. Same token as the debt (direct repay, no conversion, no dependence
+  //      on an oracle price for the debt token).
+  //   2. Otherwise the highest-$ seizable token — ICPUSD or a base asset,
+  //      ranked purely on contribUsd. This is what lets a short owing X but
+  //      holding another base asset be liquidated rather than accrue bad debt,
+  //      and it maximises the chance of covering the debt in one pass.
+  // Cross-token seizes are absorbed into the vault at the oracle mid by
+  // seizeOnce, so no token actually trades; this just chooses the richest
+  // seizable token.
+  //
+  // TWO hard rules, both of them the §1.3 fix:
+  //   • A candidate must clear a VALUE FLOOR, not merely `balance > 0`:
+  //     seizing its WHOLE balance must repay at least one base unit of
+  //     principal. `balance > 0` is what let a dust payment mask a pool's
+  //     real collateral — the seize unwound, the driver stopped, and the
+  //     position stayed un-liquidatable on every 30s sweep forever. The
+  //     floor is evaluated at `balance` (the maximum `partialSeizeQty` can
+  //     ever return for this token) so it can never reject a candidate that
+  //     would have worked; seizeOnce's #skip catches the residual case where
+  //     the SIZED seize floors to zero.
+  //   • ICPUSD is NOT preferred unconditionally. It used to win over a
+  //     `bestBase` of any size, so 1 base unit of ICPUSD outranked a whole
+  //     pool of BTC.
+  // `tried` excludes collateral the driver has already attempted for this
+  // debt, so the caller can walk every candidate. Returns null once no
+  // untried, above-floor collateral is left.
   func pickCollateral(
     margin      : MarginEngine.MarginState,
     accounts    : Accounts.AccountState,
     user        : Principal,
-    debtToken   : Types.TokenId,
+    debt        : Types.DebtEntry,
+    tried       : List.List<Types.TokenId>,
     priceLookup : PriceLookup,
   ) : ?Types.CollateralValuation {
     // Seize sizing must use SEIZABLE (un-reserved) balance — reserved
@@ -85,55 +192,30 @@ module {
     // check, which counts reserved).
     let noReserved : MarginEngine.ReservedLookup = func(_, _) { 0 };
     let vals = MarginEngine.valuations(margin, accounts, noReserved, user, priceLookup);
-    // First pass: exact-token match (direct repay path).
-    var sameTokenHit : ?Types.CollateralValuation = null;
+    var sameToken : ?Types.CollateralValuation = null;
+    var bestCross : ?Types.CollateralValuation = null;
     for (v in vals.vals()) {
-      if (v.token == debtToken and v.balance > 0) {
-        sameTokenHit := ?v;
-      };
-    };
-    switch (sameTokenHit) {
-      case (?v) { return ?v };
-      case null { };
-    };
-    // Second pass: one-leg path (X-ICPUSD market exists for every
-    // tradable base token).
-    //   debt is ICPUSD → any non-ICPUSD collateral works.
-    //   debt is X       → ICPUSD collateral works.
-    if (debtToken == Types.QUOTE_TOKEN) {
-      // Prefer the highest-$ collateral so we maximise the chance of
-      // covering the full debt in one pass.
-      var best : ?Types.CollateralValuation = null;
-      for (v in vals.vals()) {
-        if (v.token != Types.QUOTE_TOKEN and v.balance > 0) {
-          switch (best) {
-            case null { best := ?v };
-            case (?b) { if (v.contribUsd > b.contribUsd) { best := ?v } };
+      if (v.balance > 0
+          and not isTried(tried, v.token)
+          and derivedRepay(v.balance, v, debt, priceLookup) > 0) {
+        if (v.token == debt.token) {
+          sameToken := ?v;
+        } else {
+          switch (bestCross) {
+            case null { bestCross := ?v };
+            case (?b) {
+              // Tie-break by token name so the choice is deterministic and
+              // independent of MARGIN_COLLATERAL_TOKENS' order (as largestDebt).
+              if (v.contribUsd > b.contribUsd
+                  or (v.contribUsd == b.contribUsd and v.token < b.token)) {
+                bestCross := ?v;
+              };
+            };
           };
         };
       };
-      best
-    } else {
-      // Debt is a non-ICPUSD asset.
-      //   Prefer ICPUSD collateral → single-leg buy (debt_token with ICPUSD).
-      //   Fall back to the highest-$ OTHER base asset → two-leg route
-      //   (sell it for ICPUSD, then buy debt_token). This is what lets a
-      //   short (owes BTC, holds only SOL) be liquidated, rather than
-      //   sitting un-recoverable.
-      var icpusd   : ?Types.CollateralValuation = null;
-      var bestBase : ?Types.CollateralValuation = null;
-      for (v in vals.vals()) {
-        if (v.token == Types.QUOTE_TOKEN and v.balance > 0) {
-          icpusd := ?v;
-        } else if (v.token != debtToken and v.balance > 0) {
-          switch (bestBase) {
-            case null { bestBase := ?v };
-            case (?b) { if (v.contribUsd > b.contribUsd) { bestBase := ?v } };
-          };
-        };
-      };
-      switch (icpusd) { case (?v) { ?v }; case null { bestBase } };
     };
+    switch (sameToken) { case (?v) { ?v }; case null { bestCross } };
   };
 
   // ── Partial-close seize sizing (Phase 3A) ──────────────────────
@@ -226,7 +308,9 @@ module {
     let debt = switch (largestDebt(loans, user, priceLookup)) {
       case (?d) { d }; case null { return null };
     };
-    let coll = switch (pickCollateral(margin, accounts, user, debt.token, priceLookup)) {
+    // No exclusions here — the netting planner gets one shot per user, and
+    // pickCollateral already refuses candidates that can't repay anything.
+    let coll = switch (pickCollateral(margin, accounts, user, debt, List.empty<Types.TokenId>(), priceLookup)) {
       case (?c) { c }; case null { return null };
     };
     let crossToken = debt.token != coll.token;
@@ -364,8 +448,20 @@ module {
 
     // Seize + repay for ONE (debt, collateral) pair, sized toward TARGET
     // from the CURRENT health `h`. Mutates balances + loans in place;
-    // rolls back its own seize if the repay/valuation can't complete.
-    // Returns what was repaid/seized, or #err.
+    // rolls back its own seize if the repay/valuation can't complete —
+    // EVERY failing exit past the seize goes through unwindSeize(), the
+    // direct path included (it used to return #err with the seize still
+    // applied, quietly confiscating the collateral on every sweep).
+    //
+    // Three outcomes, and the distinction matters:
+    //   #ok   — debt was repaid.
+    //   #skip — this collateral CANNOT repay anything (its value floors to
+    //           zero against the debt token). Nothing was touched. The driver
+    //           must move to the next candidate: treating this as #err is
+    //           what let one dust balance hide a pool's real collateral
+    //           forever (docs/issue-triage-2026-08.md §1.3).
+    //   #err  — something transient/unexpected (missing oracle price, failed
+    //           subtraction). State is unchanged; the caller may retry.
     func seizeOnce(
       h    : Types.MarginHealth,
       debt : Types.DebtEntry,
@@ -376,13 +472,39 @@ module {
         collToken : Types.TokenId; collSeized : Nat; collSeizedUsd : Nat;
         proceedsUsd : Nat;
       };
+      #skip : Text;
       #err : Text;
     } {
       let crossToken = debt.token != coll.token;
       let collPrice = coll.refPrice;
       if (collPrice == 0) { return #err("no oracle price for collateral " # coll.token) };
+      let dPrice = priceOf(debt.token, priceLookup);
+      // Checked BEFORE the seize (it used to seize, then unwind) — nothing to
+      // roll back, and the cross-token branch below can rely on dPrice > 0.
+      if (crossToken and dPrice == 0) {
+        return #err("no oracle price for debt token " # debt.token);
+      };
       let seizeQty = partialSeizeQty(h, debt, coll);
-      if (seizeQty == 0) { return #err("seize qty rounds to zero") };
+      if (seizeQty == 0) { return #skip("seize qty rounds to zero for " # coll.token) };
+
+      // Guaranteed-penalty split: of the `gross` proceeds (debt-token units)
+      // available to apply, repay R = gross/(1+p) (derivedRepay) and KEEP
+      // penalty = p·R in the vault as insurance surplus; refund anything
+      // beyond R + penalty to the user. So every liquidation charges exactly
+      // the 5% penalty (self-funding the buffer), never more (over-recovery
+      // refunded).
+      //
+      // Derive the repay BEFORE touching any balance. If the seize is worth
+      // less than one base unit of the debt token this floors to zero,
+      // writeOffLoan would reject it, and the whole seize would have to
+      // unwind — so bail out cleanly instead, WITHOUT moving anything, and
+      // let the driver try the next collateral.
+      let toRepay = derivedRepay(seizeQty, coll, debt, priceLookup);
+      if (toRepay == 0) {
+        return #skip(
+          "seizing " # coll.token # " repays nothing — worth less than one base unit of " # debt.token
+        );
+      };
 
       // Transfer the seized collateral to the vault (the balance
       // subtraction IS the collateral reduction in cross-margin).
@@ -391,20 +513,22 @@ module {
       };
       Accounts.addBalance(accounts, vaultPrincipal, coll.token, seizeQty);
 
-      // Guaranteed-penalty split: of the `gross` proceeds (debt-token units)
-      // available to apply, repay R = gross/(1+p) and KEEP penalty = p·R in
-      // the vault as insurance surplus; refund anything beyond R + penalty
-      // to the user. So every liquidation charges exactly the 5% penalty
-      // (self-funding the buffer), never more (over-recovery refunded).
-      let pm = Fixed.SCALE + Types.LIQUIDATION_PENALTY;  // 1.05 at 10^8
-      let dPrice = priceOf(debt.token, priceLookup);
+      // The ONE unwind, shared by both routes: restore the pre-seize balances
+      // exactly. Any failure below must call this before returning #err.
+      func unwindSeize() {
+        ignore Accounts.subtractBalance(accounts, vaultPrincipal, coll.token, seizeQty);
+        Accounts.addBalance(accounts, user, coll.token, seizeQty);
+      };
+
+      // Same repay call for both routes — on the direct path coll.token IS
+      // debt.token. On failure the seize unwinds; the user keeps their funds.
+      switch (BorrowEngine.repayFromVault(loans, vaultPrincipal, accounts, user, debt.token, toRepay, now)) {
+        case (#ok(_)) { };
+        case (#err(e)) { unwindSeize(); return #err("repay failed: " # e) };
+      };
+
       let (debtRepaidPrincipal, proceedsUsd) = if (not crossToken) {
         // Direct path: seized token IS the debt token; gross = seizeQty.
-        let toRepay = Nat.min(debt.principal, Fixed.div(seizeQty, pm, false));
-        switch (BorrowEngine.repayFromVault(loans, vaultPrincipal, accounts, user, coll.token, toRepay, now)) {
-          case (#ok(_)) { };
-          case (#err(e)) { return #err("repay failed: " # e) };
-        };
         let penaltyKept = Fixed.mul(toRepay, Types.LIQUIDATION_PENALTY, false);
         let refundable = SafeMath.subOrZero(seizeQty, toRepay + penaltyKept);
         if (refundable > 0) {
@@ -434,23 +558,7 @@ module {
         // this: taker and maker are the same principal, so every leg nets to
         // zero and nothing converts. Absorbing into inventory is the only
         // conserved path — the vault KEEPS the collateral; nothing is minted.
-        if (dPrice == 0) {
-          // Can't value the debt token — undo the seize so a later pass retries.
-          ignore Accounts.subtractBalance(accounts, vaultPrincipal, coll.token, seizeQty);
-          Accounts.addBalance(accounts, user, coll.token, seizeQty);
-          return #err("no oracle price for debt token " # debt.token);
-        };
-        // Seized collateral value, expressed in debt-token units.
-        let grossDebtUnits = Fixed.div(Fixed.mul(seizeQty, collPrice, false), dPrice, false);
-        let toRepay = Nat.min(debt.principal, Fixed.div(grossDebtUnits, pm, false));
-        switch (BorrowEngine.repayFromVault(loans, vaultPrincipal, accounts, user, debt.token, toRepay, now)) {
-          case (#ok(_)) { };
-          case (#err(e)) {
-            ignore Accounts.subtractBalance(accounts, vaultPrincipal, coll.token, seizeQty);
-            Accounts.addBalance(accounts, user, coll.token, seizeQty);
-            return #err("repay failed: " # e);
-          };
-        };
+        // (dPrice > 0 and the repay both established above, before the seize.)
         // The vault retains only enough collateral to cover the repaid debt +
         // the 5% penalty (both debt-token units → collateral units); the rest is
         // refunded. Normal partial close: toRepay = grossDebtUnits/pm, so nothing
@@ -493,8 +601,13 @@ module {
     var primCollUsd      : Int = -1;
     var madeProgress     = false;
     var stopErr         : ?Text = null;
+    // Did the loop stop because it ran out of ITERATIONS, as opposed to
+    // reaching target / clearing the debt / running out of collateral? The
+    // distinction is load-bearing at the classifier below: only the latter
+    // reasons say anything about the user's solvency.
+    var budgetExhausted  = false;
     var iter = 0;
-    label L while (iter < 8) {
+    label L while (iter < MAX_SEIZE_ITERS) {
       iter += 1;
       let h = BorrowEngine.getHealth(loans, margin, accounts, reserved, user, priceLookup);
       if (h.debtUsd == 0) { break L };
@@ -502,29 +615,69 @@ module {
       let debt = switch (largestDebt(loans, user, priceLookup)) {
         case (?d) { d }; case null { break L };
       };
-      let coll = switch (pickCollateral(margin, accounts, user, debt.token, priceLookup)) {
-        case (?c) { c };
-        case null { break L }; // no seizable collateral → handled below
-      };
-      switch (seizeOnce(h, debt, coll)) {
-        case (#ok(r)) {
-          madeProgress := true;
-          totDebtRepaidUsd += r.debtRepaidUsd;
-          totProceedsUsd   += r.proceedsUsd;
-          if (r.debtRepaidUsd > primDebtUsd) {
-            primDebtUsd := r.debtRepaidUsd; primDebtToken := r.debtToken; primDebtRepaid := r.debtRepaid;
+      // Walk EVERY seizable collateral for this debt until one moves. The old
+      // code took pickCollateral's single answer and did `break L` the moment
+      // it failed — so one dust balance (which pickCollateral preferred
+      // unconditionally) meant the pool's REAL collateral was never examined,
+      // on every sweep, forever (docs/issue-triage-2026-08.md §1.3). A failed
+      // candidate is marked tried and the next-best is picked instead; we only
+      // give up on this debt once every candidate has been tried.
+      //
+      // `tried` is scoped to THIS debt: a token that can't repay debt A may
+      // well repay debt B, and a successful seize changes health, so the next
+      // outer pass starts from a clean slate. Bounded by the collateral-token
+      // set (pickCollateral never returns a tried token, so this terminates
+      // on its own; the bound is belt-and-braces on a money path).
+      let tried = List.empty<Types.TokenId>();
+      var advanced = false;
+      var cand = 0;
+      label C while (cand < Types.MARGIN_COLLATERAL_TOKENS.size()) {
+        cand += 1;
+        let coll = switch (pickCollateral(margin, accounts, user, debt, tried, priceLookup)) {
+          case (?c) { c };
+          case null { break C }; // no untried seizable collateral → handled below
+        };
+        switch (seizeOnce(h, debt, coll)) {
+          case (#ok(r)) {
+            madeProgress := true;
+            advanced     := true;
+            totDebtRepaidUsd += r.debtRepaidUsd;
+            totProceedsUsd   += r.proceedsUsd;
+            if (r.debtRepaidUsd > primDebtUsd) {
+              primDebtUsd := r.debtRepaidUsd; primDebtToken := r.debtToken; primDebtRepaid := r.debtRepaid;
+            };
+            if (r.collSeizedUsd > primCollUsd) {
+              primCollUsd := r.collSeizedUsd; primCollToken := r.collToken; primCollSeized := r.collSeized;
+            };
+            break C;   // health moved — re-snapshot and re-pick from the top.
           };
-          if (r.collSeizedUsd > primCollUsd) {
-            primCollUsd := r.collSeizedUsd; primCollToken := r.collToken; primCollSeized := r.collSeized;
+          case (#skip(_)) {
+            // Not a failure: this collateral simply cannot repay anything
+            // (dust). Nothing was touched. Try the next-best token.
+            List.add(tried, coll.token);
+          };
+          case (#err(e)) {
+            // seizeOnce rolled back its own work. Keep the FIRST reason in
+            // case nothing at all turns out to be seizable, then move on —
+            // a bad oracle price for ONE token must not veto the others.
+            switch (stopErr) {
+              case null { if (not madeProgress) { stopErr := ?e } };
+              case (?_) { };
+            };
+            List.add(tried, coll.token);
           };
         };
-        case (#err(e)) {
-          // seizeOnce rolled back its own work. Stop here; if we'd
-          // already made progress, finalise with what we got.
-          if (not madeProgress) { stopErr := ?e };
-          break L;
-        };
       };
+      // Every candidate tried and none could move this debt → stop. (Falls
+      // through to #err when a transient reason was recorded, otherwise to
+      // #insolvent, so the insurance fund closes the position instead of
+      // leaving it a perpetually-liquidatable zombie.)
+      if (not advanced) { break L };
+      // We advanced and the bound is about to stop us: the collateral walk is
+      // unfinished, not exhausted. Recorded HERE rather than inferred from
+      // `iter` afterwards, because a benign break on the final iteration
+      // leaves the same `iter` value and means the opposite thing.
+      if (iter >= MAX_SEIZE_ITERS) { budgetExhausted := true };
     };
 
     // Nothing seized at all.
@@ -570,13 +723,6 @@ module {
       healthAfter      = healthAfter.healthRatio;
       timestamp        = now;
     };
-    // Still liquidatable after exhausting collateral → insolvent (Phase 4
-    // insurance-fund socialisation). Otherwise a successful (possibly
-    // partial-to-target) close.
-    if (healthAfter.isLiquidatable) {
-      #insolvent(event)
-    } else {
-      #liquidated(event)
-    };
+    classifySeizingPass(healthAfter.isLiquidatable, budgetExhausted, event);
   };
 };

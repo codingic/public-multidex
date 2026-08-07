@@ -10,12 +10,16 @@
 #   §2  burn 1.5 ICP → #ok ≈1.5T cycles; internal ICP debited exactly;
 #       balance delta ≥ 1.4T; lifetime counters + FUEL event
 #   §3  guards: zero amount / over-balance / unwired → clean errors, no debit
+#   §3b unaffordable notify: a deposit past the mock's own balance → clean
+#       #Refunded (NOT a trap/wedge), pending cleared, block kept unconsumed
+#       (retry after topping the mock delivers), normal burn works after
 #   §4  archive fuel: adminFundArchive forwards cycles to the sidecar
 # Does NOT resetExchange (touches only treasury ICP + cycle balances).
 # Timers paused; sim killed (event-log grep needs a quiet log).
 
 set -u
 export PATH="$HOME/.local/bin:$PATH"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 pass=0; fail=0
 ok()  { echo -e "${GREEN}✓${NC} $1"; pass=$((pass+1)); }
@@ -24,8 +28,19 @@ nok() { echo -e "${RED}✗${NC} $1 — $2"; fail=$((fail+1)); }
 adm() { icp canister call --identity anonymous backend "$@" 2>&1; }
 cycles() { adm getCanisterInfo '()' --query | tr -d '_' | grep -oE "cycles = [0-9]+" | head -1 | grep -oE "[0-9]+"; }
 
-pkill -9 -f "simulate_trading.sh" 2>/dev/null || true
-sleep 1
+# The sim must be dead (header: the event-log grep needs a quiet log).
+# Stop it via the PID-file stopper — NEVER a pattern kill: `pkill -f` cannot
+# tell a local simulator from one driving multidex.ai and took the live fleet
+# down three times (run_all.sh's stopper comment + scripts/lib/bots.sh).
+# run_all.sh already stops the fleet for suite runs; this covers standalone.
+STOPPER="$SCRIPT_DIR/../scripts/stop_bots_local.sh"
+if [ -f "$STOPPER" ]; then
+  bash "$STOPPER" >/dev/null 2>&1 || true
+  sleep 2
+else
+  echo "⚠ stop_bots_local.sh not found at $STOPPER — the local fleet was NOT stopped."
+  echo "  Red results below may be simulator noise rather than regressions."
+fi
 adm setTestTimersPaused '(true)' >/dev/null 2>&1 || true
 
 echo "── §1 route wired + treasury seeded ──"
@@ -37,7 +52,7 @@ fi
 adm setFuelRoute "(opt principal \"$FUEL_MOCK_ID\", opt principal \"$FUEL_MOCK_ID\")" >/dev/null
 # The mock forwards REAL cycles (1 ICP → 1T), so it needs a mintable balance —
 # a fresh canister's default can't cover a 1.5T deposit. Local mint, free.
-icp canister top-up --amount 20t fuel-mock >/dev/null 2>&1 || true
+icp canister top-up --amount 20t fuel-mock --identity anonymous >/dev/null 2>&1 || true
 # Self-heal: a prior aborted run may have left a pending notify (stable).
 adm adminRetryFuelNotify '(null)' >/dev/null 2>&1 || true
 FS=$(adm getFuelStatus '()' --query | tr -d '\n' | tr -s ' ')
@@ -88,6 +103,53 @@ if [ "${ICP_LEFT2:-x}" = "50000000" ]; then
   ok "failed attempts debited nothing"
 else nok "guard leaked a debit" "left=$ICP_LEFT2"; fi
 adm setFuelRoute "(opt principal \"$FUEL_MOCK_ID\", opt principal \"$FUEL_MOCK_ID\")" >/dev/null   # restore
+
+echo "── §3b unaffordable notify → clean refusal, no wedge ──"
+# The 2026-08-06 wedge: a deposit the mock couldn't fund TRAPPED the cycle
+# attach; the backend read the trap as a transport error and kept
+# pendingNotify forever — every later burn got "a prior top-up is awaiting
+# notify", and this test's own §1 self-heal hit the same trap. Locks:
+#   (a) the mock refuses DEFINITIVELY (#Refunded) instead of trapping,
+#   (b) the backend clears the pending on that refusal (saga not wedged),
+#   (c) the refused block stays UNCONSUMED — after topping the mock,
+#       adminRetryFuelNotify(opt block) completes the SAME top-up,
+#   (d) a normal burn works afterwards.
+MOCK_CYC=$(icp canister status fuel-mock --identity anonymous 2>/dev/null | tr -d '_' | awk -F': ' '/^ *Cycles:/{print $2; exit}' | tr -d '[:space:]')
+if [ -z "${MOCK_CYC:-}" ]; then
+  nok "could not read fuel-mock cycle balance" "icp canister status fuel-mock"
+else
+  # e8s sized so the deposit = mock balance + 5T — past any refusal margin.
+  UNAFF=$(( MOCK_CYC / 10000 + 500000000 ))
+  adm setTestBalance "(principal \"$TREAS\", \"ICP\", $(( UNAFF + 100000000 )) : nat)" >/dev/null
+  RR=$(adm burnTreasuryIcpToCycles "($UNAFF : nat)")
+  if echo "$RR" | grep -q "Refunded" && echo "$RR" | grep -q "insufficient mock cycles"; then
+    ok "unaffordable notify refused definitively (#Refunded, not a trap)"
+  else nok "unaffordable notify not a clean #Refunded" "$RR"; fi
+  FS3=$(adm getFuelStatus '()' --query | tr -d '\n' | tr -s ' ')
+  if echo "$FS3" | grep -q "pendingNotify = null"; then
+    ok "pending notify cleared by the refusal (saga not wedged)"
+  else nok "pending notify wedged" "$(echo "$FS3" | head -c 200)"; fi
+  BLOCK=$(echo "$RR" | grep -oE "block_index = \?[0-9]+" | grep -oE "[0-9]+")
+  if [ -z "${BLOCK:-}" ]; then
+    nok "refusal did not echo the block index" "$RR"
+  else
+    icp canister top-up --amount 20t fuel-mock --identity anonymous >/dev/null 2>&1 || true
+    CB0=$(cycles)
+    RT=$(adm adminRetryFuelNotify "(opt ($BLOCK : nat))")
+    CB1=$(cycles)
+    if echo "$RT" | grep -q "ok =" && [ $(( ${CB1:-0} - ${CB0:-0} )) -ge $(( MOCK_CYC / 2 )) ]; then
+      ok "refused block kept: retry after topping the mock delivered the deposit"
+    else nok "refused block not recoverable" "$RT (Δ=$(( ${CB1:-0} - ${CB0:-0} )))"; fi
+  fi
+  adm setTestBalance "(principal \"$TREAS\", \"ICP\", 200_000_000 : nat)" >/dev/null
+  RN=$(adm burnTreasuryIcpToCycles '(60_000_000 : nat)')
+  if echo "$RN" | tr -d '_' | grep -qE "ok = 599[0-9]{9}"; then
+    ok "subsequent burn works (0.6 ICP → ≈0.6T real cycles)"
+  else nok "subsequent burn failed" "$RN"; fi
+  # The retry drained the mock by ~its pre-§3b balance — restore the venue's
+  # fuel posture (cold_start sizes it to cover a 100-ICP auto-fuel tranche).
+  icp canister top-up --amount 100t fuel-mock --identity anonymous >/dev/null 2>&1 || true
+fi
 
 echo "── §4 archive fuel forwarding ──"
 RA=$(adm adminFundArchive '(100_000_000_000 : nat)')

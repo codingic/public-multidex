@@ -28,9 +28,28 @@ fail() {
   ((failed++))
 }
 
+# Every call site MUST name its identity: the CLI's global default identity
+# is machine-shared mutable state that other sessions and connectors move
+# at will (mdex-process-safety §5) — an identity-less call would run the
+# test as whoever happens to be active. All current uses pass --identity;
+# refuse loudly if a new one doesn't.
 call() {
+  case " $* " in
+    *" --identity "*) ;;
+    *) echo -e "${RED}✗${NC} call() without --identity (mdex-process-safety §5): $*" >&2; return 1 ;;
+  esac
   echo "y" | icp canister call backend "$@" 2>&1
 }
+
+# ── DEPRECATED ───────────────────────────────────────────────────
+# Superseded by tests/run_all.sh (the test_*.sh suite + tests/_lib.sh). This
+# script's balance/order literals are pre-integer-money DECIMAL amounts; the
+# backend now takes Nat base units (10^8), so every money-bearing call fails
+# candid serialization and ~16/21 checks red regardless of venue state.
+# Kept only for historical reference. Use:  bash tests/run_all.sh
+echo -e "${YELLOW}run_tests.sh is DEPRECATED${NC} — it sends pre-migration Float money." >&2
+echo "Use the integer-money suite instead:  bash tests/run_all.sh" >&2
+exit 1
 
 echo "======================================"
 echo "  UPLANDS DEX Integration Tests"

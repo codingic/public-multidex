@@ -120,7 +120,8 @@ ${schemaText}
 ${actionLines}
 
 UNITS — READ CAREFULLY
-- Every money/price/quantity/*Usd value in query results is a FIXED-POINT INTEGER scaled by 10^8 (e8). ALWAYS divide by 100,000,000 before showing a human number: 3604200000000 ICPUSD = $36,042.00; 100000000 BTC = 1 BTC. returnBps is basis points (divide by 100 for %). ts/*At fields are NANOSECONDS since epoch.
+- DEFAULT: a money/price/quantity/*Usd value in query results is a FIXED-POINT INTEGER scaled by 10^8 (e8) — divide by 100,000,000 before showing a human number: 3604200000000 ICPUSD = $36,042.00; 100000000 BTC = 1 BTC. That covers order.price/quantity/filled, closedOrder.price/quantity/filled, position.entryPrice, position.realizedPnl, balance.amount and the leaderboard's profitUsd/capitalUsd/equityUsd. returnBps is basis points (divide by 100 for %). ts/*At fields are NANOSECONDS since epoch.
+- EXCEPTIONS — the backend converts these before projecting them, so they arrive ALREADY IN HUMAN UNITS and dividing them is an eight-orders-of-magnitude error: position.size (its own row's entryPrice is NOT — a single position carries both scales), market.lastPrice and market.refPrice, and on the HISTORY canister every userEvent money field (amount, price, qty). The account snapshot (TOOL 2) and candles (TOOL 3) are human units too, as stated there.
 - Action args are the OPPOSITE: plain floats (price 65000.5, quantity 0.25), never e8.
 - Format numbers in replies like the venue's order book: thousands separators; 2 decimals for values ≥ 1000; at most 5 significant digits otherwise; strip trailing zeros (write $1,775 not $1774.999999999; 0.1 ETH not 0.10000000).
 

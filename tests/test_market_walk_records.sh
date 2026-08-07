@@ -52,8 +52,11 @@ if awk -v g="${ICP_GOT:-0}" 'BEGIN{exit (g >= 290000000 ? 0 : 1)}'; then
 else nok "walk should fill ~3 ICP across cycles" "got=$(from_e8 "${ICP_GOT:-0}")"; fi
 
 echo "── record fidelity ──"
-# (1) Trade History: the whale's trades are MARKET-taker trades.
-TR=$(adm getRecentTrades '("ICP-ICPUSD")')
+# (1) Trade History: the whale's trades are MARKET-taker trades. The public
+# tape (getRecentTrades) is de-identified PublicTrade (2026-07) and no longer
+# carries takerOrderType — read the whale's caller-scoped history instead,
+# which still returns full Trade records for the caller's own fills.
+TR=$(whl getMyTradeHistory '()')
 MKT_TRADES=$(echo "$TR" | grep -c "takerOrderType = opt variant { market }" || true)
 LIM_TRADES=$(echo "$TR" | grep -c "takerOrderType = opt variant { limit }" || true)
 if [ "${MKT_TRADES:-0}" -ge 2 ] && [ "${LIM_TRADES:-0}" = "0" ]; then

@@ -13,7 +13,7 @@
 #            cycles, play_start.sh seeding + bots). Already seeded → wasm
 #            update only (cold_start --no-seed: build, upgrade, re-wire —
 #            trading state, vault and insurance preserved).
-#   cloud    an OpenCloud cloud engine. Guided: links the engine identity,
+#   engine   an OpenCloud cloud engine (alias: `cloud`). Guided: links the engine identity,
 #            remembers the subnet, deploys backend→bridge→frontend, wires,
 #            injects AI keys, seeds (idempotent), offers bots. The ENGINE
 #            holds the cycles and pays for compute, so the canister's own
@@ -30,12 +30,15 @@
 # Usage:
 #   ./scripts/deploy.sh                    # asks for the target, then guides you
 #   ./scripts/deploy.sh local              # first time: seeded bring-up · else: update wasm
-#   ./scripts/deploy.sh cloud              # cloud engine (guided; config remembered)
+#   ./scripts/deploy.sh engine             # cloud engine (guided; config remembered; `cloud` = alias)
 #   ./scripts/deploy.sh subnet             # dedicated subnet (guided; config remembered)
 #   ./scripts/deploy.sh <target> frontend  # FRONTEND-ONLY: rebuild + sync assets with the
 #                                          # target's ids baked in (no backend/bridge/seed)
 #   ./scripts/deploy.sh frontend --identity anonymous   # legacy: plain `icp deploy` passthrough
-#   ./scripts/deploy.sh -e ic --subnet <id>             # legacy: plain mainnet deploy (no guidance)
+#   ./scripts/deploy.sh -e subnet --subnet <id>         # legacy: plain mainnet deploy (no guidance)
+#                                          # NOTE: use a DECLARED environment (`subnet`/`engine`) —
+#                                          # the shared `ic` mapping was retired (icp.yaml: it made
+#                                          # cross-stack deploys a one-file-swap accident).
 #
 # Flags:
 #   --reconfigure        re-ask the target identity + subnet (overwrites saved config)
@@ -56,8 +59,8 @@
 # insurance fund. It defaults to YES and only runs on a first deploy / after a
 # reset (skipped if the exchange already has AMM pools).
 #
-# Non-interactive (CI): pre-set DEPLOY_TARGET=local|cloud|subnet (legacy
-# CLOUD_ENGINE=true|false still means cloud|plain-passthrough), SEED /
+# Non-interactive (CI): pre-set DEPLOY_TARGET=local|engine|subnet (legacy
+# CLOUD_ENGINE=true|false still means engine|plain-passthrough), SEED /
 # RUN_BOTS = true|false, and pre-populate the conf files below. Subnet env
 # knobs: SUBNET_CYCLES (backend endowment at CREATE, default 5000t), and
 # TRUSTED_ATTRIBUTE_SIGNERS / FRONTEND_ORIGINS (anti-sybil canister env vars,
@@ -75,14 +78,28 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Scratch-file locations (.run/, not a fixed name under sticky /tmp) — see
+# scripts/lib/runfiles.sh for why. Exported, so inject_history.sh and the
+# other children this script spawns land on the same paths.
+# shellcheck source=scripts/lib/runfiles.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/runfiles.sh"
+
 CONF="scripts/.cloud-engine.conf"
-# Which icp ENVIRONMENT remote calls target. The two mainnet stacks are
-# separate icp.yaml environments with their OWN canister-id mappings —
+# $CE_ENV — which icp ENVIRONMENT remote calls target. The two mainnet stacks
+# are separate icp.yaml environments with their OWN canister-id mappings —
 # `engine` (cloud engine) and `subnet` (the dedicated subnet serving
 # multidex.ai) — so a deploy can never land on the other stack's canisters
-# (they also carry different controllers, but don't rely on that). Each
-# branch sets this; `ic` remains only for the legacy plain passthrough.
-CE_ENV="ic"
+# (they also carry different controllers, but don't rely on that). The two
+# remote branches set it (`subnet` / `cloud`); the `local` and `plain` targets
+# exec out before anything reads it.
+#
+# DELIBERATELY NOT INITIALISED HERE. It used to default to `ic`, which was
+# dead — every reachable path overwrote it — but a stale default is the wrong
+# kind of safety net: `ic` is a bare network alias, not one of our declared
+# environments, and it is exactly what the environment split moved away from —
+# "the old shared `ic` mapping made that a one-file-swap accident" (icp.yaml).
+# With no default, a branch that forgets to set CE_ENV dies on `set -u` naming
+# the variable, instead of quietly aiming at an unmapped environment.
 TOKENS="ICPUSD BTC ETH SOL ICP"
 # market : indicative mid price, used only to lay a non-crossing seed ladder.
 MARKETS="BTC-ICPUSD:67500 ETH-ICPUSD:3500 SOL-ICPUSD:180 ICP-ICPUSD:12"
@@ -146,16 +163,27 @@ save_subnet_conf() {
 }
 
 # Latest CoinGecko price for a market's base asset (written by inject_history.sh
-# to /tmp/uplands-oracle-prices.txt during the history step), falling back to the
+# to $MDX_ORACLE_PRICES during the history step), falling back to the
 # indicative price from MARKETS when history didn't run or that asset wasn't
 # fetched. Always emitted as a float literal (the icp CLI rejects a bare integer
 # for a Float arg).
+#
+# THE SNAPSHOT FILE IS INPUT, NOT CODE. Field 2 used to be spliced straight
+# into an awk PROGRAM: `awk "BEGIN{printf \"%.4f\", $p}"`. awk has system(), so
+# a value of `1; system("curl …|sh")` ran as the operator — on the mainnet
+# deploy path. Two independent fixes, both kept:
+#   1. VALIDATE — accept only a plain decimal; anything else falls back.
+#   2. BIND with -v — `p` is then an awk DATA variable and can never be parsed
+#      as program text, whatever it contains.
+# (`p+0` forces numeric context so an empty/odd value prints 0.0000 rather
+# than tripping printf's type coercion.)
 seed_px() {
   local base="${1%-ICPUSD}" fallback="$2" p=""
-  [ -f /tmp/uplands-oracle-prices.txt ] && \
-    p=$(awk -v a="$base" '$1==a{print $2; exit}' /tmp/uplands-oracle-prices.txt)
+  [ -f "$MDX_ORACLE_PRICES" ] && \
+    p=$(awk -v a="$base" '$1==a{print $2; exit}' "$MDX_ORACLE_PRICES")
+  [[ "$p" =~ ^[0-9]+(\.[0-9]+)?$ ]] || p=""
   [ -z "$p" ] && p="$fallback"
-  awk "BEGIN{printf \"%.4f\", $p}"
+  awk -v p="$p" 'BEGIN{ printf "%.4f", p+0 }'
 }
 
 # Seed a freshly deployed (or reset) canister with the full play dataset. We
@@ -187,7 +215,7 @@ cloud_seed() {
 
   warn "Seeding the play dataset: balances + price history + order book + AMM vault + insurance fund."
   warn "On mainnet every call is ~2s, so this takes several minutes — leave it running."
-  rm -f /tmp/uplands-oracle-prices.txt   # don't let a stale history snapshot leak in
+  rm -f "$MDX_ORACLE_PRICES"   # don't let a stale history snapshot leak in
 
   # 0) Posture check. Seeding mints test balances, which only #dev and #play
   #    allow: the CONTROLLER-only setTestBalance survives on #play (the cloud
@@ -220,10 +248,15 @@ cloud_seed() {
   # 2) Price history — CoinGecko-derived hourly trades for the chart backdrop.
   #    inject_history.sh writes the latest price per asset to a temp file that
   #    seed_px reads, so the book + AMM start where the history ends.
+  #    GENESIS-GATED on #play (docs/deployment-modes.md): the canister accepts
+  #    injection only until the venue's first enableAmm — fine on a fresh
+  #    install (pools are enabled in step 4, after this), refused fast on an
+  #    already-live venue (inject_history.sh probes the gate before fetching
+  #    and names the refusal; seeding then continues on live prices).
   if [ "$hist_days" -gt 0 ]; then
     info "Injecting $hist_days days of price history (CoinGecko → injectHistoricalTrades)…"
     IC_ENV="$CE_ENV" bash scripts/inject_history.sh --days "$hist_days" --identity "$CE_IDENTITY" \
-      || warn "History injection had failures (CoinGecko rate limits?) — the chart backdrop may be partial."
+      || warn "History injection had failures — see the lines above for the real cause (posture/genesis refusal or rate limits). The chart backdrop may be partial; seeding continues on live prices."
   fi
 
   # 2b) AMM pools + LIVE prices. Create + configure each pool, then price it
@@ -242,8 +275,8 @@ cloud_seed() {
     px_e8=$(icp canister call backend getAmmPool "(\"$market\")" -e "$CE_ENV" --identity "$CE_IDENTITY" --query 2>/dev/null | grep -oE 'refPrice = [0-9_]+' | head -1 | tr -d '_' | awk '{print $3}')
     if [ -n "${px_e8:-}" ] && [ "$px_e8" != "0" ]; then
       px=$(awk -v p="$px_e8" 'BEGIN{ printf "%.4f", p/100000000 }')
-      { grep -v "^${market%%-*} " /tmp/uplands-oracle-prices.txt 2>/dev/null; echo "${market%%-*} $px"; } > /tmp/uplands-oracle-prices.txt.new \
-        && mv /tmp/uplands-oracle-prices.txt.new /tmp/uplands-oracle-prices.txt
+      { grep -v "^${market%%-*} " "$MDX_ORACLE_PRICES" 2>/dev/null; echo "${market%%-*} $px"; } > "$MDX_ORACLE_PRICES.new" \
+        && mv "$MDX_ORACLE_PRICES.new" "$MDX_ORACLE_PRICES"
       # Engine base leg for this market's vault deposit: half the per-market
       # TVL in base at the live price, +5% slack (role-sized — see step 1).
       base_fund=$(awk -v t="$tvl" -v p="$px" 'BEGIN{ printf "%.6f", t/p/2*1.05 }')
@@ -265,7 +298,7 @@ cloud_seed() {
     icp canister call backend setTestBalance "(principal \"$tp\", \"ICPUSD\", $(e8 40000.0))" -e "$CE_ENV" --identity "$CE_IDENTITY" >/dev/null 2>&1 || true
     for m in $MARKETS; do
       px=$(seed_px "${m%%:*}" "${m##*:}")
-      qty=$(awk "BEGIN{printf \"%.6f\", 15000/$px}")
+      qty=$(awk -v p="$px" 'BEGIN{ printf "%.6f", 15000/p }')
       icp canister call backend setTestBalance "(principal \"$tp\", \"${m%%-*}\", $(e8 $qty))" -e "$CE_ENV" --identity "$CE_IDENTITY" >/dev/null 2>&1 || true
     done
   done
@@ -278,9 +311,9 @@ cloud_seed() {
     market="${m%%:*}"; px=$(seed_px "$market" "${m##*:}")
     for t in "${traders[@]}"; do
       for k in 1 2; do
-        bid=$(awk "BEGIN{printf \"%.4f\", $px*(1-0.004*$k)}")
-        ask=$(awk "BEGIN{printf \"%.4f\", $px*(1+0.004*$k)}")
-        qty=$(awk "BEGIN{printf \"%.6f\", (2500*$k)/$px}")
+        bid=$(awk -v p="$px" -v k="$k" 'BEGIN{ printf "%.4f", p*(1-0.004*k) }')
+        ask=$(awk -v p="$px" -v k="$k" 'BEGIN{ printf "%.4f", p*(1+0.004*k) }')
+        qty=$(awk -v p="$px" -v k="$k" 'BEGIN{ printf "%.6f", (2500*k)/p }')
         icp canister call backend placeLimitOrder "(\"$market\", variant { buy },  $(e8 $bid), $(e8 $qty))" -e "$CE_ENV" --identity "$t" >/dev/null 2>&1 || true
         icp canister call backend placeLimitOrder "(\"$market\", variant { sell }, $(e8 $ask), $(e8 $qty))" -e "$CE_ENV" --identity "$t" >/dev/null 2>&1 || true
       done
@@ -305,8 +338,8 @@ cloud_seed() {
       continue
     fi
     px=$(awk -v p="$px_e8" 'BEGIN{ printf "%.4f", p/100000000 }')
-    base=$(awk "BEGIN{printf \"%.6f\", $tvl/$px/2}")
-    quote=$(awk "BEGIN{printf \"%.2f\", $tvl/2}")
+    base=$(awk -v t="$tvl" -v p="$px" 'BEGIN{ printf "%.6f", t/p/2 }')
+    quote=$(awk -v t="$tvl" 'BEGIN{ printf "%.2f", t/2 }')
     seed_out=$(icp canister call backend seedAmmPool "(\"$market\", $(e8 $base):nat, $(e8 $quote):nat)" -e "$CE_ENV" --identity "$CE_IDENTITY" 2>&1)
     if echo "$seed_out" | grep -q "err"; then
       warn "$market — AMM vault seed FAILED: $(echo "$seed_out" | head -2 | tr '\n' ' ')"
@@ -356,7 +389,7 @@ cloud_bots() {
     icp canister call backend setTestBalance "(principal \"$bp\", \"ICPUSD\", $(e8 40000.0))" -e "$CE_ENV" --identity "$CE_IDENTITY" >/dev/null 2>&1 || true
     for m in $MARKETS; do
       px=$(seed_px "${m%%:*}" "${m##*:}")
-      q=$(awk "BEGIN{printf \"%.6f\", 15000/$px}")
+      q=$(awk -v p="$px" 'BEGIN{ printf "%.6f", 15000/p }')
       icp canister call backend setTestBalance "(principal \"$bp\", \"${m%%-*}\", $(e8 $q))" -e "$CE_ENV" --identity "$CE_IDENTITY" >/dev/null 2>&1 || true
     done
   done
@@ -376,15 +409,39 @@ cloud_bots() {
 command -v icp >/dev/null 2>&1 || die "icp CLI not found — install it (https://cli.internetcomputer.org), then re-run."
 
 # ── Decide target ────────────────────────────────────────────────
-# Positional keyword (local|cloud|subnet), --target=X, or DEPLOY_TARGET env;
-# legacy CLOUD_ENGINE=true|false still maps to cloud|plain-passthrough. Bare
+# Positional keyword (local|engine|subnet), --target=X, or DEPLOY_TARGET env;
+# legacy CLOUD_ENGINE=true|false still maps to engine|plain-passthrough. Bare
 # canister names / icp flags with no target keep the historical behavior: a
 # plain `icp deploy` passthrough (no wiring, no seeding).
+#
+# ── ONE VOCABULARY ──
+# `local | engine | subnet` — the same spelling scripts/lib/targets.sh uses
+# (its table is the single source of truth for what a target IS), the same
+# names icp.yaml gives its environments, and the same words in the
+# deploy_to_<target>.sh filenames. This script used to say `cloud` where
+# everything else said `engine`, and that mismatch WAS the deploy_to_engine.sh
+# bug: that wrapper execs `deploy.sh engine`, `engine` was not in this keyword
+# list, so it fell through to PASS[] as if it were a canister name, TARGET
+# resolved to "plain", and the deploy became a bare `icp deploy` passthrough
+# that SKIPS apply_anti_sybil_settings and apply_memory_settings. The skipped
+# frontend_origins re-stamp is what took multidex.ai sign-in down on
+# 2026-07-11 — silently, because a passthrough deploy still succeeds.
+# `cloud` stays accepted as an alias (docs, CI, muscle memory) but everything
+# downstream compares against the canonical name only.
+canonical_target() {
+  case "${1:-}" in
+    local)        printf 'local' ;;
+    engine|cloud) printf 'engine' ;;
+    subnet)       printf 'subnet' ;;
+    plain)        printf 'plain' ;;   # internal: the legacy `icp deploy` passthrough
+    *)            return 1 ;;
+  esac
+}
 TARGET="${DEPLOY_TARGET:-}"
 RECONFIGURE=false; SEED="${SEED:-}"; RUN_BOTS="${RUN_BOTS:-}"; PASS=(); SAW_FRONTEND=false
 while [ $# -gt 0 ]; do
   case "$1" in
-    local|cloud|subnet) if [ -z "$TARGET" ]; then TARGET="$1"; else PASS+=("$1"); fi ;;
+    local|cloud|engine|subnet) if [ -z "$TARGET" ]; then TARGET="$1"; else PASS+=("$1"); fi ;;
     frontend)      SAW_FRONTEND=true ;;   # `<target> frontend` = frontend-only; bare = legacy passthrough (restored below)
     --target)      TARGET="${2:-}"; shift ;;
     --target=*)    TARGET="${1#--target=}" ;;
@@ -406,19 +463,27 @@ if $SAW_FRONTEND; then
   if [ -n "$TARGET" ]; then FRONTEND_ONLY=true; else PASS=("frontend" ${PASS[@]+"${PASS[@]}"}); fi
 fi
 if [ -z "$TARGET" ] && [ -n "${CLOUD_ENGINE:-}" ]; then
-  if truthy "$CLOUD_ENGINE"; then TARGET="cloud"; else TARGET="plain"; fi
+  if truthy "$CLOUD_ENGINE"; then TARGET="engine"; else TARGET="plain"; fi
 fi
 if [ -z "$TARGET" ]; then
   if [ ${#PASS[@]} -gt 0 ]; then
     TARGET="plain"
   else
-    case "$(ask 'Deploy target — [l]ocal replica, [c]loud engine, dedicated [s]ubnet:' 'l')" in
-      c*|C*) TARGET="cloud" ;;
-      s*|S*) TARGET="subnet" ;;
-      *)     TARGET="local" ;;
+    case "$(ask 'Deploy target — [l]ocal replica, cloud [e]ngine, dedicated [s]ubnet:' 'l')" in
+      e*|E*|c*|C*) TARGET="engine" ;;
+      s*|S*)       TARGET="subnet" ;;
+      *)           TARGET="local" ;;
     esac
   fi
 fi
+
+# HARD ERROR on anything we don't recognise — never a silent fall-through to
+# the passthrough. A typo'd or renamed target must stop the deploy, not
+# quietly downgrade it to a bare `icp deploy` that skips the safety steps.
+# This also normalises the `cloud` alias, so every comparison below is against
+# the canonical name.
+TARGET_GIVEN="$TARGET"
+TARGET="$(canonical_target "$TARGET_GIVEN")" || die "Unknown deploy target '$TARGET_GIVEN' — expected: local | engine | subnet ('cloud' is accepted as an alias for engine). Nothing was deployed."
 
 # ── Posture gate: never ship #dev to a value-bearing target ──────────
 #
@@ -474,9 +539,9 @@ if $FRONTEND_ONLY; then
     local)
       FO_ENV="local"; FO_ID="anonymous"
       ;;
-    cloud)
+    engine)
       load_conf
-      [ -n "$CE_IDENTITY" ] || die "No cloud-engine conf — run a full 'deploy.sh cloud' once first."
+      [ -n "$CE_IDENTITY" ] || die "No cloud-engine conf — run a full 'deploy.sh engine' once first."
       icp identity principal --identity "$CE_IDENTITY" >/dev/null 2>&1 \
         || die "Identity '$CE_IDENTITY' unusable (web delegation expired?) — run: icp identity reauth $CE_IDENTITY"
       FO_ENV="engine"; FO_ID="$CE_IDENTITY"; FO_SUBNET=(--subnet "$CE_SUBNET")
@@ -488,7 +553,7 @@ if $FRONTEND_ONLY; then
       FO_ENV="subnet"; FO_ID="$SN_IDENTITY"; FO_SUBNET=(--subnet "$SN_SUBNET")
       export VITE_CLOUD_ENGINE=false
       ;;
-    *) die "frontend-only needs a real target: deploy.sh local|cloud|subnet frontend" ;;
+    *) die "frontend-only needs a real target: deploy.sh local|engine|subnet frontend" ;;
   esac
   if [ "$TARGET" != "local" ]; then
     # Ids from the target's own environment (same resolution `icp deploy`
@@ -579,12 +644,14 @@ inject_ai_keys() {
 # i.e. never. Default 512 MiB of headroom; override with WASM_MEMORY_THRESHOLD.
 apply_memory_settings() {
   local limit thresh
-  limit="$(grep -oE 'WASM_MEMORY_LIMIT_BYTES : Nat = [0-9_]+' src/backend/main.mo 2>/dev/null | head -1 | grep -oE '[0-9_]+$' | tr -d '_')"
+  # The DECLARED ops-intent limit, applied at deploy. main.mo no longer
+  # carries a constant to grep: the canister reads its REAL limit back from
+  # canister_status and reports it via getCanisterInfo.wasmMemoryLimitBytes,
+  # so dashboard drift is structurally impossible — what remains here is the
+  # value ops WANTS applied (5.25 GiB; wasm64 hard wall is 6 GiB, keep margin).
+  # Override per-deploy with WASM_MEMORY_LIMIT.
+  limit="${WASM_MEMORY_LIMIT:-5637144576}"
   thresh="${WASM_MEMORY_THRESHOLD:-536870912}"
-  if [ -z "${limit:-}" ]; then
-    warn "Could not read WASM_MEMORY_LIMIT_BYTES from main.mo — leaving memory settings alone"
-    return 0
-  fi
   if icp canister settings update backend -e "$CE_ENV" --identity "$CE_IDENTITY" \
        --wasm-memory-limit "$limit" --wasm-memory-threshold "$thresh" 2>/dev/null; then
     ok "memory settings applied (limit $(awk -v b="$limit" 'BEGIN{printf "%.2f", b/1073741824}') GiB, lowmemory() at $(awk -v b="$thresh" 'BEGIN{printf "%.0f", b/1048576}') MiB free)"
@@ -728,14 +795,18 @@ maybe_seed() {
 
 # ── plain: legacy `icp deploy` passthrough ───────────────────────
 if [ "$TARGET" = "plain" ]; then
-  # Zombie-network check (LOCAL targets only — skip when deploying to ic).
+  # Zombie-network check (LOCAL targets only — skip when deploying remotely).
   # A launcher restart can leave two pocket-ic MASTERS (`--ttl` in argv);
   # the gateway still answers, but inter-canister calls and HTTPS outcalls
   # fail (oracles die, archive shipping stalls). Deploying onto that network
   # "works" and then misbehaves confusingly. This script must not wipe a
   # network it doesn't own, so it warns and defers to cold_start.sh, which
   # restarts the network cleanly. Seen 2026-07-06.
-  if ! printf '%s ' ${PASS[@]+"${PASS[@]}"} | grep -qE '(-e|--environment) *ic'; then
+  # The remote environments are the two declared mainnet stacks; anything else
+  # (`local`, `test`, or no -e at all) is the local replica and gets the check.
+  # (The old `-e ic` pattern matched NOTHING after the engine/subnet split, so
+  # this check misfired on every remote plain deploy.)
+  if ! printf '%s ' ${PASS[@]+"${PASS[@]}"} | grep -qE '(-e|--environment) *(subnet|engine)\b'; then
     # `|| true`: with no replica running lsof exits non-zero, and under
     # set -e the bare assignment would kill the script SILENTLY.
     GATEWAY_PID=$(lsof -nP -tiTCP:8000 -sTCP:LISTEN 2>/dev/null | head -1 || true)
@@ -752,6 +823,15 @@ if [ "$TARGET" = "plain" ]; then
   export VITE_CLOUD_ENGINE=false
   # A plain deploy never seeds. The consistent first-install/update flow is
   # `./scripts/deploy.sh local|cloud|subnet`.
+  # Passthrough args are the caller's own; if they name no identity, icp
+  # falls back to the machine-global default — which other sessions and
+  # connectors move at will (mdex-process-safety §5). Warn, don't die: the
+  # legacy interface stays, but inheriting the default silently is how a
+  # deploy ends up signed by whatever identity the last tool left active.
+  case " ${PASS[*]:-} " in
+    *" --identity "*) ;;
+    *) warn "no --identity in the passthrough args — icp will sign as the machine-global default identity; pass --identity explicitly (mdex-process-safety §5)" ;;
+  esac
   info "Plain passthrough (cycles warning active; no wiring/seeding). Running: icp deploy ${PASS[*]:-}"
   exec icp deploy ${PASS[@]+"${PASS[@]}"}
 fi
@@ -849,8 +929,12 @@ if [ "$TARGET" = "subnet" ]; then
   exit 0
 fi
 
-# ── cloud: OpenCloud engine — guided, all-in-one ─────────────────
-[ "$TARGET" = "cloud" ] || die "Unknown deploy target '$TARGET' (expected local | cloud | subnet)."
+# ── engine: OpenCloud cloud engine — guided, all-in-one ──────────
+# Unreachable as a rejection now (canonical_target already died on anything
+# else), but kept as a belt-and-braces assert: if a new target is ever added
+# to canonical_target without a branch here, this fails loudly instead of
+# running the engine flow against it.
+[ "$TARGET" = "engine" ] || die "Internal error: target '$TARGET' has no deploy branch (expected local | engine | subnet)."
 export VITE_CLOUD_ENGINE=true
 CE_ENV="engine"   # icp.yaml environment: the cloud-engine stack's own id mapping
 info "Cloud-engine mode: the engine pays for compute; the no-cycles warning will be suppressed."
@@ -870,9 +954,14 @@ if [ -z "$CE_IDENTITY" ] || ! icp identity principal --identity "$CE_IDENTITY" >
   icp identity link web "$CE_IDENTITY" --auth "$CE_CONSOLE" \
     || die "Identity link did not complete. First time? Enable 'CLI access' for your identity in the II settings, then re-run. (Skill: Step 1 / Pitfall 1.)"
 fi
-icp identity default "$CE_IDENTITY" >/dev/null 2>&1 || die "Could not activate identity '$CE_IDENTITY'."
+# No global "activation" step: setting the CLI's default identity here flips
+# machine-shared state under every other session, checkout, and connector on
+# this box (mdex-process-safety §5 — observed rug-pulling parallel
+# workstreams, 2026-08-06). Every icp command in this flow names --identity
+# explicitly, so all we need is proof the identity resolves.
 PRINCIPAL="$(icp identity principal --identity "$CE_IDENTITY" 2>/dev/null || true)"
-[ -n "$PRINCIPAL" ] && ok "Deploying as '$CE_IDENTITY' ($PRINCIPAL)"
+[ -n "$PRINCIPAL" ] || die "Identity '$CE_IDENTITY' unusable (web delegation expired?) — run: icp identity reauth $CE_IDENTITY"
+ok "Deploying as '$CE_IDENTITY' ($PRINCIPAL)"
 
 # 2) Subnet id — required; remembered once given.
 if [ -z "$CE_SUBNET" ]; then

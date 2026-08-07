@@ -265,7 +265,7 @@ log "MULTI/DEX trading simulation — $BOTS bots, interval ${INTERVAL}s$($REMOTE
 $USE_MARGIN || log "margin DISABLED (--no-margin) — spot archetypes only"
 
 BOT_PRINCIPALS=()
-log "creating + funding identities (spot ~\$100k; margin ~\$$(awk -v c=\"$MARGIN_SEED_CASH\" 'BEGIN{printf \"%.0fk\", (c+60000)/1000}') incl. \$${POOL_FUND_USD:-25000} pool collateral)…"
+log "creating + funding identities (spot ~\$100k; margin ~\$$(awk -v c="$MARGIN_SEED_CASH" 'BEGIN{printf "%.0fk", (c+60000)/1000}') incl. \$${POOL_FUND_USD:-25000} pool collateral)…"
 for i in $(seq 1 "$BOTS"); do
   id="${BOT_PREFIX}_$i"
   icp identity new "$id" --storage plaintext >/dev/null 2>&1 || true
@@ -341,3 +341,9 @@ while true; do
     "$(date +%H:%M:%S)" "$((cur - prev))" "$MONITOR_S" "$rate" "${hp:-0}" "${hl:-0}" "${hs:-0}" "$(liq_count)" "$(activity)"
   prev=$cur
 done
+
+# NOTE ON LIVE EDITS: bash reads this file incrementally from a shared inode.
+# Editing it IN PLACE while a fleet is executing it corrupts the running
+# parse at whatever offset the interpreter has reached (observed 2026-08-01:
+# the Phase II starter died at a shifted token mid-funding). Edit via
+# write-temp + atomic rename (mv/os.replace), or stop the fleet first.

@@ -12,12 +12,14 @@
 # face the claim-time gate — the DEX's value-integrity backstop against a
 # misbehaving Bridge.
 #
-# SELF-ADAPTING to the deployment mode (getDeployMode):
-#   #dev  → arms a $15k cap via the dev hook (setTestPlayDepositCap) and
-#           disarms it at the end; cap-lowering assertions run.
-#   #play → the REAL $100k cap is immutable (the dev hook no-ops); the
-#           cap-lowering/disarm sections assert play's own invariant instead
-#           (the cap cannot be disarmed).
+# SELF-ADAPTING to the deployment mode (getDeployMode). Posture doctrine:
+# #dev runs the same cap machinery as #play — the REAL $100k cap is active on
+# both; the dev hook (setTestPlayDepositCap) only OVERRIDES its value:
+#   #dev  → arms a $15k override so the fractions stay cheap, disarms at the
+#           end (disarm reverts to the REAL cap, never to "no cap");
+#           cap-lowering assertions run.
+#   #play → the hook no-ops; the same sections assert the identical
+#           invariant at the real cap.
 # All identities are bound to throwaway verified emails via the test hook —
 # REQUIRED on #play (unbound principals can't deposit at all) and harmless on
 # #dev (same resolver path). Amounts are FRACTIONS of the detected cap so the
@@ -44,8 +46,9 @@
 #       (The old pre-check read the principal bucket — empty for every bound
 #       user — admitted it, and the claim gate then refused it: a permanently
 #       stuck claimable.)
-#   §10 dev: disarmed → allowance null, huge simulate passes again;
-#       play: the cap can't be disarmed — a huge simulate stays refused
+#   §10 disarm reverts to the REAL posture cap on #dev (posture doctrine —
+#       there is no uncapped play-family posture); a huge simulate stays
+#       refused on both postures
 # Safe on a live sim (own throwaway identities + emails; dev cap disarmed at
 # the end; on #play only fake-money deposits under the normal cap are made).
 
@@ -215,20 +218,20 @@ assert_contains "over-cap simulate REFUSED for a bound user (regression)" "$SIM"
 DEP=$(bcall getMyDeposits '()' --identity "$X")
 assert_not_contains "nothing stranded on the bridge" "$DEP" "pending = $B"
 
-# §10 dev: disarm → the allowance disappears and a huge simulate passes the
-#     (now-uncapped) admission again. play: the cap is immutable — the same
-#     huge simulate stays refused.
+# §10 disarm reverts to the REAL posture cap, never to "no cap" (posture
+#     doctrine: #dev mirrors #play, and no play-family posture is uncapped).
+#     On #dev the $15k override comes off and the $100k cap takes over; on
+#     #play the hook no-ops. Either way the huge simulate stays refused.
 HUGE=$((CAP_E8 * 10))
 if [ "$MODE" = "dev" ]; then
   call setTestPlayDepositCap '(null)' --identity anonymous >/dev/null
   ALW=$(call getPlayDepositAllowance '()' --query --identity "$U")
-  assert_contains "no cap on dev when disarmed" "$ALW" "(null)"
-  SIM=$(bcall devSimulateDeposit "(\"ICPUSD\", $HUGE : nat)" --identity "$U")
-  assert_contains "uncapped simulate admitted after disarm" "$SIM" "ok"
-else
-  SIM=$(bcall devSimulateDeposit "(\"ICPUSD\", $HUGE : nat)" --identity "$U")
-  assert_contains "play cap cannot be disarmed (huge simulate refused)" "$SIM" "allowance exceeded"
+  CAP2=$(extract_nat capUsd "$ALW")
+  assert_gt "disarm reverts to the real posture cap (not null)" "${CAP2:-0}" "0"
+  assert_gt "...which is the posture cap, above the armed override" "${CAP2:-0}" "$CAP_E8"
 fi
+SIM=$(bcall devSimulateDeposit "(\"ICPUSD\", $HUGE : nat)" --identity "$U")
+assert_contains "the cap cannot be escaped by disarming (huge simulate refused)" "$SIM" "allowance exceeded"
 
 delid "$U"; delid "$V"; delid "$W"; delid "$X"
 

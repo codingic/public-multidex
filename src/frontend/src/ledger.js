@@ -16,6 +16,8 @@
 // says exactly that. IMPORTANT: verification needs RAW candid values
 // (BigInts) — the actors used here are deliberately NOT money-normalized.
 
+import { isLocalReplicaOrigin } from "./host.js";
+
 const enc = new TextEncoder();
 
 // ── Canonical form (EventChain.mo v1 mirror — field order is FROZEN) ──
@@ -136,14 +138,24 @@ async function validateCertifiedHead(certBytes, canisterIdText, expectedHash, ro
     } else if (!(rk instanceof Uint8Array)) {
       rk = new Uint8Array(rk);
     }
+    // Local replicas advance IC time per round, not per wall clock, so the
+    // freshness window misfires there. It must NOT be waived anywhere else: a
+    // replayed OLD certificate over an OLD head verifies perfectly, so with the
+    // check off a truncated tape is indistinguishable from a current one — the
+    // one failure this verifier exists to catch.
+    const local = isLocalReplicaOrigin();
     const cert = await Certificate.create({
       certificate: new Uint8Array(certBytes),
       rootKey: rk,
-      principal: cid,
-      // Local replicas advance IC time per round, not per wall clock — the
-      // freshness window misfires there; the BLS signature check (the part
-      // that matters) still runs.
-      disableTimeVerification: true,
+      // TAGGED principal — the SDK dispatches on `canisterId`/`subnetId` being
+      // present and throws its internal UNREACHABLE_ERROR for a bare Principal.
+      // Passing one bare made every certificate check fail with "unreachable",
+      // which the catch below reported as an environment limitation — so this
+      // check, the one the root key exists to anchor, never actually ran, in
+      // any environment. Same fix, same reasoning, as
+      // scripts/verify_ledger.mjs:430-435.
+      principal: { canisterId: cid },
+      ...(local ? { disableTimeVerification: true } : {}),
     });
     const res = cert.lookup_path([enc.encode("canister"), cid.toUint8Array(), enc.encode("certified_data")]);
     if (!res || res.status !== "Found") return { ok: false, why: "certified_data path " + (res ? res.status : "missing") };
@@ -151,9 +163,9 @@ async function validateCertifiedHead(certBytes, canisterIdText, expectedHash, ro
       ? { ok: true }
       : { ok: false, why: "certified_data ≠ head hash" };
   } catch (err) {
-    // KNOWN LOCAL LIMITATION: pocket-ic's certificates trap this SDK build's
-    // BLS verifier ("unreachable" wasm panic) — on mainnet the identical
-    // path runs on every agent update call. Degrade honestly, never lie.
+    // Development replicas (pocket-ic) can still fail here — their certificates
+    // and subnet ranges are synthetic. `null` means UNKNOWN, never OK: the
+    // caller must not paint a verified state on it. Degrade honestly, never lie.
     return { ok: null, why: (err && err.message) || String(err) };
   }
 }
@@ -265,15 +277,22 @@ export async function verifyChainClient(deps, opts, onStatus) {
   }
 
   // The head itself: validate the IC certificate over certified_data.
+  //
+  // THREE outcomes, and only one of them is "verified". `ok === null` means the
+  // check did not run (no certificate in the response, or the SDK threw) — an
+  // absence of evidence, which for years was rendered as evidence of absence of
+  // tampering. The caller gets `certOk` as a hard boolean so it cannot paint a
+  // verified state on an unknown; `certNote` is only the prose.
   let certNote;
   const certCheck = head.certificate.length
     ? await validateCertifiedHead(head.certificate[0], active.canisterId, new Uint8Array(head.headHash[0]), rootKey)
     : { ok: null, why: "no certificate in the query response" };
   if (certCheck.ok === true) certNote = "IC certificate VALID — the subnet vouches for this head";
   else if (certCheck.ok === false) throw new Error("IC certificate check FAILED: " + certCheck.why);
-  else certNote = "certificate check unavailable (" + certCheck.why + ") — head taken from the query response";
+  else certNote = "certificate check DID NOT RUN (" + certCheck.why + ") — the head is only the canister's own claim";
 
   return { links: totalLinks, headSeq, headHex: hex(new Uint8Array(head.headHash[0]), 8), certNote, heads,
+    certOk: certCheck.ok === true, certLocal: isLocalReplicaOrigin(),
     gapCount: gaps.length, gapEventsMissing, baselineCount: baselines.length,
     baselineResumeSeq: baselines.length ? Number(baselines[baselines.length - 1][1]) : null };
 }
@@ -459,7 +478,14 @@ export function setupLedger(deps) {
         scope === "full" ? {} : { lastN: parseInt(scope, 10) },
         (msg) => { out.textContent = msg; },
       );
-      out.className = "lg-verify-out lg-ok";
+      // FAIL CLOSED. Green (`lg-ok`, "✓ … verified") is reserved for a
+      // certificate that actually validated against the IC root key. Anything
+      // else — no certificate in the response, an SDK that threw, a host whose
+      // root key we refuse to trust — is a materially weaker claim: the tape
+      // agrees with ITSELF, and nothing more. A canister serving a fabricated
+      // tape with `certificate = []` is internally consistent by construction,
+      // so painting that green is exactly the reassurance an attacker wants.
+      out.className = res.certOk ? "lg-verify-out lg-ok" : "lg-verify-out lg-warn";
       const gapNote = res.gapCount
         ? (res.baselineCount
           ? ` <br><span class="lg-gap-note">⚠ across ${res.gapCount} recorded ledger gap${res.gapCount > 1 ? "s" : ""}
@@ -471,8 +497,20 @@ export function setupLedger(deps) {
               (${res.gapEventsMissing.toLocaleString()} events dropped by archive-failover — documented, not tampering;
               live balances intact, but the tape can't reconstruct through a gap unaided).</span>`)
         : "";
-      out.innerHTML = `✓ <strong>${res.links.toLocaleString()} links verified in your browser</strong> up to seq ${res.headSeq}
-        — recomputed head <code>${res.headHex}</code> matches the archive${res.heads > 1 ? `s (${res.heads} certified heads)` : ""}. ${escH(res.certNote)}.${gapNote}`;
+      const chainPart = `<strong>${res.links.toLocaleString()} chain links</strong> recomputed in your browser up to seq ${res.headSeq}
+        — head <code>${res.headHex}</code> matches the archive${res.heads > 1 ? `s (${res.heads} heads)` : ""}`;
+      out.innerHTML = res.certOk
+        ? `✓ ${chainPart}. ${escH(res.certNote)}.${gapNote}`
+        // Distinct, non-green state. Says what WAS established and what was
+        // not, in those words — self-consistency is not certification.
+        : `⚠ <strong>Chain self-consistent, certificate NOT verified.</strong> ${chainPart},
+           but that head is the canister's own claim: ${escH(res.certNote)}.
+           ${res.certLocal
+             ? `<span class="lg-gap-note">(Expected on a local development replica — its certificates are synthetic.
+                On the deployed app this state means the subnet's signature was never checked.)</span>`
+             : `<span class="lg-gap-note">A tape fabricated wholesale is self-consistent by construction,
+                so this result does NOT rule out tampering. Re-run against the ledger with
+                <code>scripts/verify_ledger.mjs</code>, which anchors on the built-in IC root key.</span>`}${gapNote}`;
     } catch (err) {
       out.className = "lg-verify-out lg-bad";
       out.textContent = "✗ VERIFICATION FAILED: " + (err && err.message ? err.message : err);

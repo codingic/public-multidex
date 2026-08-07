@@ -123,7 +123,19 @@ However, sweeping occurs at intervals in pursuit of two goals:
 
 ## 11. Trust and custody — NNS-only upgradeability
 
-The DEX, Bridge, and Archive canisters have **the NNS as their sole controller**. There is no administrator principal that can upgrade or drain them; any code change requires an on-chain NNS proposal and community vote (this is how the ckBTC/ckETH minters themselves are governed). Implications:
+> **STATUS: TARGET STATE, NOT CURRENT STATE.** This section describes the custody
+> model the production posture is designed to reach. It is **not** how the live
+> deployment runs today. As of 2026-08-02 the DEX, Bridge and Archive canisters
+> are controlled by **a single operator principal** (`docs/deploy-to-subnet.md`
+> §2), there is no governance gate in the backend, and `resetExchange` →
+> `performWorldWipe` will stop and delete every archive canister on any non-
+> `#production` posture — including the live `#play` one. The honest statement
+> for today is that the ledger is **tamper-evident but neither immutable nor
+> authentic**: you can detect alteration, but a controller can still replace the
+> record. Read the rest of this section in the future tense until the NNS
+> handover in §12 has actually happened.
+
+Under the target model, the DEX, Bridge, and Archive canisters have **the NNS as their sole controller**. There is no administrator principal that can upgrade or drain them; any code change requires an on-chain NNS proposal and community vote (this is how the ckBTC/ckETH minters themselves are governed). Implications:
 
 - No insider key can move user funds; the threshold keys are only ever exercised by the Bridge's code, which is **NNS approved**.
 - Upgrades are deliberate and slow (proposal + voting period) — a feature for custody, but it means **no instant hotfix**, so the code must be right and the build **reproducible** so voters can verify the wasm matches the source.

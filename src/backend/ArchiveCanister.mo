@@ -32,6 +32,7 @@ import Region "mo:core/Region";
 import Cycles "mo:core/Cycles";
 import CertifiedData "mo:core/CertifiedData";
 import Blob "mo:core/Blob";
+import Time "mo:core/Time";
 import Prim "mo:⛔"; // rts_memory_size / rts_heap_size for the Stats → Archive panel
 import Types "lib/Types";
 import EventChain "lib/EventChain";
@@ -69,6 +70,33 @@ persistent actor class Archive(owner : Principal) {
   // that predate this index.
   let dwIndex = List.empty<(Nat64, Nat)>();
   var dwCursor : Nat = 0;   // globalIndex positions [0, dwCursor) already scanned into dwIndex
+
+  // ── Low-memory early warning ──────────────────────────────────────
+  // Fires when this canister's wasm memory first crosses its
+  // wasm_memory_threshold setting; re-arms when usage drops back below. The
+  // archive needs its own hook: the events live in the stable Region, but the
+  // OFFSET INDEXES (globalIndex, userIndex, dwIndex) are heap-resident and grow
+  // with the tape forever, so this canister approaches a heap wall the exchange
+  // canister's hook knows nothing about — and the exchange's hook cannot fire
+  // for a sidecar in any case.
+  //
+  // ⚠️ OPS: a SPAWNED canister inherits the IC default wasm_memory_threshold of
+  // 0, which means "never warn". Until an operator sets a non-zero threshold on
+  // each archive (or the exchange sets one at spawn time), this hook cannot
+  // fire and these fields stay at their zero values — a zero here means "never
+  // fired OR never armed", and the two are indistinguishable from inside.
+  //
+  // Mirrors main.mo's hook: a stable stamp, readable after an upgrade or while
+  // updates are wedged. main.mo also writes its event log; the archive has no
+  // log, so `stats()` is the surfacing channel — plus a count, because an
+  // archive that keeps re-crossing the threshold is a different (and worse)
+  // story than one that crossed it once.
+  var lowMemoryAtNs : Int = 0;    // Time.now() of the last crossing (0 = never)
+  var lowMemoryCount : Nat = 0;   // how many times it has fired
+  system func lowmemory() : async* () {
+    lowMemoryAtNs := Time.now();
+    lowMemoryCount += 1;
+  };
 
   // True iff `data` can hold `needed` bytes. Region.grow signals failure by
   // RETURNING 0xFFFF_FFFF_FFFF_FFFF — the build's --max-stable-pages cap, or
@@ -228,35 +256,75 @@ persistent actor class Archive(owner : Principal) {
   // recomputed hash equals its successor's prevHash. `ok=false` pinpoints
   // the first broken seq. Anyone may call; the stronger, trustless variant
   // is the same computation done client-side under the certified head.
+  //
+  // BOUNDARY LINKS: `prev` starts empty on every call, so the first event of a
+  // page has nothing to check its inbound prevHash against. Left that way, a
+  // paged audit — the usage this docstring recommends — would verify only the
+  // links INSIDE each page and silently skip the one joining it to the page
+  // before, ceil(N/P)−1 of them across a run, while still returning ok=true.
+  // An event whose prevHash was rewritten to point somewhere else would sit
+  // exactly on such a boundary in the majority of pagings. So when the window
+  // opens ABOVE the chain anchor, seed `prev` from the preceding stored event
+  // and re-check that link here. (The client-side verifier in
+  // src/frontend/src/ledger.js already seeds its slices the same way.) If the
+  // predecessor cannot be loaded, the link is unverifiable — that is reported
+  // as ok=false, never passed over: silence is what made this a bug.
+  //
+  // `linksChecked` reports how many prevHash links this call actually verified,
+  // so the COVERAGE of an audit is itself auditable — "ok = true" alone cannot
+  // distinguish a thorough pass from a vacuous one. A page of k events verifies
+  // k links when its inbound link was seeded and k−1 when it starts at the
+  // anchor (whose own prevHash points before this chain), so a paged walk sums
+  // to exactly the single-call total, N−1. That identity is the regression
+  // test: it held only by accident of paging before, and now holds by
+  // construction. tests/test_archive_chain_paged.sh asserts it.
   public query func verifyChain(fromSeq : Nat, limit : Nat) : async {
-    checked : Nat; ok : Bool; brokenAt : ?Nat; nextSeq : ?Nat;
+    checked : Nat; linksChecked : Nat; ok : Bool; brokenAt : ?Nat; nextSeq : ?Nat;
   } {
-    let base = switch (firstSeq) { case (?f) { f }; case null { return { checked = 0; ok = true; brokenAt = null; nextSeq = null } } };
-    let start = switch (chainStartSeq) { case (?s) { Nat.max(fromSeq, s) }; case null { return { checked = 0; ok = true; brokenAt = null; nextSeq = null } } };
-    if (start >= nextExpected) { return { checked = 0; ok = true; brokenAt = null; nextSeq = null } };
+    let empty = { checked = 0; linksChecked = 0; ok = true; brokenAt = null; nextSeq = null };
+    let base = switch (firstSeq) { case (?f) { f }; case null { return empty } };
+    let anchor = switch (chainStartSeq) { case (?s) { s }; case null { return empty } };
+    let start = Nat.max(fromSeq, anchor);
+    if (start >= nextExpected) { return empty };
     let capped = Nat.min(limit, 10_000);
     var s = start;
     var prev : ?Types.UserEvent = null;
+    // Seed the inbound link unless the window starts AT the anchor, whose own
+    // prevHash points before this chain and is unverifiable by definition.
+    // start > anchor ≥ base, so start-1-base is in range and never underflows.
+    if (start > anchor) {
+      switch (loadAt(globalIndex, start - 1 - base)) {
+        case (?p) { prev := ?p };
+        case null {
+          // The predecessor is unreadable, so this page's inbound link cannot
+          // be verified. Report it — reporting ok=true here is precisely the
+          // silent hole being fixed.
+          return { checked = 0; linksChecked = 0; ok = false; brokenAt = ?(start - 1); nextSeq = null };
+        };
+      };
+    };
     var checked = 0;
+    var links = 0;
     while (s < nextExpected and checked < capped) {
       switch (loadAt(globalIndex, s - base)) {
         case (?e) {
           switch (prev) {
             case (?p) {
               if (e.prevHash != ?EventChain.hash(p)) {
-                return { checked; ok = false; brokenAt = ?e.seq; nextSeq = null };
+                return { checked; linksChecked = links; ok = false; brokenAt = ?e.seq; nextSeq = null };
               };
+              links += 1;
             };
             case null {};
           };
           prev := ?e;
         };
-        case null { return { checked; ok = false; brokenAt = ?s; nextSeq = null } };
+        case null { return { checked; linksChecked = links; ok = false; brokenAt = ?s; nextSeq = null } };
       };
       checked += 1;
       s += 1;
     };
-    { checked; ok = true; brokenAt = null; nextSeq = if (s < nextExpected) { ?s } else { null } };
+    { checked; linksChecked = links; ok = true; brokenAt = null; nextSeq = if (s < nextExpected) { ?s } else { null } };
   };
 
   // The caller's own events, newest-first. `offset` counts back from the
@@ -354,6 +422,11 @@ persistent actor class Archive(owner : Principal) {
     heapLiveBytes   : Nat; // live heap (the offset indexes; the events live in the Region)
     chainStartSeq : ?Nat;  // links verify from here forward (null = no chain yet)
     chainHead     : ?Blob; // running chain hash (also in certified_data)
+    // When the lowmemory() threshold hook last fired (0 = never fired, OR the
+    // canister's wasm_memory_threshold is still the spawn default of 0 and the
+    // hook is unarmed — see the hook), and how many times.
+    lowMemoryAtNs  : Int;
+    lowMemoryCount : Nat;
   } {
     {
       firstSeq;
@@ -366,6 +439,8 @@ persistent actor class Archive(owner : Principal) {
       heapLiveBytes   = Prim.rts_heap_size();
       chainStartSeq;
       chainHead;
+      lowMemoryAtNs;
+      lowMemoryCount;
     };
   };
 

@@ -149,13 +149,30 @@ oql '{"start":"closedOrder"}' > /tmp/oqlguard_nolimit.txt
 N=$(rows /tmp/oqlguard_nolimit.txt)
 if [ "$N" -le 1000 ] && [ "$N" -gt 0 ]; then _ok "§6 absent limit defaulted to a page ($N rows, not the whole store)"
 else _fail "§6 absent limit returned $N rows — expected a bounded page"; fi
-if grep -q "hasMore = true" /tmp/oqlguard_nolimit.txt; then _ok "§6 ...and says there is more to fetch"
-else _fail "§6 defaulted page did not set hasMore"; fi
+# hasMore must match REALITY, not a warm-venue assumption: probe one row past
+# the defaulted page. A fresh venue can hold fewer closed orders than a page —
+# there, hasMore=false is the honest answer, and the old unconditional
+# "hasMore = true" check misread it as a guard failure. At the clamp (N≥1000)
+# the probe can't see further, but a full defaulted page means more exists.
+if [ "$N" -ge 1000 ]; then
+  if grep -q "hasMore = true" /tmp/oqlguard_nolimit.txt; then _ok "§6 ...page bound hit and hasMore says there is more"
+  else _fail "§6 defaulted page hit the bound but hasMore was not set"; fi
+else
+  oql "{\"start\":\"closedOrder\",\"limit\":$((N + 1))}" > /tmp/oqlguard_probe.txt
+  if [ "$(rows /tmp/oqlguard_probe.txt)" -gt "$N" ]; then
+    if grep -q "hasMore = true" /tmp/oqlguard_nolimit.txt; then _ok "§6 ...and says there is more to fetch"
+    else _fail "§6 store exceeds the defaulted page but hasMore was not set"; fi
+  else
+    if grep -q "hasMore = false" /tmp/oqlguard_nolimit.txt; then _ok "§6 ...store fits one page and hasMore honestly says false"
+    else _fail "§6 store fits the defaulted page but hasMore was not false"; fi
+  fi
+fi
 
 oql '{"start":"closedOrder","limit":100000000}' > /tmp/oqlguard_biglimit.txt
 N=$(rows /tmp/oqlguard_biglimit.txt)
 if [ "$N" -le 1000 ]; then _ok "§6 absurd limit clamped ($N rows)"
 else _fail "§6 limit 1e8 returned $N rows — not clamped"; fi
+STORE_ROWS=$N   # rows visible under the clamp — the store size for the paging guard below
 
 # A huge offset must not be honoured verbatim; past the clamp there is nothing
 # to return, and the request must still complete rather than blow the budget.
@@ -163,12 +180,18 @@ R=$(oql '{"start":"closedOrder","limit":10,"offset":100000000}')
 assert_not_contains "§6 huge offset does not exceed the instruction limit" "$R" "exceeded the limit"
 assert_contains "§6 huge offset completes past the end of the store" "$R" "hasMore = false"
 
-# Paging still works normally under the clamp.
-oql '{"start":"closedOrder","limit":5,"offset":0}' > /tmp/oqlguard_p1.txt
-oql '{"start":"closedOrder","limit":5,"offset":5}' > /tmp/oqlguard_p2.txt
-if [ "$(rows /tmp/oqlguard_p1.txt)" = "5" ] && [ "$(rows /tmp/oqlguard_p2.txt)" = "5" ] \
-   && ! diff -q /tmp/oqlguard_p1.txt /tmp/oqlguard_p2.txt >/dev/null; then
-  _ok "§6 ordinary paging is unaffected (two distinct 5-row pages)"
-else _fail "§6 paging broke under the clamp"; fi
+# Paging still works normally under the clamp — needs at least 10 rows to
+# fill two distinct 5-row pages; on a smaller store the check is undefined,
+# not failed.
+if [ "${STORE_ROWS:-0}" -ge 10 ]; then
+  oql '{"start":"closedOrder","limit":5,"offset":0}' > /tmp/oqlguard_p1.txt
+  oql '{"start":"closedOrder","limit":5,"offset":5}' > /tmp/oqlguard_p2.txt
+  if [ "$(rows /tmp/oqlguard_p1.txt)" = "5" ] && [ "$(rows /tmp/oqlguard_p2.txt)" = "5" ] \
+     && ! diff -q /tmp/oqlguard_p1.txt /tmp/oqlguard_p2.txt >/dev/null; then
+    _ok "§6 ordinary paging is unaffected (two distinct 5-row pages)"
+  else _fail "§6 paging broke under the clamp"; fi
+else
+  echo "  ⊘ §6 paging check skipped: store holds only ${STORE_ROWS:-0} closed orders (<10 — cannot fill two distinct pages)"
+fi
 
 finish_test "oql_guard"

@@ -26,6 +26,7 @@
 
 set -u
 export PATH="$HOME/.local/bin:$PATH"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 pass=0; fail=0
 ok()  { echo -e "${GREEN}✓${NC} $1"; pass=$((pass+1)); }
@@ -37,8 +38,19 @@ info() { adm getCanisterInfo '()' --query | tr -d '_'; }
 field() { echo "$1" | grep -oE "$2 = [0-9]+" | head -1 | grep -oE "[0-9]+"; }
 WD=$(mkid afo_wd)
 
-pkill -9 -f "simulate_trading.sh" 2>/dev/null || true
-sleep 1
+# The sim must be dead (header: it would inject noise into the assertions).
+# Stop it via the PID-file stopper — NEVER a pattern kill: `pkill -f` cannot
+# tell a local simulator from one driving multidex.ai and took the live fleet
+# down three times (run_all.sh's stopper comment + scripts/lib/bots.sh).
+# run_all.sh already stops the fleet for suite runs; this covers standalone.
+STOPPER="$SCRIPT_DIR/../scripts/stop_bots_local.sh"
+if [ -f "$STOPPER" ]; then
+  bash "$STOPPER" >/dev/null 2>&1 || true
+  sleep 2
+else
+  echo "⚠ stop_bots_local.sh not found at $STOPPER — the local fleet was NOT stopped."
+  echo "  Red results below may be simulator noise rather than regressions."
+fi
 adm setTestTimersPaused '(true)' >/dev/null 2>&1     # step shipping by hand
 adm resetExchange "()" >/dev/null 2>&1 || true
 adm setTestShipFailover "(false, null, null, null)" >/dev/null 2>&1  # clean slate
@@ -84,7 +96,16 @@ echo "── C. L2: sustained failure past the hard cap → drop oldest, record 
 adm setTestShipFailover "(true, opt (2 : nat), opt (50 : nat), opt (30 : nat))" >/dev/null
 emit 55 flood
 QBEFORE=$(field "$(info)" journalUnshipped)
-ship   # top-of-tick: L2 drains the journal, sees queue ≥ 50 → shed to 30 + re-baseline
+# TWO ticks, not one. The L2 shed now requires BOTH conditions — queue ≥ cap
+# AND shipFailStreak ≥ rollThreshold — where it used to fire on queue depth
+# alone (issue #9.4 / triage §2.10: "if shipping is broken *and* the queue hit
+# the cap" is what the comment always claimed, and now what the code does).
+# §B's emergency roll RESETS the streak, so entering §C the streak is 1: the
+# first tick here is the one that carries it back to the threshold and
+# correctly declines to shed, and the second is the one that sheds. Asserting
+# after a single tick was asserting the pre-fix contract.
+ship   # streak 1 → 2; queue ≥ 50 but streak not yet at threshold, so no shed
+ship   # streak at threshold + queue ≥ 50 → shed to 30 + re-baseline
 I=$(info)
 QAFTER=$(field "$I" journalUnshipped); SHED=$(field "$I" shedEvents); GAPS=$(field "$I" ledgerGaps)
 echo "   journalUnshipped=$QBEFORE→$QAFTER shedEvents=$SHED ledgerGaps=$GAPS"

@@ -56,13 +56,29 @@ err()   { echo -e "  ${RED}✗${NC} $1" >&2; }
 
 # Pipe "y" into icp canister call so the interactive confirm is
 # auto-accepted when candid can't be inferred.
-call() { echo "y" | icp canister call backend "$@" 2>&1; }
+# Every call site MUST name its identity: the CLI's global default identity
+# is machine-shared mutable state that other sessions and connectors move at
+# will (mdex-process-safety §5), so an identity-less call here would sign as
+# whoever happens to be active. All fixtures seed as a KNOWN identity —
+# refuse loudly rather than half-seed as the wrong principal.
+call() {
+  case " $* " in
+    *" --identity "*) ;;
+    *) err "call() without --identity (mdex-process-safety §5): $*"; return 1 ;;
+  esac
+  echo "y" | icp canister call backend "$@" 2>&1
+}
 
 # Integer-money: human decimal -> integer base units (10^8 / e8s). Money
 # args (balances, prices, qtys, amounts) are now Nat base units on the wire.
 e8() { awk -v x="$1" 'BEGIN{ printf "%.0f", x*100000000 }'; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Scratch-file locations (.run/, not fixed names under sticky /tmp) — see
+# scripts/lib/runfiles.sh.
+# shellcheck source=scripts/lib/runfiles.sh
+. "$SCRIPT_DIR/lib/runfiles.sh"
 
 # ── Posture guard ────────────────────────────────────────────────
 # Every fixture below leans on #dev-only surfaces (setAmmRefPrice, test
@@ -119,7 +135,7 @@ generate_phantom_principals() {
 
 # ── Wait for any previous icp calls to settle ────────────────────
 # Sanity-ping the backend; aborts early if the replica isn't responding.
-if ! icp canister call backend getMarkets '()' > /dev/null 2>&1; then
+if ! icp canister call backend getMarkets '()' --identity anonymous > /dev/null 2>&1; then
   # Maybe ensureInit hasn't run yet; try an update call to trigger it.
   alice=$(ensure_identity alice)
   if ! call resetExchange --identity alice > /dev/null 2>&1; then
@@ -234,7 +250,7 @@ seed_load() {
   # (the bulk endpoint expects Principal values, not text). Each run
   # gets FRESH principals — fine, because load mode resets the exchange
   # and re-funds them; nothing references the previous run's principals.
-  local tmpfile=/tmp/uplands-loadtrader-principals.txt
+  local tmpfile="$MDX_RUN_DIR/loadtrader-principals.txt"
   generate_phantom_principals "$TRADERS" "$tmpfile"
   local count
   count=$(wc -l < "$tmpfile" | tr -d ' ')
@@ -425,8 +441,8 @@ seed_full() {
   ok "5 traders funded"
 
   # Step 2: fetch oracle prices + historical candles. Writes
-  # /tmp/uplands-oracle-prices.txt which steps 3 & 4 read.
-  local oracle_file=/tmp/uplands-oracle-prices.txt
+  # $MDX_ORACLE_PRICES which steps 3 & 4 read.
+  local oracle_file="$MDX_ORACLE_PRICES"
   rm -f "$oracle_file"
   if [ "$HISTORY_DAYS" -gt 0 ]; then
     log "injecting $HISTORY_DAYS days of oracle-derived price history"

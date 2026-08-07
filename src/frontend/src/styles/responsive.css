@@ -109,16 +109,33 @@
     background: var(--accent);
     color: var(--accent-text);
   }
-  .balance-display { display: none !important; }
+  /* The DESKTOP figure (in .header-right, beside the user pill) is hidden
+     here; its mobile twin lives in .header-left, just left of the hamburger,
+     so the account value stays glanceable without opening the drawer. */
+  .header-right .balance-display { display: none !important; }
+  .balance-display-mobile {
+    display: flex !important;   /* beats the desktop-side !important hide */
+    margin-left: auto;          /* hug the hamburger, whatever the logo's width */
+    margin-right: 12px;
+    font-size: 15px;
+  }
+  /* Signed out, renderBalances leaves it display:none inline — keep it gone. */
+  .balance-display-mobile[style*="display: none"],
+  .balance-display-mobile[style*="display:none"] { display: none !important; }
 
   /* ── Drawer level 2: Account sections ─────────────────────────
      Tapping the username pill swaps the nav list for this one (main.js sets
      .acct-menu on the header). Hidden entirely on desktop — the far-right
      user dropdown carries the same list there. */
   .drawer-acct { display: none; flex-direction: column; gap: 4px; }
-  .header.menu-open.acct-menu .tabs .tab { display: none; }
-  .header.menu-open.acct-menu .drawer-acct { display: flex; }
-  .header.menu-open.acct-menu .header-right { display: none; }
+  .header.menu-open.acct-menu .tabs .tab,
+  .header.menu-open.sys-menu .tabs .tab { display: none; }
+  /* Each level-2 list shows only under ITS OWN class, so opening System can
+     never reveal the Account list (both carry .drawer-acct for styling). */
+  .header.menu-open.acct-menu #drawer-acct-menu { display: flex; }
+  .header.menu-open.sys-menu #drawer-sys-menu { display: flex; }
+  .header.menu-open.acct-menu .header-right,
+  .header.menu-open.sys-menu .header-right { display: none; }
   .drawer-acct-back,
   .drawer-acct-item {
     width: 100%;
@@ -282,6 +299,9 @@
   .uom-empty { font-size: 11px; }
   .uom-pagination { font-size: 10px; }
   .uom-pagination button { font-size: 10px; }
+  /* The narrow When column (~67px) can't seat time + the archive tag; the
+     row's dimming still marks restored rows, so drop the tag not the time. */
+  #user-orders-mobile .af-tag { display: none; }
 
   /* Mobile (portrait stack): halve the vertical gap between the Swap box and
      the market box (24px → 12px). Landscape phones get the side-by-side layout

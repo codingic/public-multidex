@@ -21,15 +21,45 @@
 #   §6 notionals are rounded to $100 steps (display tidiness — the exact
 #      figures are derivable from the public tape regardless)
 #
-# Needs a SEEDED exchange (AMM pools + live oracle prices) — run after
-# cold_start.sh --mode play. Read-only: places no orders, opens no positions,
-# never calls resetExchange, so it is safe against a live venue.
+# PRECONDITION: a PRICED market (an AMM pool with refPrice > 0) and the
+# heartbeat running — everything here reads caches the 30s tick populates,
+# and §8's history ring only appends columns while markPrice > 0. A warm
+# venue (cold_start --mode play/full) satisfies it already; on a cold venue
+# (full-suite runs: the destructive tests reset at exit) §0 provisions the
+# minimum itself — pool + refPrice, no LP, no positions. Beyond that the
+# test stays read-only: places no orders, opens no positions, never calls
+# resetExchange, so it is safe against a live venue.
 
 source "$(dirname "$0")/_lib.sh"
 
 echo "── test_margin_heatmap ──"
 
 MKT="BTC-ICPUSD"
+
+# ── §0 precondition: a priced market + a heartbeat column ────────
+# Warm when the cache holds a computed map AND the history ring already has
+# a column for MKT (which needs markPrice > 0 at some tick). Cold → price
+# the market and wait out the 30s HB_HEAT_NS tick. markPrice is just the
+# pool's refPrice, so a pool + refPrice is the whole fixture: no LP (I1
+# stays trivially clean), no positions (every section holds on an
+# empty-but-priced book).
+CTL="--identity anonymous"   # local controller
+warm() {
+  local c n
+  c=$(extract_nat "computedNs" "$(call getMarginHeatmap "(\"$MKT\")" --query)")
+  n=$(call getMarginHeatmapHistory "(\"$MKT\", 0)" --query | grep -c "computedNs")
+  [ -n "$c" ] && [ "$c" != "0" ] && [ "${n:-0}" -ge 1 ]
+}
+if ! warm; then
+  echo "  (cold venue — pricing $MKT and waiting for the heartbeat tick)"
+  call setTestTimersPaused '(false)' $CTL >/dev/null 2>&1   # an earlier failed test may have left them paused
+  call createAmmPool "(\"$MKT\")" $CTL >/dev/null 2>&1      # idempotent-ish; refPrice is set NEXT (create zeroes it)
+  call setAmmRefPrice "(\"$MKT\", $(e8 50000) : nat)" $CTL >/dev/null
+  wait_for warm 75 5 \
+    || { _fail "§0 no priced $MKT heatmap column after 75s — timers dead, or posture blocks setAmmRefPrice?"; finish_test "margin_heatmap"; }
+  _ok "§0 provisioned a priced $MKT (pool + refPrice only)"
+fi
+
 HM=$(call getMarginHeatmap "(\"$MKT\")" --query)
 
 # ── §1 computed by the heartbeat, and cached ──

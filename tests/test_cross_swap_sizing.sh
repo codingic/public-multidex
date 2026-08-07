@@ -99,6 +99,12 @@ done
 [ "$okc" = 1 ] && ok "ICP, BTC, ICPUSD all conserved"
 
 echo ""
+# Fixture hygiene: the vault LP minted above is held by the ad-hoc `amm_seed`
+# identity, which _lib.sh's I1 (Σ alice..eve LP == lpSupply) can never
+# account for. Reset at exit so the next test starts from an EMPTY venue
+# (I1 skips on lpSupply == 0) — test_deposit_ledger_guard runs directly
+# after this file and was the standing victim of the leak.
+adm resetExchange "()" >/dev/null 2>&1 || true
 adm setTestTimersPaused '(false)' >/dev/null 2>&1   # resume background timers
 echo "═══════════════════════════════════════════════════════"
 echo "RESULT: passed=$pass failed=$fail"

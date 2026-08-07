@@ -86,7 +86,17 @@
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
+  /* line-height 1 is load-bearing: the odometer digits are 1em boxes aligned
+     `vertical-align: bottom`, so in a taller line box (normal ≈ 1.5em) they
+     sit on the line's BOTTOM edge — the figure rendered ~3px below the centre
+     of the user pill and the nav text beside it. Collapsing the line box to
+     the em box makes the flex centring exact. */
+  line-height: 1;
 }
+/* The mobile twin (before the hamburger) is inert on desktop — responsive.css
+   swaps which of the two shows at the breakpoint. !important beats the inline
+   display:flex renderBalances sets on both. */
+.balance-display-mobile { display: none !important; }
 
 /* ── Initial loader ─────────────────────────────────────────────── */
 /* Shown while the page boots and the routed view is being prepared.

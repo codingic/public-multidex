@@ -24,6 +24,23 @@ source "$SCRIPT_DIR/_lib.sh"
 echo "── test_property_fuzz ──"
 setup_mode empty
 
+# Pin the auto-fuel loop off for the conservation window. Its Stage-1
+# (tickAutoFuel, src/backend/main.mo) BUYS ICP on ICP-ICPUSD with the
+# treasury's fee-accrued ICPUSD whenever cycle headroom drops below
+# max(2T, burnPerDay) — and a fresh cold-start's seeding burst inflates the
+# burnPerDay EMA enough to arm that trigger for the following ~half hour.
+# The buy is a legitimate flow, but it lifts the fuzz traders' resting ICP
+# asks into treasuryIcpE8s, which the per-token trader sums below exclude —
+# and no summation closes the set while the loop is live, because Stage-2
+# then BURNS internal ICP outright (backed by the chain spend). Seen once
+# mid-suite 2026-08-06 (~05:55): ICP short by exactly one Stage-1 tranche,
+# 771,457,372 e8s ≈ the treasury's ~$18.5 accrual at the 2.40±2% band;
+# reproduced deterministically by timing a run across the loop's 10-min
+# cooldown lapse (deficit == treasuryIcpE8s to the base unit). ICPUSD never
+# breaks: the tranche the treasury spends lands on the sellers, both inside
+# the quote frame. Restored before finish_test.
+call setAutoFuel "(false)" --identity alice > /dev/null
+
 ROUNDS="${FUZZ_ROUNDS:-50}"
 SEED="${FUZZ_SEED:-$(date +%s)}"
 echo "  seed=$SEED  rounds=$ROUNDS"
@@ -68,12 +85,19 @@ PCT_RANGE=2  # ±2% around mid for random pricing
 # the quote total stays conserved exactly. (`setup_mode empty` runs
 # resetExchange, which zeroes both, so they start at 0. Base tokens are
 # transferred whole and are fee-free, so they need no such terms.)
+#
+# Base tokens have exactly one venue-side sink — auto-fuel Stage-1 buying
+# ICP into the treasury — and that loop is pinned off above for the window.
+#
+# getTestBalance is scoped to self-or-controller and every read here is
+# cross-principal, so call as anonymous (the local controller) — the bare
+# ambient identity would read silent zeros and gut the conservation check.
 total_of() {
   local token="$1"
   local sum=0
   for t in "${TRADERS[@]}"; do
     P=$(principal_of "$t")
-    BAL=$(call getTestBalance "(principal \"$P\", \"$token\")" \
+    BAL=$(call getTestBalance "(principal \"$P\", \"$token\")" --identity anonymous \
           | tr -d '_' | grep -oE "[0-9]+" | head -1)
     sum=$(python3 -c "print($sum + ${BAL:-0})")
   done
@@ -81,7 +105,7 @@ total_of() {
     TREAS=$(call getTreasury '()' | tr -d '_' \
             | grep -oE "balanceUsd = [0-9]+" | grep -oE "[0-9]+")
     AMMP=$(call getAmmPrincipal '()' | grep -oE '"[a-z0-9-]+"' | tr -d '"')
-    VAULT=$(call getTestBalance "(principal \"$AMMP\", \"$token\")" \
+    VAULT=$(call getTestBalance "(principal \"$AMMP\", \"$token\")" --identity anonymous \
             | tr -d '_' | grep -oE "[0-9]+" | head -1)
     sum=$(python3 -c "print($sum + ${TREAS:-0} + ${VAULT:-0})")
   fi
@@ -203,5 +227,11 @@ print(bad)
   BAD_REMAINING=$((BAD_REMAINING + N))
 done
 assert_eq "every open order has positive remaining qty" "0" "$BAD_REMAINING"
+
+# Restore the auto-fuel loop (pinned off at setup for the conservation
+# frame). Assertion failures don't exit early (_lib.sh counts them), so
+# this runs on the failure path too; only a mid-run kill skips it, and the
+# next #play bring-up reinstalls the default anyway.
+call setAutoFuel "(true)" --identity alice > /dev/null
 
 finish_test "test_property_fuzz"

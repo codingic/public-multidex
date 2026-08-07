@@ -25,8 +25,24 @@ export function fromE8(x) {
 
 // human-unit value → bigint base-units, for args sent to the backend. Round to
 // the nearest base unit (sub-unit input is operator/UI noise, not ledger money).
+//
+// The whole-unit part is scaled in BigInt, NOT by `v * 1e8` in floating point.
+// 1e8 is not a power of two, so the product carries its own rounding error on
+// top of whatever `v` already carried, and past ~2^51 base units the two
+// together exceed half a base unit: `Math.round(fromE8(3355443200000019n) *
+// 1e8)` lands on …020. Splitting keeps every whole unit exact and confines
+// float arithmetic to the sub-unit tail, where 1e8 * (fraction < 1) has ~11
+// orders of magnitude of headroom before it could round wrong.
+//
+// That makes the round trip exact up to 2^52 base units (~45M tokens), which
+// is the ceiling for ANY round trip that passes through a human-unit Number:
+// beyond it one ulp is wider than one base unit, so adjacent base units share
+// a double and no inverse exists. Anything needing exactness above that has to
+// keep the bigint.
 export function toE8(v) {
-  return BigInt(Math.round(Number(v) * E8));
+  const n = Number(v);
+  const whole = Math.trunc(n);
+  return BigInt(whole) * BigInt(E8) + BigInt(Math.round((n - whole) * E8));
 }
 
 // Field names that were `Float` money/ratio and are now integer base-units
@@ -78,6 +94,15 @@ export const MONEY_KEYS = new Set([
   // opt-wrapped long/shortHealth stay raw e8 (normMoney keys only direct
   // record fields, not opt array elements) — the renderer divides.
   "totalDepthUsd", "high24h", "low24h",
+  // getInsuranceFund returns FIVE e8 fields and every one has to be listed.
+  // The other four — bufferUsd, uncoveredBadDebtUsd, totalShares,
+  // shareValueUsd — are in the alphabetical block above, and all five are
+  // rendered side by side (Earn card, Stats insurance KPIs, Stats issues,
+  // vault P&L footer). An omission here does not read as a units bug in the
+  // UI: it reads as a fifty-cent liability reported as fifty million dollars,
+  // and it clears every `> 0` gate that decides whether to show the figure
+  // at all.
+  "pendingYieldUsd",
 ]);
 
 // Recursively scale money bigints (by key) to human Numbers, in place. Recurses

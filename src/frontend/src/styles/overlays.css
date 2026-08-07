@@ -129,3 +129,40 @@
 /* Google "G" mark inside the Google sign-in buttons (dialog + Deposit unlock card). */
 #signin-google, #deposit-verify-signin { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 #signin-google .google-g, #deposit-verify-signin .google-g { flex-shrink: 0; }
+
+/* ── Self-update surfaces (src/update-check.js) ─────────────────────
+   The banner is the gentle tier: fixed, dismissable, never blocks trading.
+   The modal is the mandatory tier for BREAKING releases (version.json
+   minSupported) — backdrop + countdown, reusing the signin modal chrome. */
+.update-banner {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--accent-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  font-size: 13px;
+  color: var(--text);
+  max-width: min(92vw, 420px);
+}
+.update-banner-x {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px;
+  cursor: pointer;
+}
+.update-banner-x:hover { color: var(--text); }
+.update-modal { display: block; }
+.update-modal-content { max-width: 420px; }
+.update-modal-content h3 { margin-bottom: 8px; }
+.update-modal-content p { color: var(--text-dim); line-height: 1.6; }
+.update-countdown { color: var(--accent); }

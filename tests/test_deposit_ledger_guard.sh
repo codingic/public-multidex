@@ -28,7 +28,7 @@
 #   §2 the lost-reply shape (amount > slice) passes — that is the normal case
 #      the slice fix was built for, and must not be caught by the inverse guard
 #   §3 a divergent pair (slice > amount) is REFUSED, with a diagnostic naming
-#      both numbers
+#      both numbers — and nothing is minted
 #   §4 replay (seq <= prevSeq) is still a silent no-op, not an error
 #   §5 the Bridge still serves after an upgrade, and its stable ledger
 #      (`admittedUnits`, `ledgers`) survives while the guards do not
@@ -37,17 +37,25 @@
 #      double-mint fix turns on, which until now had no balance-level
 #      assertion anywhere in the suite
 #
-# NOTE on the two styles here. §1-§4 use an UNBOUND identity, so a credit that
-# passes the guard is then refused by the play verification gate — a distinct,
-# later error, which is exactly the discriminator those sections need
-# ("did it reach the credit path?"). §6 instead BINDS an identity through the
-# real normalize→hash→bind hook so credits actually land, and asserts on the
-# resulting balance. Error text proves the guard fired; the balance proves the
-# arithmetic. Both are needed: a guard that returns the right message while
-# crediting the wrong amount would pass §1-§4 and fail §6.
+# POSTURE DOCTRINE (DEPLOY_MODE in main.mo): #dev runs the SAME user-facing
+# code as #play — the verification gate and the deposit cap included — so
+# §1-§5 assert identically on both postures: an UNBOUND identity that passes
+# the divergence guard is then refused by the verification gate, a distinct
+# later error, which is the discriminator §1/§2 use ("did it reach the credit
+# path?"). Nothing is ever minted to an unbound principal on ANY posture.
+# Every section still uses a FRESH principal so prevSeq is 0 no matter what
+# an earlier section did — refused credits never advance creditedSeq today,
+# but a reused principal would couple the sections to that implementation
+# detail and turn §2's probe into a silent seq<=prevSeq replay if it changed.
 #
-# Never calls resetExchange. §6 mints into a throwaway bound identity that is
-# deleted afterwards; no existing account is touched.
+# Error text proves the guard fired; the balance proves the arithmetic. §6
+# binds an identity through the real normalize→hash→bind hook (dev-only) so
+# credits LAND and the slice arithmetic is measured at the wallet. On a
+# hookless posture (#play install) §6 self-skips with the ⊘ marker — the
+# arithmetic stays covered by every #dev run, which is the doctrine.
+#
+# Never calls resetExchange. Credits land only on throwaway principals that
+# are deleted afterwards; no existing account is touched.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/_lib.sh"
@@ -63,49 +71,69 @@ newid() { echo "y" | icp identity delete "$1" >/dev/null 2>&1 || true
           icp identity new "$1" --storage plaintext >/dev/null 2>&1 || true; }
 delid() { echo "y" | icp identity delete "$1" >/dev/null 2>&1 || true; }
 
-newid dlg_user
-U=$(icp identity principal --identity dlg_user 2>/dev/null | tail -1)
+MODE=$(call getDeployMode '()' --query 2>/dev/null | grep -oE 'dev|play|production' | head -1)
+if [ "$MODE" = "production" ]; then
+  echo "SKIP: deposit-guard test never runs against a production deployment"; exit 0
+fi
+echo "  (deploy mode: ${MODE:-unknown})"
+
+newid dlg_u1; U1=$(principal_of dlg_u1)
+newid dlg_u2; U2=$(principal_of dlg_u2)
+newid dlg_u3; U3=$(principal_of dlg_u3)
+newid dlg_u4; U4=$(principal_of dlg_u4)
 
 # Controller-called creditAndRegister, so we drive (amount, seq) directly.
-credit() { icp canister call backend creditAndRegister "(principal \"$U\", \"ICP\", $1 : nat, $2 : nat)" --identity anonymous 2>&1; }
+credit() { call creditAndRegister "(principal \"$1\", \"ICP\", $2 : nat, $3 : nat)" --identity anonymous; }
+# Read balances AS THE OWNER — getTestBalance is self-or-controller, so an
+# unidentified read silently returns 0 and would make every "minted nothing"
+# check below pass for the wrong reason.
+balof() { extract_first_nat "$(call getTestBalance "(principal \"$1\", \"ICP\")" --identity "$2")"; }
 
 DIVERGENCE="Deposit ledger divergence"
 VERIFY="verified Google-linked"
 
 # ── §1 consistent pair passes the guard ──
 # prevSeq is 0 for a fresh principal, so slice == seq == amount.
-R=$(credit 100 100)
+R=$(credit "$U1" 100 100)
 assert_not_contains "§1 consistent (amount=slice) is NOT flagged as divergence" "$R" "$DIVERGENCE"
 assert_contains "§1 ...it reaches the downstream verification gate" "$R" "$VERIFY"
+assert_eq "§1 ...which refused it before any mint" "0" "$(balof "$U1" dlg_u1)"
 
 # ── §2 the lost-reply shape must still pass ──
 # amount (500) EXCEEDS the slice (100) — exactly what a re-sent claim looks
 # like after a dropped #ok. The slice fix discards the overlap; the inverse
 # guard must not mistake this for divergence.
-R=$(credit 500 100)
+R=$(credit "$U2" 500 100)
 assert_not_contains "§2 lost-reply shape (amount > slice) is not flagged" "$R" "$DIVERGENCE"
 assert_contains "§2 ...it too reaches the verification gate" "$R" "$VERIFY"
+assert_eq "§2 ...refused before any mint (slice arithmetic lives in §6)" "0" "$(balof "$U2" dlg_u2)"
 
 # ── §3 divergence is refused ──
 # The Bridge sends 1 unit while claiming a high-water 1000 ahead of ours: our
 # ledger lost ground. Crediting the slice would mint 1000 from a 1-unit claim.
-R=$(credit 1 1000)
+R=$(credit "$U3" 1 1000)
 assert_contains "§3 slice > amount is REFUSED" "$R" "$DIVERGENCE"
-assert_not_contains "§3 ...and never reaches the credit path" "$R" "$VERIFY"
 # The diagnostic must name both figures — a bare refusal is not actionable.
 assert_contains "§3 diagnostic names what the bridge sent" "$R" "bridge sent 1 units"
 assert_contains "§3 diagnostic names the implied slice" "$R" "implies 1000"
+# The refusal precedes everything downstream: no verification gate...
+assert_not_contains "§3 ...and never reaches the verification gate" "$R" "$VERIFY"
+# ...and no mint.
+assert_eq "§3 ...and minted nothing" "0" "$(balof "$U3" dlg_u3)"
 
 # A near-miss is still divergence: one unit short is the same class of bug.
-R=$(credit 99 100)
+# Same principal: both its credits were refused, so its prevSeq is still 0.
+R=$(credit "$U3" 99 100)
 assert_contains "§3 off-by-one divergence is refused too" "$R" "$DIVERGENCE"
 
 # ── §4 replay stays a silent no-op ──
-# seq <= prevSeq returns #ok BEFORE any mint. prevSeq is still 0 here (every
-# call above was refused), so seq 0 is a replay.
-R=$(credit 50 0)
+# seq <= prevSeq returns #ok BEFORE any mint. prevSeq is 0 for this fresh
+# principal, so seq 0 is a replay on either posture — the short-circuit
+# precedes the divergence guard and the verification gate alike.
+R=$(credit "$U4" 50 0)
 assert_contains "§4 replayed seq is a silent no-op" "$R" "ok"
 assert_not_contains "§4 ...not reported as divergence" "$R" "$DIVERGENCE"
+assert_eq "§4 ...and minted nothing" "0" "$(balof "$U4" dlg_u4)"
 
 # ── §5 the Bridge survives an upgrade with its ledger intact ──
 # postupgrade clears ONLY the in-flight latches. Deposit bookkeeping is stable
@@ -116,50 +144,58 @@ AFTER=$(icp canister call bridge getSupportedAssets '()' --query --identity anon
 assert_eq "§5 bridge serves identically after an upgrade" "$BEFORE" "$AFTER"
 # A claim path that was never in flight behaves normally afterwards (the guard
 # is clear, so this is the "nothing to claim" answer, not "already in progress").
-R=$(icp canister call bridge claim '("ICP")' --identity dlg_user 2>&1)
+R=$(icp canister call bridge claim '("ICP")' --identity dlg_u1 2>&1)
 assert_not_contains "§5 no stranded claim guard after upgrade" "$R" "already in progress"
 
 # ── §6 the slice arithmetic, measured at the wallet ──
-# Everything above asserts on ERROR TEXT. This asserts on MONEY, which is
-# what the fix is actually about. A verified identity is required for a
-# credit to land, so bind one through the real normalize→hash→bind hook.
+# Everything above asserts on ERROR TEXT or throwaway wallets. This asserts on
+# the full credit LIFECYCLE — land, overlap, replay, refuse — at one balance.
+# A verified identity is required for a credit to land on #play, so bind one
+# through the real normalize→hash→bind hook.
 newid dlg_paid
 PAID=$(icp identity principal --identity dlg_paid 2>/dev/null | tail -1)
 BIND=$(call setTestEmailBinding "(principal \"$PAID\", \"dlgpaid${RANDOM}$$@gmail.com\")" --identity anonymous)
-assert_contains "§6 test identity bound to a verified email" "$BIND" "ok"
+if [ "$MODE" != "dev" ] && echo "$BIND" | grep -q "dev-only hook"; then
+  # setTestEmailBinding is #dev-only, and #play has no other way to mint a
+  # verified binding without a real Google round trip. The slice arithmetic
+  # below is posture-independent and every #dev run covers it (doctrine).
+  skip_section "§6 slice-at-the-wallet — setTestEmailBinding is #dev-only, no verified binding possible on #$MODE"
+else
+  assert_contains "§6 test identity bound to a verified email" "$BIND" "ok"
 
-# Read the balance AS THE OWNER — getTestBalance is self-or-controller, so an
-# unidentified read silently returns 0 and would make every check below pass
-# for the wrong reason. (That is exactly what broke test_play_deposit_cap.)
-bal() { extract_first_nat "$(call getTestBalance "(principal \"$PAID\", \"ICPUSD\")" --identity dlg_paid)"; }
-paycredit() { call creditAndRegister "(principal \"$PAID\", \"ICPUSD\", $1 : nat, $2 : nat)" --identity anonymous; }
+  # Read the balance AS THE OWNER — getTestBalance is self-or-controller, so an
+  # unidentified read silently returns 0 and would make every check below pass
+  # for the wrong reason. (That is exactly what broke test_play_deposit_cap.)
+  bal() { extract_first_nat "$(call getTestBalance "(principal \"$PAID\", \"ICPUSD\")" --identity dlg_paid)"; }
+  paycredit() { call creditAndRegister "(principal \"$PAID\", \"ICPUSD\", $1 : nat, $2 : nat)" --identity anonymous; }
 
-assert_eq "§6 fresh wallet starts empty" "0" "$(bal)"
+  assert_eq "§6 fresh wallet starts empty" "0" "$(bal)"
 
-# First claim: 100 units confirmed, none applied → credit 100.
-R=$(paycredit 100 100)
-assert_contains "§6 first credit accepted" "$R" "ok"
-assert_eq "§6 ...wallet moved by the slice (100)" "100" "$(bal)"
+  # First claim: 100 units confirmed, none applied → credit 100.
+  R=$(paycredit 100 100)
+  assert_contains "§6 first credit accepted" "$R" "ok"
+  assert_eq "§6 ...wallet moved by the slice (100)" "100" "$(bal)"
 
-# THE DOUBLE-MINT CASE. A lost #ok makes the Bridge re-send an OVERLAPPING,
-# larger amount: it reports 500 units since ITS last ack, but the cumulative
-# high-water is only 150. The slice is 50. Crediting `amount` would mint 500
-# and hand the user 350 units of free money.
-R=$(paycredit 500 150)
-assert_contains "§6 overlapping re-send accepted" "$R" "ok"
-assert_eq "§6 ...credited the 50-unit SLICE, not the 500 reported" "150" "$(bal)"
+  # THE DOUBLE-MINT CASE. A lost #ok makes the Bridge re-send an OVERLAPPING,
+  # larger amount: it reports 500 units since ITS last ack, but the cumulative
+  # high-water is only 150. The slice is 50. Crediting `amount` would mint 500
+  # and hand the user 350 units of free money.
+  R=$(paycredit 500 150)
+  assert_contains "§6 overlapping re-send accepted" "$R" "ok"
+  assert_eq "§6 ...credited the 50-unit SLICE, not the 500 reported" "150" "$(bal)"
 
-# Replay of an already-applied high-water is a silent no-op — no second mint.
-R=$(paycredit 500 150)
-assert_contains "§6 replayed high-water no-ops" "$R" "ok"
-assert_eq "§6 ...wallet unchanged by the replay" "150" "$(bal)"
+  # Replay of an already-applied high-water is a silent no-op — no second mint.
+  R=$(paycredit 500 150)
+  assert_contains "§6 replayed high-water no-ops" "$R" "ok"
+  assert_eq "§6 ...wallet unchanged by the replay" "150" "$(bal)"
 
-# And the inverse guard still bites on a real balance: refused, nothing minted.
-R=$(paycredit 1 900000)
-assert_contains "§6 divergent claim refused" "$R" "$DIVERGENCE"
-assert_eq "§6 ...and minted nothing" "150" "$(bal)"
+  # And the inverse guard still bites on a real balance: refused, nothing minted.
+  R=$(paycredit 1 900000)
+  assert_contains "§6 divergent claim refused" "$R" "$DIVERGENCE"
+  assert_eq "§6 ...and minted nothing" "150" "$(bal)"
+fi
 
 delid dlg_paid
-delid dlg_user
+delid dlg_u1; delid dlg_u2; delid dlg_u3; delid dlg_u4
 
 finish_test "deposit_ledger_guard"

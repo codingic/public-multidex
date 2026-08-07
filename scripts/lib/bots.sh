@@ -11,7 +11,8 @@ set -uo pipefail
 # Which simulator drives each target.
 #
 # trading_simulation.sh supersedes the other two and is the one to run. The
-# subnet deliberately still runs sim_trading.sh because that is what is
+# Every target runs the strategy engine; the old spot-only sim_trading.sh
+# retired at the Phase I -> II reset (2026-08-01).
 # driving multidex.ai's live volume today — switching the live fleet's engine
 # is a behavioural change that belongs in its own commit, not in a refactor
 # whose point is to stop things getting mixed up. When it is switched, this is
@@ -19,7 +20,7 @@ set -uo pipefail
 mdx_engine_for() {
   case "$1" in
     local|engine) echo "trading_simulation.sh" ;;
-    subnet)       echo "sim_trading.sh" ;;
+    subnet)       echo "trading_simulation.sh" ;;
   esac
 }
 

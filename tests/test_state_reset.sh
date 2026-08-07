@@ -89,9 +89,11 @@ for m in BTC-ICPUSD ETH-ICPUSD SOL-ICPUSD ICP-ICPUSD; do
 done
 
 # AMM principal balances zeroed (the recently-added behavior).
+# getTestBalance is scoped to self-or-controller — read as anonymous (the
+# local controller) or a leaked balance would still read 0 and pass vacuously.
 for t in BTC ETH SOL ICP ICPUSD; do
-  BAL=$(call getTestBalance "(principal \"$AMM_PRI\", \"$t\")" \
-        | grep -oE "[0-9.eE+-]+" | head -1)
+  BAL=$(call getTestBalance "(principal \"$AMM_PRI\", \"$t\")" --identity anonymous \
+        | tr -d '_' | grep -oE "[0-9.eE+-]+" | head -1)
   assert_float_close "AMM principal $t balance zeroed" "0" "${BAL:-0}" 0.0001
 done
 

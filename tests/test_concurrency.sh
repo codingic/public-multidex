@@ -43,6 +43,10 @@ done
 # read the integer. The sum stays in base units; because both the before and
 # after snapshots use the same scale, the conservation comparison is exact.
 #
+# getTestBalance is scoped to self-or-controller and every read here is
+# cross-principal, so call as anonymous (the local controller) — the bare
+# ambient identity would read silent zeros and gut the conservation check.
+#
 # For ICPUSD we ALSO fold in the treasury's balance: the symmetric maker/taker
 # fee skims quote-leg ICPUSD out of the trading parties into the (distinct)
 # treasury principal on every fill. Including the treasury closes the accounting
@@ -53,11 +57,11 @@ total_supply() {
   local sum=0
   for t in "${TRADERS[@]}"; do
     P=$(principal_of "$t")
-    BAL=$(call getTestBalance "(principal \"$P\", \"$token\")" \
+    BAL=$(call getTestBalance "(principal \"$P\", \"$token\")" --identity anonymous \
           | tr -d '_' | grep -oE "[0-9]+" | head -1)
     sum=$(python3 -c "print($sum + ${BAL:-0})")
   done
-  AMM_BAL=$(call getTestBalance "(principal \"$AMM_PRI\", \"$token\")" \
+  AMM_BAL=$(call getTestBalance "(principal \"$AMM_PRI\", \"$token\")" --identity anonymous \
             | tr -d '_' | grep -oE "[0-9]+" | head -1)
   sum=$(python3 -c "print($sum + ${AMM_BAL:-0})")
   if [ "$token" = "ICPUSD" ]; then
