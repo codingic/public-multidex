@@ -10,8 +10,15 @@
      (bake-ai-connect-canister-id), fed by scripts/deploy.sh on a cloud/mainnet
      deploy and by the local replica's id mapping for `npm run build`. A backend
      gets a DIFFERENT id per network, so never commit a real id here. Delete the
-     ic:network tag to auto-detect the network. Do not edit the handshake script
-     at the bottom. -->
+     ic:network tag to auto-detect the network.
+
+     The handshake script at the bottom mints the user's real identity
+     credential, so treat edits to it as security changes. Its exact bytes are
+     pinned by a 'sha256-…' source expression in the Content-Security-Policy for
+     this file in src/frontend/public/.ic-assets.json5 — CHANGE THE SCRIPT AND
+     THE DEPLOYED PAGE STOPS WORKING until that hash is updated. Run
+     `node tests/frontend_security.test.mjs`: it recomputes the digest, fails if
+     the two have drifted, and prints the value to paste in. -->
 <!doctype html>
 <html>
 <head>
@@ -41,43 +48,130 @@
 <p>This signs you in with <strong>Internet Identity</strong> and hands the resulting
 session to the IC connector running on this machine. Your AI assistant will be able
 to act as the signed-in principal until the session expires
-(<strong><span id="ttl">?</span> hours</strong>) or you log out.</p>
+(<strong><span id="ttl">?</span></strong>) or you log out.</p>
 <p class="note">Session keys never leave the connector — this page only relays the
 signed delegation. The principal is derived from <em>this page's origin</em>
 (<span id="origin"></span>): serve this page from an app's own origin and the AI
-acts as the same principal you have in that app.</p>
+acts as the same principal you have in that app. The session is limited to this
+app's backend canister (<span id="target">?</span>).</p>
 <button id="go">Continue with Internet Identity</button>
 <pre id="status"></pre>
 <script>
 // Parameters arrive in the URL fragment so they never leave the browser:
 //   #v=1&pubkey=<hex DER session public key>&nonce=<hex>&port=<loopback port>
-//    &ttl_ns=<session ttl in ns>&ttl_hours=<display only>
+//    &ttl_ns=<session ttl in ns>
 // "v" is the App Connect contract version; this page speaks v1 only.
+//
+// EVERYTHING IN THE FRAGMENT IS UNTRUSTED. Whoever hands the user this URL
+// controls all of it, and what this page produces is a signed Internet Identity
+// delegation — the user's actual credential. Each parameter is therefore
+// validated into a typed value below, and the page refuses to start rather than
+// pass anything through unchecked.
 const CONTRACT_V = "1";
 const params = new URLSearchParams(location.hash.slice(1));
 const V = params.get("v");
 const SESSION_PUBKEY_HEX = params.get("pubkey") || "";
 const NONCE = params.get("nonce") || "";
-const PORT = params.get("port") || "17600";
-const TTL_NS = params.get("ttl_ns") || "";
-const CALLBACK = "http://127.0.0.1:" + PORT + "/callback";
 const II_ORIGIN = "https://id.ai";
 
 const statusEl = document.getElementById("status");
 const goBtn = document.getElementById("go");
-document.getElementById("ttl").textContent = params.get("ttl_hours") || "?";
 document.getElementById("origin").textContent = location.origin;
 function log(s) { statusEl.textContent += s + "\n"; }
+function refuse(s) { goBtn.disabled = true; log(s); }
+
+// ── The connector callback (where the signed delegation is POSTed) ──
+// This used to be `"http://127.0.0.1:" + PORT + "/callback"`. A `port` of
+// `1@attacker.example.com` makes that string parse with `127.0.0.1:1` as
+// USERINFO and `attacker.example.com` as the authority — so the delegation went
+// to the attacker's server, from a URL that still reads as loopback. Validate
+// as a decimal port number, then let the URL parser build the URL; no string
+// concatenation ever touches the authority.
+const PORT_RAW = params.get("port") === null ? "17600" : params.get("port");
+let PORT = null;
+let CALLBACK = null;
+if (/^[0-9]{1,5}$/.test(PORT_RAW)) {
+  const n = Number(PORT_RAW);
+  if (n >= 1 && n <= 65535) {
+    PORT = n;
+    const u = new URL("http://127.0.0.1/");
+    u.port = String(n);
+    u.pathname = "/callback";
+    CALLBACK = u.href;
+  }
+}
+
+// ── Session lifetime ──
+// Two problems lived here. The lifetime SENT to Internet Identity (`ttl_ns`)
+// and the one DISPLAYED (a separate `ttl_hours` param) were different inputs,
+// so the consent text need not describe the delegation actually minted — a link
+// could show "1 hours" while minting a year. And `ttl_ns` was passed through
+// unbounded. Now there is exactly ONE number: the minted value, clamped, and
+// the display is derived from it. The app's own sign-in modal offers 60 minutes
+// by default; 8 hours is a generous ceiling for an unattended assistant.
+const TTL_MAX_NS = 8n * 60n * 60n * 1000000000n;
+const TTL_NS_RAW = params.get("ttl_ns") || "";
+let TTL_NS = null;
+let ttlClamped = false;
+if (/^[0-9]{1,20}$/.test(TTL_NS_RAW)) {
+  const requested = BigInt(TTL_NS_RAW);
+  if (requested > 0n) {
+    ttlClamped = requested > TTL_MAX_NS;
+    TTL_NS = ttlClamped ? TTL_MAX_NS : requested;
+  }
+}
+// Rendered FROM the minted value, so the consent and the credential cannot drift.
+function ttlText(ns) {
+  const minutes = Number(ns / 60000000000n);
+  if (minutes < 1) {
+    const seconds = Number(ns / 1000000000n);
+    return seconds + (seconds === 1 ? " second" : " seconds");
+  }
+  if (minutes < 60) return minutes + (minutes === 1 ? " minute" : " minutes");
+  const hours = minutes / 60;
+  const h = Number.isInteger(hours) ? String(hours) : hours.toFixed(1);
+  return h + (h === "1" ? " hour" : " hours");
+}
+document.getElementById("ttl").textContent = TTL_NS === null ? "—" : ttlText(TTL_NS);
+
+// ── Delegation scope ──
+// With no `targets`, Internet Identity mints a delegation valid for EVERY
+// canister on the IC: the connector would hold the user's identity against the
+// NNS, their ledger account, every DAO they belong to — not just this exchange.
+// The scope is one canister, and its id is already in the served markup (the
+// ic:canister-id meta the App Connect connector itself reads, baked at build
+// time by vite.config.js). Refuse to mint anything if it is missing or still
+// the unsubstituted placeholder: an unscoped delegation is not a degraded
+// success, it is a different and much larger credential.
+const backendMeta = document.querySelector('meta[name="ic:canister-id"]');
+const BACKEND_ID = ((backendMeta && backendMeta.content) || "").trim();
+const BACKEND_OK = /^[a-z0-9]{5}(-[a-z0-9]{5})*-[a-z0-9]{3}$/.test(BACKEND_ID);
+document.getElementById("target").textContent = BACKEND_OK ? BACKEND_ID : "not configured";
 
 if (V !== CONTRACT_V) {
-  goBtn.disabled = true;
-  log("Version mismatch: this sign-in page speaks App Connect v" + CONTRACT_V +
+  refuse("Version mismatch: this sign-in page speaks App Connect v" + CONTRACT_V +
       " but the connector sent " + (V ? "v=" + V : "no version") +
       ". Update your IC connector (or ask the app to update this page).");
-} else if (!SESSION_PUBKEY_HEX || !NONCE || !TTL_NS) {
-  goBtn.disabled = true;
-  log("Missing connection parameters — this page must be opened by your IC " +
+} else if (!SESSION_PUBKEY_HEX || !NONCE || !TTL_NS_RAW) {
+  refuse("Missing connection parameters — this page must be opened by your IC " +
       "connector's login command, not directly.");
+} else if (!/^[0-9a-fA-F]+$/.test(SESSION_PUBKEY_HEX) || SESSION_PUBKEY_HEX.length % 2 !== 0) {
+  refuse("Refusing to continue: the session public key is not valid hex.");
+} else if (TTL_NS === null) {
+  refuse("Refusing to continue: ttl_ns must be a positive whole number of nanoseconds " +
+      "(got \"" + TTL_NS_RAW + "\").");
+} else if (CALLBACK === null) {
+  refuse("Refusing to continue: \"" + PORT_RAW + "\" is not a valid connector port. " +
+      "It must be a whole number from 1 to 65535. A signed sign-in delegation is only " +
+      "ever sent to the connector on this machine, and this value would send it " +
+      "somewhere else — so nothing has been signed and nothing has been sent.");
+} else if (!BACKEND_OK) {
+  refuse("Refusing to continue: this page carries no valid backend canister id, so the " +
+      "sign-in could only be minted with access to EVERY canister rather than just this " +
+      "app. The deployment is misconfigured (ic:canister-id was never substituted).");
+} else if (ttlClamped) {
+  log("Note: the requested session lifetime was shortened to the " + ttlText(TTL_MAX_NS) +
+      " maximum. That is the session you are about to approve.");
 }
 
 function hexToBytes(hex) {
@@ -101,6 +195,11 @@ goBtn.onclick = () => {
   log("Continue in the Internet Identity tab…");
 
   const handler = async (event) => {
+    // Pin BOTH ends. The origin check alone lets any window on id.ai (an
+    // iframe, another tab, one opened by a different page) drive this
+    // handshake; event.source ties the conversation to the exact window this
+    // click opened.
+    if (event.source !== ii) return;
     if (event.origin !== II_ORIGIN) return;
     const msg = event.data;
     if (!msg || typeof msg !== "object") return;
@@ -109,16 +208,29 @@ goBtn.onclick = () => {
       ii.postMessage({
         kind: "authorize-client",
         sessionPublicKey: hexToBytes(SESSION_PUBKEY_HEX),
-        maxTimeToLive: BigInt(TTL_NS),
+        maxTimeToLive: TTL_NS,
+        // Scope the delegation to this app's backend — see BACKEND_ID above.
+        targets: [BACKEND_ID],
       }, II_ORIGIN);
     } else if (msg.kind === "authorize-client-success") {
       window.removeEventListener("message", handler);
       try { ii.close(); } catch (_) {}
       log("Delegation received; handing it to the connector…");
+      const delegations = Array.isArray(msg.delegations) ? msg.delegations : [];
+      // Report honestly if what came back is broader than what was asked for
+      // (an identity provider is free to ignore `targets`). Not fatal — the
+      // connector still decides — but the user should not be told the session
+      // is limited to this app when it is not.
+      const scoped = delegations.length > 0 && delegations.every(
+        (d) => d.delegation.targets && d.delegation.targets.length);
+      if (!scoped) {
+        log("⚠ Internet Identity returned a session with NO canister restriction: it is " +
+            "valid for every canister, not only " + BACKEND_ID + ".");
+      }
       const body = {
         nonce: NONCE,
         user_public_key: bytesToHex(msg.userPublicKey),
-        delegations: msg.delegations.map(d => ({
+        delegations: delegations.map(d => ({
           delegation: {
             pubkey: bytesToHex(d.delegation.pubkey),
             expiration: d.delegation.expiration.toString(),
@@ -130,8 +242,18 @@ goBtn.onclick = () => {
           signature: bytesToHex(d.signature),
         })),
       };
+      // The one place a signed delegation LEAVES this page. Re-derive the
+      // destination from the parsed URL and check it again here, next to the
+      // send, so no later edit can reintroduce a relay to an arbitrary host.
+      const dest = new URL(CALLBACK);
+      if (dest.protocol !== "http:" || dest.hostname !== "127.0.0.1" ||
+          dest.pathname !== "/callback" || dest.username || dest.password) {
+        log("Refusing to send the session to " + dest.origin + " — that is not the " +
+            "connector on this machine. Nothing was sent.");
+        return;
+      }
       try {
-        const resp = await fetch(CALLBACK, {
+        const resp = await fetch(dest.href, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(body),

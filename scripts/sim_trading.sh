@@ -16,7 +16,7 @@
 #          bash scripts/sim_trading.sh 12 1      # hotter: ~25 fills/s
 #
 # Local replica (default): the anonymous controller seeds bot balances.
-# Remote/cloud engine: set IC_ENV=<environment> (engine | subnet | ic) to target a deployed canister;
+# Remote/cloud engine: set IC_ENV=<environment> (engine | subnet) to target a deployed canister;
 # bots self-fund via the public faucet (addTestTokens) — e.g.
 #          IC_ENV=engine bash scripts/sim_trading.sh 6 4   # or IC_ENV=subnet
 # On mainnet each update call is ~2s, so expect a far lower fill rate and use

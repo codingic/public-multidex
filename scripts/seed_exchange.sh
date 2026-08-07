@@ -23,7 +23,17 @@ log()  { echo -e "${CYAN}▶${NC} $1"; }
 ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
 head() { echo -e "\n${YELLOW}═══ $1 ═══${NC}"; }
 
-call() { echo "y" | icp canister call backend "$@" 2>&1; }
+# Every call site MUST name its identity: the CLI's global default identity
+# is machine-shared mutable state that other sessions and connectors move
+# at will (mdex-process-safety §5) — an identity-less call would sign as
+# whoever happens to be active. Refuse loudly rather than mis-seed.
+call() {
+  case " $* " in
+    *" --identity "*) ;;
+    *) echo "  ✗ call() without --identity (mdex-process-safety §5): $*" >&2; return 1 ;;
+  esac
+  echo "y" | icp canister call backend "$@" 2>&1
+}
 
 # ── DEPRECATED ───────────────────────────────────────────────────
 # Superseded by scripts/seed.sh (the unified seed dispatcher). This script's

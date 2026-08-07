@@ -14,6 +14,7 @@
 
 set -u
 export PATH="$HOME/.local/bin:$PATH"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 pass=0; fail=0
 ok()  { echo -e "${GREEN}✓${NC} $1"; pass=$((pass+1)); }
@@ -26,8 +27,19 @@ A=$(mkid rp_a); B=$(mkid rp_b); SEED=$(mkid rp_seed)
 ua() { icp canister call --identity rp_a backend "$@" 2>&1; }
 ub() { icp canister call --identity rp_b backend "$@" 2>&1; }
 
-pkill -9 -f "simulate_trading.sh" 2>/dev/null || true
-sleep 1
+# The sim must be dead (header: it would inject noise into the assertions).
+# Stop it via the PID-file stopper — NEVER a pattern kill: `pkill -f` cannot
+# tell a local simulator from one driving multidex.ai and took the live fleet
+# down three times (run_all.sh's stopper comment + scripts/lib/bots.sh).
+# run_all.sh already stops the fleet for suite runs; this covers standalone.
+STOPPER="$SCRIPT_DIR/../scripts/stop_bots_local.sh"
+if [ -f "$STOPPER" ]; then
+  bash "$STOPPER" >/dev/null 2>&1 || true
+  sleep 2
+else
+  echo "⚠ stop_bots_local.sh not found at $STOPPER — the local fleet was NOT stopped."
+  echo "  Red results below may be simulator noise rather than regressions."
+fi
 adm setTestTimersPaused '(false)' >/dev/null 2>&1 || true
 # Defensive: test_archive_chain pins a tiny archive cap (20 events) and only
 # clears it on a CLEAN exit — a mid-test crash leaks the pin and this tape

@@ -26,6 +26,7 @@
 
 set -u
 export PATH="$HOME/.local/bin:$PATH"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 pass=0; fail=0
 ok()  { echo -e "${GREEN}✓${NC} $1"; pass=$((pass+1)); }
@@ -40,8 +41,18 @@ fld() { echo "$2" | tr -d '_' | grep -oE "$1 = -?[0-9]+" | head -1 | grep -oE "[
 release() { adm setAmmRefPrice "(\"$1\", $(e8 "$2") : nat)" >/dev/null; adm requoteAmm "(\"$1\")" >/dev/null; }
 
 # Deterministic run needs the sim dead (it moves prices + fires releases).
-pkill -9 -f "simulate_trading.sh" 2>/dev/null || true
-sleep 1
+# Stop it via the PID-file stopper — NEVER a pattern kill: `pkill -f` cannot
+# tell a local simulator from one driving multidex.ai and took the live fleet
+# down three times (run_all.sh's stopper comment + scripts/lib/bots.sh).
+# run_all.sh already stops the fleet for suite runs; this covers standalone.
+STOPPER="$SCRIPT_DIR/../scripts/stop_bots_local.sh"
+if [ -f "$STOPPER" ]; then
+  bash "$STOPPER" >/dev/null 2>&1 || true
+  sleep 2
+else
+  echo "⚠ stop_bots_local.sh not found at $STOPPER — the local fleet was NOT stopped."
+  echo "  Red results below may be simulator noise rather than regressions."
+fi
 
 adm setTestTimersPaused '(true)' >/dev/null 2>&1 || true
 adm resetExchange "()" >/dev/null 2>&1 || true
@@ -123,6 +134,13 @@ if [ -n "${LP:-}" ] && [ "$LP" != "0" ]; then ok "LP minted for the debt-free de
 WL=$(usr withdrawLp "($(awk -v l="$LP" 'BEGIN{printf "%.0f", l/2}') : nat)")
 if echo "$WL" | grep -q "ok"; then ok "in-kind withdrawLp works (no false-positive debt/price gate)"; else nok "withdrawLp refused a clean user" "$WL"; fi
 
+# Fixture hygiene: the vault LP here is split between two ad-hoc identities
+# (cesc_seed's seed stake, cesc's §4 remainder) that _lib.sh's I1
+# (Σ alice..eve LP == lpSupply) can never account for. Reset at exit so the
+# next test inherits an EMPTY venue (I1 skips on lpSupply == 0) rather than
+# ~$10M of unattributable LP — test_margin_heatmap runs directly after this
+# file and was the standing victim.
+adm resetExchange "()" >/dev/null 2>&1 || true
 adm setTestTimersPaused '(false)' >/dev/null 2>&1 || true
 echo ""
 echo "═══════════════════════════════════════════════════════"

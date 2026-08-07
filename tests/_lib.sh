@@ -154,7 +154,18 @@ principal_of() {
 }
 
 # ── Backend call wrapper ──────────────────────────────────────────
-call() { echo "y" | icp canister call backend "$@" 2>&1; }
+# Auth-sensitive calls pass their own --identity. Calls that omit it get
+# `--identity anonymous` appended — NEVER the CLI's global default identity,
+# which is machine-shared mutable state that other sessions and connectors
+# move at will (mdex-process-safety §5). Anonymous signs queries fine and is
+# a canister controller on a local network anyway, so the identity-less
+# reads and admin probes throughout the suite stay deterministic.
+call() {
+  case " $* " in
+    *" --identity "*) echo "y" | icp canister call backend "$@" 2>&1 ;;
+    *)                echo "y" | icp canister call backend "$@" --identity anonymous 2>&1 ;;
+  esac
+}
 
 # ── Money helpers (integer-money migration) ───────────────────────
 # The trading methods (placeLimitOrder/placeMarketOrder/openPosition/…) take Nat
@@ -189,6 +200,33 @@ wait_for() {
   return 1
 }
 
+# ── Posture skips ─────────────────────────────────────────────────
+# Posture doctrine (DEPLOY_MODE in src/backend/main.mo): #dev runs the same
+# user-facing code as #play — dev-only hooks are the single divergence. A
+# test (or section) that NEEDS a hook self-skips on hookless postures,
+# loudly: the ⊘ marker is counted by run_all.sh as a posture-skip, so a
+# #play/engine/subnet run shows exactly which coverage it is trusting the
+# #dev suite for. Never skip silently, and never fake a pass.
+
+venue_posture() {
+  if [ -z "${_VENUE_POSTURE:-}" ]; then
+    _VENUE_POSTURE=$(call getDeployMode '()' --query 2>/dev/null | grep -oE 'dev|play|production' | head -1)
+  fi
+  echo "${_VENUE_POSTURE:-unknown}"
+}
+
+# Whole-test skip: marker + SKIP banner, exits 0 (the runner counts the ⊘).
+skip_posture() {  # $1 = test name, $2 = the hook/behaviour it needs
+  echo -e "${YELLOW}  ⊘ SKIP (posture $(venue_posture)): $2 — assumed exercised on #dev${NC}"
+  echo -e "\n${YELLOW}SKIP: $1 (posture)${NC}"
+  exit 0
+}
+
+# Section skip: same marker, the rest of the test continues.
+skip_section() {  # $1 = what is being skipped and why
+  echo -e "${YELLOW}  ⊘ skipped: $1${NC}"
+}
+
 # ── Global invariants ─────────────────────────────────────────────
 # Run after every test by `finish_test`. These are properties that
 # MUST hold regardless of what the test was exercising. Adding new
@@ -216,11 +254,16 @@ assert_invariants() {
   if [ -z "$lpSupply" ] || [ "$lpSupply" = "0.0" ] || [ "$lpSupply" = "0" ]; then
     _ok "I1: vault empty (skipped)"
   else
-    # Sum every user's LP. We use the test identities the seeds know
-    # about; ad-hoc identities are added by individual tests when
-    # needed (each test would assert their own LP if they deposited).
+    # Sum LP across the identities we can actually ask. There is NO backend
+    # query that enumerates LP holders — only getMyVaultLp, which is per-caller
+    # — so "Σ over everyone" is not something this helper can compute; it sums
+    # the five seed fixtures by default. That equality holds because the tests
+    # that fund the vault under ad-hoc identities now resetExchange at exit
+    # (fixture-hygiene rule) — a test that legitimately leaves other holders
+    # behind declares the complete set in MDX_LP_IDENTITIES instead.
+    local idents="${MDX_LP_IDENTITIES:-alice bob charlie dave eve}"
     local sum=0.0
-    for ident in alice bob charlie dave eve; do
+    for ident in $idents; do
       local pri
       pri=$(principal_of "$ident" 2>/dev/null) || continue
       [ -z "$pri" ] && continue
@@ -230,7 +273,11 @@ assert_invariants() {
       [ -z "$bal" ] && bal=0
       sum=$(python3 -c "print($sum + $bal)")
     done
-    assert_float_close "I1: Σ LP balances == vaultLPSupply" "$lpSupply" "$sum" 0.01
+    if [ -n "${MDX_LP_IDENTITIES:-}" ]; then
+      assert_float_close "I1: Σ LP over the declared holder set == vaultLPSupply" "$lpSupply" "$sum" 0.01
+    else
+      assert_float_close "I1: Σ LP balances == vaultLPSupply" "$lpSupply" "$sum" 0.01
+    fi
   fi
 
   # I2: No zombie orders.

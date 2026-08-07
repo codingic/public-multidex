@@ -40,10 +40,44 @@ posture.
 | `setTestScorecard`, `setTestShedFloor`, `setTestPendingJump`, `setTestMinSources`, `setTestXrcRate` (behavior/price hooks) | ✅ | ❌ | ❌ | test-determinism hooks; fairness/manipulation surface elsewhere |
 | `debugInspectByUsername` | ✅ | ❌ | ❌ | privacy — operator shouldn't read arbitrary accounts in public deployments |
 | `setTestBalance` / `bulkSetTestBalances` / `getTestBalance` (AdminOps, controller-only) | ✅ | ✅ | ❌ | operator bootstrap (vault seeding, sim wallets) still needed on play; every delta lands in `extNetFlow`, so it reads as CAPITAL, never as leaderboard profit |
+| `injectHistoricalTrades` (chart backdrop, controller-only) | ✅ | ⏳ genesis only | ❌ | backdrop seeding is pre-launch only: accepted until the venue's first `enableAmm`, `#err` after — see "The genesis window" below |
 | `setTestTimersPaused` | ✅ | ✅ | ✅ | controller-only emergency brake, deliberately ungated |
 | `resetExchange`, `requoteAmm`, `fetchAndSetRefPrice`, `seedAmmPool` | ✅ | ✅ | ✅ | controller-only ops surface (season resets on play use `resetExchange`) |
 | `setXrcCanister` / `adminRefreshXrcAnchors` | ✅ | ✅ | ✅ | controller-only oracle wiring (see below) |
 | inspect: unknown-principal update calls | ✅ | ✅ | ❌ | a play user's FIRST call is `claimPlayFunds` — they can't be registered before it; production keeps the strict gate (registration happens off-ingress via the Bridge's `creditAndRegister`) |
+
+## The genesis window (`injectHistoricalTrades` on #play)
+
+A #play venue wants a realistic multi-day chart backdrop at launch
+(`play_start.sh` / `deploy.sh` seed it from CoinGecko hourly data), but the
+August-audit invariant — *the operator does not move prices, forged or
+otherwise* (OhShii #10.6b) — must hold once anyone can trade. The resolution
+(decision 2026-08-06) is a one-way pre-launch window instead of the audit's
+original blanket `#dev`-only gate, which had silently broken the #play
+backdrop:
+
+- The stable latch `_ammEverEnabled` flips on the install's first
+  `enableAmm(_, true)` and never back. Before that, a controller may inject;
+  after, the call returns `#err("… genesis window closed …")`. On
+  `#production` it refuses always; on `#dev` it is unrestricted.
+- **Survives upgrades and season resets.** `performWorldWipe`
+  (`resetExchange` / `resetSeason`) clears the pools map but deliberately not
+  the latch — a season reset cannot re-open the window. Only a reinstall (a
+  genuinely new venue) re-arms it.
+- Installs upgraded from before the latch existed initialize it `false`
+  (persistence gotcha 1 below); `postupgrade` re-latches from any surviving
+  enabled pool.
+- Ordering contract for bring-up scripts: inject history BEFORE the first
+  `enableAmm`. `play_start.sh` (step 4 → 5) and `deploy.sh` (step 2 → 4)
+  already comply, and both run on a fresh (re)install, so the window is open
+  when they inject. `inject_history.sh` probes the gate with an empty batch
+  before fetching anything and fails fast with the canister's own refusal —
+  a closed window is named as a posture fact, not misread as CoinGecko rate
+  limits.
+- Refusal is a typed `#err`, not a trap — this method has a Result channel
+  (THE RULE at `requireDevHook` in `main.mo`).
+
+Pinned by `tests/test_audit_2026_08_fixes.sh` (posture branch).
 
 ## claimPlayFunds semantics
 

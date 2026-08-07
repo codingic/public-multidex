@@ -25,22 +25,22 @@ echo "── test_authorization ──"
 setup_mode matching   # Gives us alice's resting ASK at 67600 to attack.
 
 # ── (1) Anonymous principal is rejected by requireAuth ───────────
-# `icp identity default anonymous` is the IC's well-known anonymous
-# principal `2vxsx-fae`. requireAuth must trap on it. Only endpoints
-# that actually call requireAuth belong here — the requireController-
-# only admin endpoints are probed in section (3), because locally
-# anonymous IS a controller and would sail through their gate.
+# `--identity anonymous` signs as the IC's well-known anonymous principal
+# `2vxsx-fae`. requireAuth must trap on it. Only endpoints that actually
+# call requireAuth belong here — the requireController-only admin
+# endpoints are probed in section (3), because locally anonymous IS a
+# controller and would sail through their gate. The identity is passed
+# PER CALL: this test used to flip the CLI's global default identity
+# instead, which is machine-shared mutable state that other sessions and
+# connectors move at will (mdex-process-safety §5) — and the flip leaked
+# out of the test, changing what every later identity-less call on the
+# machine signed as.
 
-icp identity default anonymous > /dev/null
-
-ANON_PLACE=$(call placeLimitOrder "(\"BTC-ICPUSD\", variant { buy }, $(e8 67600.0), $(e8 0.1))")
+ANON_PLACE=$(call placeLimitOrder "(\"BTC-ICPUSD\", variant { buy }, $(e8 67600.0), $(e8 0.1))" --identity anonymous)
 assert_contains "anonymous placeLimitOrder rejected" "$ANON_PLACE" "Authentication required"
 
-ANON_SEED=$(call seedAmmPool "(\"BTC-ICPUSD\", $(e8 1.0), $(e8 75000.0))")
+ANON_SEED=$(call seedAmmPool "(\"BTC-ICPUSD\", $(e8 1.0), $(e8 75000.0))" --identity anonymous)
 assert_contains "anonymous seedAmmPool rejected" "$ANON_SEED" "Authentication required"
-
-# Switch back to a real identity for subsequent tests.
-icp identity default alice > /dev/null
 
 # ── (2) cancelMyOrder enforces owner check ──────────────────────
 # Alice has a resting ASK at 67600 from seed_matching. Bob (a

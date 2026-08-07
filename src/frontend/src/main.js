@@ -9,8 +9,17 @@ import "@fontsource-variable/inter";
 // word; bundled like Inter so the app makes no external font requests.
 import "@fontsource-variable/newsreader/opsz-italic.css";
 
+// Lightweight Charts v5 (native multi-pane: candles in pane 0, volume
+// histogram in pane 1). BUNDLED as an npm dependency, deliberately: this used
+// to be a bare <script src="https://unpkg.com/…"> in index.html with no
+// integrity attribute and no lockfile entry, so a compromised (or merely
+// re-published) CDN artefact would execute with full DOM access on the trading
+// page. An import is content-hashed into our own bundle and pinned by
+// package-lock.json, and it lets the app ship a real CSP with `script-src 'self'`.
+import { createChart, CandlestickSeries, HistogramSeries, LineSeries } from "lightweight-charts";
+
 // Pure formatting/display helpers (number/price/time/quantity, price flash).
-import { formatQty, priceDecimals, uniformDecimals, formatNum, formatPrice, formatTime, flashPriceEl } from "./format.js";
+import { formatQty, priceDecimals, formatBookPrice, formatBookQty, uniformDecimals, formatNum, formatPrice, formatTime, flashPriceEl } from "./format.js";
 import { wrapActor, toE8, fromE8 } from "./money.js";
 
 // Shared app state (actors, auth flag, principal) — read by feature modules too.
@@ -23,6 +32,31 @@ import { setupAssistant, assistantOnShow } from "./assistant.js";
 import { setIdenticon } from "./identicon.js";
 import { DOCS_PARTS, DOCS_PAGES, docsPage } from "./docs.js";
 import { setupLedger } from "./ledger.js";
+import { startUpdateCheck } from "./update-check.js";
+// Exact-hostname local-replica test — gates fetchRootKey() (see host.js).
+import { isLocalReplicaOrigin } from "./host.js";
+
+// ── Missing-asset images ─────────────────────────────────────────
+// Token logos are rendered from markup templates and a token may simply have
+// no /assets/<SYM>.svg; a broken-image glyph in a price row looks like a bug.
+// This used to be an inline error-handler attribute on each of eight <img>
+// templates, which a Content-Security-Policy worth having ('unsafe-inline'-free
+// — the asset canister's `standard` policy) refuses to run, silently restoring
+// the broken glyphs. One delegated listener replaces all of them: `error` does
+// not bubble, but it DOES propagate down the capture path, so a capture-phase
+// listener on `document` sees every element's failure. Registered at module
+// scope, before any rendering, so no image can fail ahead of it.
+document.addEventListener("error", (ev) => {
+  const el = ev.target;
+  if (el && el.tagName === "IMG" && el.hasAttribute("data-hide-on-error")) {
+    el.style.display = "none";
+  }
+}, true);
+
+// App version, baked at build (vite define, single-sourced from package.json).
+// Stamps the footer badge and drives the self-update check. Guarded like
+// __CLOUD_ENGINE__ so a build without the define stays harmless.
+const APP_VERSION = (() => { try { return __APP_VERSION__; } catch { return ""; } })();
 
 // Cloud-engine mode (baked at build time via vite.config.js __CLOUD_ENGINE__,
 // set by scripts/deploy.sh). On a cloud engine the engine pays for compute, so
@@ -110,7 +144,7 @@ const uomCoin = (marketId) => (marketId || "").split("-")[0];
 // cell (token icon + symbol) followed by a "Side" pill — Buy/Sell for spot
 // flow, Long/Short for margin flow (Long/Short itself signals a margin row).
 function assetCellHTML(base) {
-  return `<img class="market-logo market-logo-sm" src="/assets/${base}.svg" alt="" onerror="this.style.display='none'">${base}`;
+  return `<img class="market-logo market-logo-sm" src="/assets/${base}.svg" alt="" data-hide-on-error>${base}`;
 }
 function sidePillHTML(sideWord) {
   const up = sideWord === "Buy" || sideWord === "Long";
@@ -914,7 +948,12 @@ function getIdlFactory() {
         computedAtNs: IDL.Int, totalRanked: IDL.Nat,
         rows: IDL.Vec(LeaderRow), my: IDL.Opt(LeaderRow),
       })], ["query"]),
+      getAppVersion: IDL.Func([], [IDL.Text], ["query"]),
       getCanisterInfo: IDL.Func([], [IDL.Record({
+        // opt on purpose: a pre-1.51 backend has no appVersion field, and a
+        // required record field would fail the WHOLE decode there — opt
+        // decodes the missing field as null (and Text coerces into opt Text).
+        appVersion: IDL.Opt(IDL.Text),
         canisterId: IDL.Text, cycles: IDL.Nat, freezingLimitCycles: IDL.Nat,
         burnPerDay: IDL.Nat, idleBurnPerDay: IDL.Nat, computeAllocation: IDL.Nat,
         lastHeartbeatNs: IDL.Int, nowNs: IDL.Int, timersPaused: IDL.Bool,
@@ -962,9 +1001,21 @@ async function init() {
       let canisterEnv;
       try { const m = await import("@icp-sdk/core/agent/canister-env"); canisterEnv = m.safeGetCanisterEnv?.(); } catch {}
       rawAgent = await HttpAgent.create({ host: window.location.origin, rootKey: canisterEnv?.IC_ROOT_KEY });
-      // Local replicas: fetch the real root key so certificate validation
-      // has genuine bytes (the env-injected key may be absent or hex text).
-      try { await rawAgent.fetchRootKey(); } catch { /* mainnet: built-in key */ }
+      // ROOT KEY — the anchor of the ledger verifier's certificate check.
+      //
+      // fetchRootKey() asks THIS ORIGIN for the key and installs whatever comes
+      // back. On mainnet the IC HTTP gateway proxies /api/v2/status, so calling
+      // it unconditionally would take the anchor from the very party the
+      // certificate check exists to check: a hostile gateway serves its own
+      // key, signs a forged head with the matching secret, and the Ledger page
+      // reports "IC certificate VALID". Development replicas mint a per-instance
+      // key that cannot be baked in, so they genuinely need the fetch — and
+      // nothing else does. Exact hostname match (see host.js), never a
+      // substring, so `localhost.evil.example` is NOT taken for a local replica.
+      // Mirrors scripts/verify_ledger.mjs:201-221.
+      if (isLocalReplicaOrigin()) {
+        try { await rawAgent.fetchRootKey(); } catch { /* replica unreachable — keep built-in key */ }
+      }
       return rawAgent;
     };
     ledgerCtl = setupLedger({
@@ -1044,6 +1095,12 @@ async function init() {
     // exists on 7.x — the whole reason for the migration.
     authClient = new AuthClient(authClientOpts());
     registerJanitorSW();
+    // Stamp the footer badge from the build's version and start watching the
+    // origin for newer deploys (stale tabs refresh themselves — update-check.js).
+    if (APP_VERSION) {
+      document.querySelectorAll(".app-version").forEach((el) => { el.textContent = "VERSION " + APP_VERSION.replace(/\.0$/, ""); });
+      startUpdateCheck(APP_VERSION);
+    }
     // Was every tab closed since last load? Read the heartbeat BEFORE this tab
     // restarts it. If so, an on-disk session is stale → end it (a refresh keeps
     // a tiny gap and is spared). Then this tab starts its own heartbeat.
@@ -1638,7 +1695,7 @@ function renderDepositList(deps) {
       ? `<span class="dep-pending">${depFmt(d.pending)} pending</span>` : "";
     return `<div class="dep-row">
       <div class="dep-asset">
-        <span class="dep-asset-code"><img class="dep-logo" src="/assets/${d.asset}.svg" alt="" onerror="this.style.display='none'">${d.asset}</span>
+        <span class="dep-asset-code"><img class="dep-logo" src="/assets/${d.asset}.svg" alt="" data-hide-on-error>${d.asset}</span>
         <span class="dep-chain">${d.chain}</span>
       </div>
       <div class="dep-addr-wrap" title="Simulated ${d.chain} address — a play-mode stand-in. Never send real assets to it; use the numbered buttons to deposit.">
@@ -2533,9 +2590,21 @@ async function splitPoolOrders(orders) {
 // Consolidated single-round-trip poll: market status + order book + trades +
 // user status + user orders + user balances + user trade history, all in one
 // query. Only deltas are returned; everything unchanged is null/empty.
+//
+// SERIALISED, like checkReleaseRejections above. Every cursor in the request
+// is read from the shared cache BEFORE the await, so two calls in flight at
+// once send the same lastTradeId/version and both come back with the same
+// deltas — and a slow response landing after a newer one puts a stale order
+// book back on screen. The 2s interval outruns getMarketChanges on a loaded
+// subnet, and pollMarketStatus() is fired straight after placing/cancelling an
+// order, so the overlap is not hypothetical. Dropping the call is the right
+// response rather than queueing one: the poll already running reads the same
+// cursors this one would have, and the interval comes round again in 2s.
+let _pollInFlight = false;
+
 async function pollChanges() {
   const src = appState.actor || appState.publicActor;
-  if (!src) return;
+  if (!src || _pollInFlight) return;
 
   const marketAtCall = selectedMarket;
 
@@ -2549,6 +2618,7 @@ async function pollChanges() {
     lastUserTradeTime: cachedUserStatus ? cachedUserStatus.lastTradeTime : 0n,
   };
 
+  _pollInFlight = true;
   try {
     const resp = await src.getMarketChanges(request);
 
@@ -2598,9 +2668,21 @@ async function pollChanges() {
         }
       }
       if (resp.newTrades.length > 0) {
-        // Merge new trades into per-market cache
+        // Merge new trades into the per-market cache, keyed by id like the
+        // user-trade merge below. This cache has no key of its own, and
+        // getPublicTradesSince (refreshTradesIncremental) appends to the same
+        // array from a cursor of its own, so the two paths can deliver the same
+        // trade twice. A duplicate is not cosmetic: the tape prints the fill
+        // twice and the repeated equal price colours the second copy as a
+        // zero tick, and it stays until 100 later trades push it out.
         const existing = cachedMarketTrades[marketAtCall] || [];
-        const merged = [...existing, ...resp.newTrades];
+        const seen = new Set(existing.map((t) => String(t.id)));
+        const merged = existing.slice();
+        for (const t of resp.newTrades) {
+          if (seen.has(String(t.id))) continue;
+          seen.add(String(t.id));
+          merged.push(t);
+        }
         cachedMarketTrades[marketAtCall] = merged.length > 100 ? merged.slice(merged.length - 100) : merged;
         // Cache for instant market switching
         if (!marketDataCache[marketAtCall]) marketDataCache[marketAtCall] = {};
@@ -2682,6 +2764,8 @@ async function pollChanges() {
     }
   } catch (e) {
     console.warn("Failed to poll changes:", e);
+  } finally {
+    _pollInFlight = false;
   }
 }
 
@@ -2998,10 +3082,10 @@ function renderChartData() {
     chartVolumeSeries = null;
   }
 
-  if (!window.LightweightCharts) {
-    container.innerHTML = '<div class="empty-state" style="padding:40px">Chart library not loaded</div>';
-    return;
-  }
+  // (No "chart library not loaded" branch any more: the charting code is
+  // imported into this bundle, so if it were missing this module would never
+  // have evaluated. It used to arrive from a CDN <script> that could silently
+  // fail to load — or silently load something else.)
 
   if (!chartCandleData || !chartCandleData.candles.length) {
     container.innerHTML = '<div class="empty-state" style="padding:40px">No trade data available</div>';
@@ -3012,7 +3096,7 @@ function renderChartData() {
 
   const { candles, volumes } = chartCandleData;
 
-  chartInstance = window.LightweightCharts.createChart(container, {
+  chartInstance = createChart(container, {
     width: container.clientWidth,
     height: container.clientHeight,
     layout: {
@@ -3061,7 +3145,7 @@ function renderChartData() {
   // region, so price labels render only in the candle pane and volume
   // labels only in the volume pane — no more shared/overlapping axis.
   chartCandleSeries = chartInstance.addSeries(
-    window.LightweightCharts.CandlestickSeries,
+    CandlestickSeries,
     {
       upColor: "#5EE6B4",       // Alpine Mint
       downColor: "#F07A6C",     // Ember Clay
@@ -3078,7 +3162,7 @@ function renderChartData() {
   chartCandleSeries.setData(candles);
 
   chartVolumeSeries = chartInstance.addSeries(
-    window.LightweightCharts.HistogramSeries,
+    HistogramSeries,
     { priceFormat: { type: "volume" } },
     1,
   );
@@ -3173,11 +3257,24 @@ async function changeChartInterval(intervalMs) {
 // Refresh chart data — re-fetch page 0 candles from backend
 async function refreshChartData() {
   if (!selectedMarket || !chartInstance) return;
+  // A page load in flight owns chartCurrentPage and will prepend its result
+  // onto whatever is loaded when it lands; replacing the series underneath it
+  // would splice an older page straight onto a fresh page 0. Skip the tick —
+  // the next one is 5s away.
+  if (chartLoadingMore) return;
   const src = appState.actor || appState.publicActor;
   if (!src) return;
   try {
     const resp = await src.getCandles(selectedMarket, chartInterval, 0);
     chartCandleData = backendCandlesToChart(resp.candles, chartInterval);
+    // The series is page 0 and nothing else again, so the paging cursor goes
+    // back with it, exactly as changeChartInterval does after the same
+    // refetch. loadOlderCandles increments the cursor and prepends, so a
+    // cursor left at 3 would put page 4 next to page 0 with pages 1-3 missing
+    // — a discontinuous price history presented as continuous, and one that
+    // never repairs itself because those pages are never refetched.
+    chartCurrentPage = 0;
+    chartHasMore = resp.hasMore;
     if (chartCandleSeries) chartCandleSeries.setData(chartCandleData.candles);
     if (chartVolumeSeries) chartVolumeSeries.setData(chartCandleData.volumes);
   } catch (e) {
@@ -3206,7 +3303,6 @@ function isMobile() { return window.innerWidth <= 900; }
 async function renderMiniChart() {
   const container = document.getElementById("mini-chart");
   if (!container || !selectedMarket) return;
-  if (!window.LightweightCharts) return;
 
   const src = appState.actor || appState.publicActor;
   if (!src) return;
@@ -3253,7 +3349,7 @@ async function renderMiniChart() {
   // Create empty chart immediately (visible as empty grid).
   // Size to the container's actual rect so it fills a grid cell on desktop.
   const initialH = canvasEl.clientHeight || (isMobile() ? 170 : 260);
-  miniChartInstance = window.LightweightCharts.createChart(canvasEl, {
+  miniChartInstance = createChart(canvasEl, {
     width: canvasEl.clientWidth,
     height: initialH,
     layout: {
@@ -3302,7 +3398,7 @@ async function renderMiniChart() {
 
   // Candle series → pane 0 (default main pane)
   miniChartSeries = miniChartInstance.addSeries(
-    window.LightweightCharts.CandlestickSeries,
+    CandlestickSeries,
     {
       upColor: "#5EE6B4", downColor: "#F07A6C",
       borderUpColor: "#5EE6B4", borderDownColor: "#F07A6C",
@@ -3316,7 +3412,7 @@ async function renderMiniChart() {
   // (100, 200, 300…) render ONLY in the volume pane's right axis and
   // price labels ONLY in the candle pane's — no more overlap.
   miniChartVolumeSeries = miniChartInstance.addSeries(
-    window.LightweightCharts.HistogramSeries,
+    HistogramSeries,
     { priceFormat: { type: "volume" } },
     1,
   );
@@ -3730,7 +3826,7 @@ function renderBalancesGrid() {
   // is formatNum'd with commas, which a number input rejects).
   const items = tokens.map((t) => {
     const bal = Number(userBalances[t] || 0);
-    return `<div class="balance-row"><span class="balance-row-token"><img class="market-logo market-logo-sm" src="/assets/${t}.svg" alt="" onerror="this.style.display='none'">${t}</span><span class="balance-row-amount balance-amount-fill" role="button" tabindex="0" title="Fill the Withdraw form with this balance" data-token="${t}" data-bal="${bal}">${formatNum(bal)}</span></div>`;
+    return `<div class="balance-row"><span class="balance-row-token"><img class="market-logo market-logo-sm" src="/assets/${t}.svg" alt="" data-hide-on-error>${t}</span><span class="balance-row-amount balance-amount-fill" role="button" tabindex="0" title="Fill the Withdraw form with this balance" data-token="${t}" data-bal="${bal}">${formatNum(bal)}</span></div>`;
   });
   grid.innerHTML = items.join("");
 }
@@ -4294,7 +4390,7 @@ async function renderEarnCard() {
         const pct = ((mult - 1) * 100);
         const tag = pct >= 0.05 ? `+${pct.toFixed(1)}% bonus` : (pct <= -0.05 ? `${pct.toFixed(1)}% fee` : "neutral");
         const cls = pct >= 0.05 ? "health-ok" : (pct <= -0.05 ? "health-bad" : "");
-        return `<tr><td class="margin-bd-token"><img class="market-logo market-logo-sm" src="/assets/${w.token}.svg" alt="" onerror="this.style.display='none'">${w.token}</td><td class="margin-bd-amt">${cur}%</td>
+        return `<tr><td class="margin-bd-token"><img class="market-logo market-logo-sm" src="/assets/${w.token}.svg" alt="" data-hide-on-error>${w.token}</td><td class="margin-bd-amt">${cur}%</td>
           <td class="margin-bd-px">${tgt}%</td><td class="margin-bd-contrib ${cls}">${tag}</td></tr>`;
       }).join("");
       wEl.innerHTML = `<table class="margin-bd-table"><thead><tr>
@@ -4330,7 +4426,7 @@ async function onVaultDeposit() {
   const input = document.getElementById("earn-vault-deposit-input");
   const token = document.getElementById("earn-vault-deposit-token")?.value || "ICPUSD";
   const amount = parseFloat(input?.value);
-  if (!appState.actor || !(amount > 0)) { showEarnMsg(`Enter a ${token} amount to deposit.`, "err"); return; }
+  if (!appState.actor || !(amount > 0)) { showEarnHint(`Enter a ${token} amount to deposit.`); return; }
   try {
     // Unified vault. ICPUSD is the quote leg (any market); a base asset is
     // the base leg of its own X-ICPUSD market.
@@ -4340,57 +4436,77 @@ async function onVaultDeposit() {
     if ("ok" in r) { showEarnMsg(`Deposited ${formatNum(amount)} ${token} — minted ${formatNum(Number(r.ok))} LP.`, "ok"); input.value = ""; }
     else { showEarnMsg(r.err, "err"); }
   } catch (e) { showEarnMsg("Deposit failed: " + e, "err"); }
-  refreshAccountEarn();
+  await refreshAccountEarn();
 }
 
 async function onVaultWithdraw() {
   const input = document.getElementById("earn-vault-withdraw-input");
   const lp = parseFloat(input?.value);
-  if (!appState.actor || !(lp > 0)) { showEarnMsg("Enter an LP amount to withdraw.", "err"); return; }
+  if (!appState.actor || !(lp > 0)) { showEarnHint("Enter an LP amount to withdraw."); return; }
   try {
     const r = await appState.actor.withdrawLp(toE8(lp));
     if ("ok" in r) { showEarnMsg(`Redeemed ${formatNum(lp)} LP for your basket share.`, "ok"); input.value = ""; }
     else { showEarnMsg(r.err, "err"); }
   } catch (e) { showEarnMsg("Withdraw failed: " + e, "err"); }
-  refreshAccountEarn();
+  await refreshAccountEarn();
 }
 
 async function onInsuranceStake() {
   const input = document.getElementById("earn-ins-stake-input");
   const amount = parseFloat(input?.value);
-  if (!appState.actor || !(amount > 0)) { showEarnMsg("Enter an ICPUSD amount to stake.", "err"); return; }
+  if (!appState.actor || !(amount > 0)) { showEarnHint("Enter an ICPUSD amount to stake."); return; }
   try {
     const r = await appState.actor.stakeInsurance(toE8(amount));
     if ("ok" in r) { showEarnMsg(`Staked $${formatNum(amount)} — minted ${formatNum(Number(r.ok))} insurance shares.`, "ok"); input.value = ""; }
     else { showEarnMsg(r.err, "err"); }
   } catch (e) { showEarnMsg("Stake failed: " + e, "err"); }
-  refreshAccountEarn();
+  await refreshAccountEarn();
 }
 
 async function onInsuranceUnstake() {
   const input = document.getElementById("earn-ins-unstake-input");
   const shares = parseFloat(input?.value);
-  if (!appState.actor || !(shares > 0)) { showEarnMsg("Enter a share amount to unstake.", "err"); return; }
+  if (!appState.actor || !(shares > 0)) { showEarnHint("Enter a share amount to unstake."); return; }
   try {
     const r = await appState.actor.unstakeInsurance(toE8(shares));
     if ("ok" in r) { showEarnMsg(`Unstaked ${formatNum(shares)} shares — redeemed $${formatNum(Number(r.ok))}.`, "ok"); input.value = ""; }
     else { showEarnMsg(r.err, "err"); }
   } catch (e) { showEarnMsg("Unstake failed: " + e, "err"); }
-  refreshAccountEarn();
+  await refreshAccountEarn();
 }
 
+// Earn action feedback. The OUTCOME of a vault/insurance action is a toast —
+// it belongs with every other action result in the app, and the inline slot
+// (#earn-msg) sits at the very bottom of the pane, below the Insurance box,
+// so a result reported there reads as a message about Insurance no matter
+// which of the four buttons produced it, and is easily missed off-screen.
+// VALIDATION prompts ("Enter an amount") stay inline: they belong beside the
+// input they're about, and shouldn't fire a toast for a mistyped field.
 function showEarnMsg(text, kind) {
+  showToast(text, kind === "err" ? "error" : "success");
+  const el = document.getElementById("earn-msg");
+  if (!el) return;
+  el.style.display = "none";   // never leave a stale inline result behind
+}
+function showEarnHint(text) {
   const el = document.getElementById("earn-msg");
   if (!el) return;
   el.textContent = text;
-  el.className = "margin-msg " + (kind === "err" ? "margin-msg-err" : "margin-msg-ok");
+  el.className = "margin-msg margin-msg-err";
   el.style.display = "block";
 }
 
-// After an Earn action: refresh the card + balances (deposits move funds).
-function refreshAccountEarn() {
-  renderEarnCard();
-  renderBalances();
+// After an Earn action: re-FETCH, don't just repaint. renderBalances() reads
+// the userBalances / cachedAcctSummary caches, so calling it alone left the
+// header pill, Overview and Wallet showing pre-action figures until the next
+// poll happened to land — the funds had moved but the app said otherwise.
+// refreshBalances() re-queries getBalances + getMyAccountSummary and fans out
+// to every dependent surface; the Overview pane is re-rendered explicitly
+// because it has its own fetch (renderAllOverview).
+async function refreshAccountEarn() {
+  await renderEarnCard();
+  await refreshBalances();
+  renderAllOverview();
 }
 
 // ── All tab: account value + venue breakdown ───────────────────────
@@ -4607,10 +4723,10 @@ function positionsTableHTML(positions, opts) {
       ${includePool ? `<td class="pos-pool">${poolLabel(p.poolId)}</td>` : ""}
       <td>${sizeStr} ${base}</td>
       <td>${fmtUsd(notional)}</td>
-      <td>${fmtUsd(entry)}</td>
-      <td>${fmtUsd(mark)}</td>
+      <td>${fmtUsdPrice(entry, mark)}</td>
+      <td>${fmtUsdPrice(mark)}</td>
       <td class="${pnlCls}">${uPnl >= 0 ? "+" : ""}${fmtUsd(uPnl)} <span class="pos-roe">(${roe >= 0 ? "+" : ""}${roe.toFixed(1)}%)</span></td>
-      <td>${liqSane ? fmtUsd(liq) : "—"}${liqSane && ptl != null ? ` <span class="pos-roe">${ptl.toFixed(1)}%</span>` : ""}</td>
+      <td>${liqSane ? fmtUsdPrice(liq, mark) : "—"}${liqSane && ptl != null ? ` <span class="pos-roe">${ptl.toFixed(1)}%</span>` : ""}</td>
       <td class="${rPnl >= 0 ? "pos-up" : "pos-down"}">${rPnl !== 0 ? (rPnl >= 0 ? "+" : "") + fmtUsd(rPnl) : "—"}</td>
       <td><button class="btn btn-danger btn-sm pos-close-btn" data-pool="${Number(p.poolId)}" data-market="${p.marketId}">Close</button></td>
     </tr>`;
@@ -4783,7 +4899,7 @@ function enhanceSelectDropdown(selectId, cfg = {}) {
   const labelFor = (v) => { const o = opts().find((x) => x.value === v); return o ? o.textContent : v; };
   // Optional asset icon before the symbol (cfg.icons — the Swap token selects).
   // Sourced from public/assets/<SYM>.svg; hides itself if the file is missing.
-  const icon = (v) => cfg.icons ? `<img class="dd-icon" src="/assets/${encodeURIComponent(v)}.svg" alt="" onerror="this.style.display='none'">` : "";
+  const icon = (v) => cfg.icons ? `<img class="dd-icon" src="/assets/${encodeURIComponent(v)}.svg" alt="" data-hide-on-error>` : "";
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "pos-input dd-btn";
@@ -4821,11 +4937,8 @@ async function renderAccountTrades() {
   if (!tbody) return;
   try {
     const trades = await appState.actor.getMyTradeHistory();
-    if (!trades.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No trades yet</td></tr>';
-      return;
-    }
-    tbody.innerHTML = [...trades].reverse().map((t) => {
+    const hotIds = new Set(trades.map((t) => Number(t.id)));
+    const hot = trades.map((t) => {
       const ts = typeof t.timestamp === "bigint"
         ? Number(t.timestamp / 1000000n)
         : Number(t.timestamp) / 1000000;
@@ -4862,16 +4975,47 @@ async function renderAccountTrades() {
           typeLabel = "Limit";
         }
       }
-      return `<tr>
-        <td>${new Date(ts).toLocaleString()}</td>
-        <td>${t.marketId}</td>
-        <td>${typeLabel}</td>
-        <td class="${sideCls}">${sideLabel}</td>
-        <td>${formatPrice(t.price)}</td>
-        <td>${formatNum(t.quantity)}</td>
-        <td>${formatNum(t.price * t.quantity)}</td>
-      </tr>`;
-    }).join("");
+      return { tsMs: ts, marketId: t.marketId, typeLabel, sideLabel, sideCls,
+        price: t.price, quantity: t.quantity, archived: false };
+    });
+    // Archived spot fills merge behind the hot rows (dedup by tradeId; see
+    // the archived-fills module). Taker/maker role isn't recorded in the
+    // archive event, so Type reads "—" like legacy rows.
+    const merged = hot.concat(afSpotRows(hotIds).map((r) => ({
+      tsMs: r.tsMs, marketId: r.marketId, typeLabel: "—",
+      sideLabel: r.side === "buy" ? "BUY" : "SELL",
+      sideCls: r.side === "buy" ? "side-buy" : "side-sell",
+      price: r.price, quantity: r.quantity, archived: true,
+    }))).sort((a, b) => b.tsMs - a.tsMs);
+    // First backfill pull happens unprompted (older history streams in);
+    // further pages load from the button below. Re-render only when rows
+    // landed or the chain finished (afFetchNext caller contract — an
+    // unconditional re-render microtask-loops into a page freeze during
+    // auth bootstrap).
+    if (afMore() && appState.myPrincipalText && (_afSources === null || !merged.length)) {
+      afFetchNext().then((added) => { if (added || !afMore()) renderAccountTrades(); });
+    }
+    if (!merged.length) {
+      tbody.innerHTML = `<tr><td colspan="7" class="empty-state">${afMore() ? "Searching the archive for older history…" : "No trades yet"}</td></tr>`;
+      return;
+    }
+    const loadMore = afMore()
+      ? '<tr class="af-more-row"><td colspan="7"><button id="account-trades-more" class="btn btn-sm">Load older history</button></td></tr>'
+      : "";
+    tbody.innerHTML = merged.map((r) => `<tr${r.archived ? ' class="uom-row-archived"' : ""}>
+        <td>${new Date(r.tsMs).toLocaleString()}${r.archived ? " " + AF_TAG : ""}</td>
+        <td>${r.marketId}</td>
+        <td>${r.typeLabel}</td>
+        <td class="${r.sideCls}">${r.sideLabel}</td>
+        <td>${formatPrice(r.price)}</td>
+        <td>${formatNum(r.quantity)}</td>
+        <td>${formatNum(typeof r.price === "bigint" ? r.price * r.quantity : Number(r.price) * Number(r.quantity))}</td>
+      </tr>`).join("") + loadMore;
+    document.getElementById("account-trades-more")?.addEventListener("click", async function () {
+      this.disabled = true; this.textContent = "Loading…";
+      await afFetchNext();
+      renderAccountTrades();
+    });
   } catch (e) {
     console.warn("Failed to fetch trade history:", e);
   }
@@ -5053,6 +5197,23 @@ function fmtUsd(n) {
   if (Math.abs(n) >= 1000) return `$${Math.round(n).toLocaleString()}`;
   if (Math.abs(n) >= 1) return `$${n.toFixed(2)}`;
   return `$${n.toFixed(4)}`;
+}
+// $-quoted PRICE columns (entry/mark/liq, position-fill price): Order Book /
+// Trades precision, NOT fmtUsd — money rounding (whole dollars ≥$1k, 2 dp
+// above $1) blurs levels the books beside these tables quote to ≥5 digits.
+function fmtUsdPrice(n, anchor) {
+  const s = formatBookPrice(n, anchor);
+  return s === "—" ? s : `$${s}`;
+}
+// Precision anchor for a cross-market activity row: the row's market price
+// (mark, else last — the books' own reference), so every row prints at ITS
+// market's precision — ICP rows 4 dp, BTC rows 0 dp price / 5 dp qty. Falls
+// back to the row's own price until the markets list has loaded (or for a
+// delisted market surviving only in history rows).
+function uomAnchor(marketId, ownPrice) {
+  const m = markets.find((x) => x.id === marketId);
+  const p = m ? (m.markPrice > 0 ? m.markPrice : m.lastPrice) : 0;
+  return p > 0 ? p : ownPrice || 0;
 }
 function fmtQty(n, token) {
   if (n == null || isNaN(n)) return "—";
@@ -5376,8 +5537,12 @@ async function renderStatsIssues(a, shared) {
     }
   }
 
+  // `ins` came through the money boundary, so uncoveredBadDebtUsd is already
+  // dollars — the same read the insurance KPI does. Dividing here as well is
+  // how the two panes of this page ended up disagreeing by 1e8 about the
+  // number this card's own copy calls the most material one on the venue.
   if (ins && Number(ins.uncoveredBadDebtUsd ?? 0) > 0) {
-    card(2, `Insurance shortfall: ${fmtUsd(Number(ins.uncoveredBadDebtUsd) / 1e8)} of bad debt uncovered`,
+    card(2, `Insurance shortfall: ${fmtUsd(Number(ins.uncoveredBadDebtUsd))} of bad debt uncovered`,
       "Liquidations left debt the insurance fund could not absorb. Until the buffer recovers, " +
       "this is the venue's most material risk number.");
   }
@@ -6077,6 +6242,18 @@ function renderStatsCanister(info) {
     el.textContent = txt;
     if (cls !== undefined) el.className = "kpi-value " + cls;
   };
+  // Backend build vs the bundle running this page — a mixed deploy (frontend
+  // and backend ship separately) is normal but worth being able to SEE.
+  {
+    const raw = Array.isArray(info.appVersion) ? info.appVersion[0] : info.appVersion;
+    const bv = String(raw || "—");
+    const match = APP_VERSION && bv === APP_VERSION;
+    set("kpi-can-version", "v" + bv.replace(/\.0$/, ""), match ? "health-ok" : "");
+    const vsub = document.getElementById("kpi-can-version-sub");
+    if (vsub) vsub.textContent = APP_VERSION
+      ? (match ? "matches this page's build" : `this page runs v${APP_VERSION.replace(/\.0$/, "")}`)
+      : "release this wasm was built from";
+  }
   set("kpi-can-cycles", fmtCycles(info.cycles), s.critical ? "health-bad" : s.low ? "health-warn" : "health-ok");
   const csub = document.getElementById("kpi-can-cycles-sub");
   // Auto-fuel state rides along: "armed" = the treasury→cycles loop will
@@ -6776,7 +6953,7 @@ function renderStatsPools({ pools, bookShares, vault }) {
       <div class="pool-card">
         <div class="pool-head">
           <div class="pool-title">
-            <img class="market-logo market-logo-sm" src="/assets/${base}.svg" alt="" onerror="this.style.display='none'">
+            <img class="market-logo market-logo-sm" src="/assets/${base}.svg" alt="" data-hide-on-error>
             <span class="pool-name">${fmtMarketId(p.marketId)}</span>
             <span class="sm-amm-badge ${p.enabled ? "enabled" : "disabled"}">${p.enabled ? "enabled" : "disabled"}</span>
           </div>
@@ -7190,11 +7367,13 @@ function setPhMode(mode) {
 
 // Same Prev/Next control as the Markets-page activity panel
 // (renderUomPagination), but with its own page state so the two don't fight.
-function phPaginationHTML(pages) {
-  if (pages <= 1) return "";
+function phPaginationHTML(pages, more) {
+  // `more`: the archive may hold older rows — keep Next live at the loaded
+  // edge (advancing triggers the backfill) and mark the count open-ended.
+  if (pages <= 1 && !more) return "";
   return `<div class="uom-pagination"><button id="ph-prev" ${phPage === 0 ? "disabled" : ""}>‹ Prev</button>
-    <span>${phPage + 1} / ${pages}</span>
-    <button id="ph-next" ${phPage >= pages - 1 ? "disabled" : ""}>Next ›</button></div>`;
+    <span>${phPage + 1} / ${pages}${more ? "+" : ""}</span>
+    <button id="ph-next" ${phPage >= pages - 1 && !more ? "disabled" : ""}>Next ›</button></div>`;
 }
 function wirePhPagination() {
   document.getElementById("ph-prev")?.addEventListener("click", () => { phPage--; renderPositionsHistory(); });
@@ -7258,31 +7437,48 @@ async function renderPositionsHistory() {
     } else {
       const [fills, pools] = await Promise.all([appState.actor.getMyPositionFills(), appState.actor.getMyMarginPools()]);
       _poolsCache = pools || [];
-      if (!fills || fills.length === 0) { wrap.innerHTML = '<div class="empty-state">No position fills yet</div>'; return; }
       const byPrincipal = new Map(_poolsCache.map((p) => [p.principal, p]));
-      const allRows = [...fills]
-        .sort((a, b) => tsToMs(b.timestamp) - tsToMs(a.timestamp))
-        .flatMap((t) => {
-          const out = [];
-          const mk = (pool, isBuy) => `<tr>
-            <td>${fmtTs(t.timestamp)}</td>
-            <td><span class="pos-side ${isBuy ? "pos-long" : "pos-short"}">${isBuy ? "BUY" : "SELL"}</span> ${t.marketId.split("-")[0]}</td>
-            <td>${escH(pool.name)}</td>
-            <td>${fmtQty(Number(t.quantity), t.marketId.split("-")[0])}</td>
-            <td>${fmtUsd(Number(t.price))}</td>
-          </tr>`;
-          const bPool = byPrincipal.get(t.buyer.toText ? t.buyer.toText() : String(t.buyer));
-          const sPool = byPrincipal.get(t.seller.toText ? t.seller.toText() : String(t.seller));
-          if (bPool) out.push(mk(bPool, true));
-          if (sPool) out.push(mk(sPool, false));
-          return out;
-        });
+      const hotIds = new Set((fills || []).map((t) => Number(t.id)));
+      // Hot rows (one per pool-side) plus archived rows merged behind them —
+      // same feed as the Markets-page Positions History (see the
+      // archived-fills module for sourcing + classification).
+      const merged = (fills || []).flatMap((t) => {
+        const out = [];
+        const mk = (pool, isBuy) => ({ isBuy, poolHTML: escH(pool.name), marketId: t.marketId,
+          quantity: Number(t.quantity), price: Number(t.price), tsMs: tsToMs(t.timestamp), archived: false });
+        const bPool = byPrincipal.get(t.buyer.toText ? t.buyer.toText() : String(t.buyer));
+        const sPool = byPrincipal.get(t.seller.toText ? t.seller.toText() : String(t.seller));
+        if (bPool) out.push(mk(bPool, true));
+        if (sPool) out.push(mk(sPool, false));
+        return out;
+      }).concat(afPositionRows(hotIds).map((r) => ({
+        isBuy: r.side === "buy", poolHTML: r.poolName ? escH(r.poolName) : "—", marketId: r.marketId,
+        quantity: r.quantity, price: r.price, tsMs: r.tsMs, archived: true,
+      })));
+      const allRows = merged.sort((a, b) => b.tsMs - a.tsMs);
       const pages = Math.max(1, Math.ceil(allRows.length / PH_PAGE_SIZE));
+      // Re-render only when rows landed or the chain finished (afFetchNext
+      // caller contract — freeze guard).
+      if (afMore() && appState.myPrincipalText && (allRows.length === 0 || phPage >= pages - 1)) {
+        afFetchNext().then((added) => { if ((added || !afMore()) && phMode === "fills") renderPositionsHistory(); });
+      }
+      if (!allRows.length) {
+        wrap.innerHTML = afMore()
+          ? '<div class="empty-state">Searching the archive for older history…</div>'
+          : '<div class="empty-state">No position fills yet</div>';
+        return;
+      }
       phPage = Math.min(phPage, pages - 1);
-      const rows = allRows.slice(phPage * PH_PAGE_SIZE, (phPage + 1) * PH_PAGE_SIZE).join("");
+      const rows = allRows.slice(phPage * PH_PAGE_SIZE, (phPage + 1) * PH_PAGE_SIZE).map((r) => `<tr${r.archived ? ' class="uom-row-archived"' : ""}>
+            <td>${new Date(r.tsMs).toLocaleString()}${r.archived ? " " + AF_TAG : ""}</td>
+            <td><span class="pos-side ${r.isBuy ? "pos-long" : "pos-short"}">${r.isBuy ? "BUY" : "SELL"}</span> ${r.marketId.split("-")[0]}</td>
+            <td>${r.poolHTML}</td>
+            <td>${fmtQty(r.quantity, r.marketId.split("-")[0])}</td>
+            <td>${fmtUsd(r.price)}</td>
+          </tr>`).join("");
       wrap.innerHTML = `<table class="positions-table"><thead><tr>
         <th>Time</th><th>Side</th><th>Pool</th><th>Qty</th><th>Price</th>
-      </tr></thead><tbody>${rows}</tbody></table>` + phPaginationHTML(pages);
+      </tr></thead><tbody>${rows}</tbody></table>` + phPaginationHTML(pages, afMore());
       wirePhPagination();
     }
   } catch (e) { console.warn("renderPositionsHistory failed:", e); }
@@ -7694,12 +7890,19 @@ function renderOdometer(el, text) {
 }
 
 function renderBalances() {
+  // Two mounts, one figure: the desktop pill-side value and the mobile
+  // header value (before the hamburger). CSS shows exactly one per
+  // breakpoint; both are kept in sync here so a resize never reveals a
+  // stale number.
   const el = document.getElementById("balance-display");
+  const elM = document.getElementById("balance-display-mobile");
   if (!appState.isAuthenticated) {
     el.style.display = "none";
+    if (elM) elM.style.display = "none";
     return;
   }
   el.style.display = "flex";
+  if (elM) elM.style.display = "flex";
   // ACCOUNT value = wallet + every pool's equity (positions marked to market,
   // net of debt) — from getMyAccountSummary. Until the first summary arrives,
   // fall back to wallet holdings only so the figure isn't blank.
@@ -7713,9 +7916,13 @@ function renderBalances() {
   // Pill shows whole dollars — it's a glanceable figure; cents live on the
   // Account page. Digits render as odometer wheels that ROLL when the 10s
   // clock lands a new figure, instead of the text snapping.
-  let amt = el.querySelector(".amount");
-  if (!amt) { el.innerHTML = `<span class="amount"></span>`; amt = el.querySelector(".amount"); }
-  renderOdometer(amt, `$${Math.round(net).toLocaleString("en-US")}`);
+  const txt = `$${Math.round(net).toLocaleString("en-US")}`;
+  for (const mount of [el, elM]) {
+    if (!mount) continue;
+    let amt = mount.querySelector(".amount");
+    if (!amt) { mount.innerHTML = `<span class="amount"></span>`; amt = mount.querySelector(".amount"); }
+    renderOdometer(amt, txt);
+  }
   // Keep the Account-page figures in sync: the Account-value card shows the
   // aggregate; the Wallet card shows its own component (wallet holdings only),
   // so Account value = Wallet value + Pools value is visibly auditable.
@@ -7735,7 +7942,7 @@ function updateSwapBalances() {
 function renderMarketDropdown() {
   function renderItems(list, container) {
     container.innerHTML = list
-      .map((m) => `<div class="market-dropdown-item ${selectedMarket === m.id ? "active" : ""}" data-market="${escH(m.id)}"><span class="dd-name"><img class="market-logo market-logo-sm" src="/assets/${escH(m.baseToken)}.svg" alt="" onerror="this.style.display='none'">${escH(m.baseToken)}<span class="market-quote">/${escH(m.quoteToken)}</span></span><span class="dd-price">${m.lastPrice > 0 ? formatPrice(m.lastPrice) : "—"}</span></div>`)
+      .map((m) => `<div class="market-dropdown-item ${selectedMarket === m.id ? "active" : ""}" data-market="${escH(m.id)}"><span class="dd-name"><img class="market-logo market-logo-sm" src="/assets/${escH(m.baseToken)}.svg" alt="" data-hide-on-error>${escH(m.baseToken)}<span class="market-quote">/${escH(m.quoteToken)}</span></span><span class="dd-price">${m.lastPrice > 0 ? formatPrice(m.lastPrice) : "—"}</span></div>`)
       .join("");
     container.querySelectorAll(".market-dropdown-item").forEach((item) => {
       item.addEventListener("click", (e) => {
@@ -8194,6 +8401,132 @@ function renderSwapOrders(orders) {
   });
 }
 
+// ── Archived-fills backfill (Spot History · Positions History · Account trades) ──
+// The hot tape (orderStore.trades) is bounded VENUE-WIDE, so an active fleet
+// evicts a user's older fills within days and the history views below would
+// silently go blank (2026-08 incident). The durable copies are the archive
+// chain's owner-attributed #fill events; this module pages them in (newest →
+// oldest, the Archive tab's chain walk but with its own offsets so the two
+// paginations don't fight) and each view merges them behind its hot rows.
+//
+// Classification: an archived #fill names only the archive owner, not which
+// pool executed it (the public tape deliberately drops sub-account identity —
+// see backend emitEvent). A row is attributed back to a pool by (a) the event
+// user being a pool principal (pre-remap capture era), else (b) falling inside
+// a closed episode's [openedAt, closedAt] window on the same market. Fills of
+// a position still OPEN when the tape churned past them stay unclassified —
+// they render as spot rows until the episode closes and a reload rejoins them.
+let _afForPrincipal = null;  // cache key: state rebuilds when the signed-in principal changes
+let _afRows = [];            // normalized archived fills, all markets, unordered
+let _afSeen = new Set();     // archive event seqs merged (dedup across pages)
+let _afSources = null;       // [{ id, offset, total|null }] chain paging state
+let _afPoolByPrin = null;    // pool principal text → pool record
+let _afEpisodes = null;      // closed-position episodes (window join)
+let _afLoading = null;       // single-flight page fetch
+let _afDone = false;         // chain exhausted (or unavailable)
+const AF_PAGE = 200;               // server-side page cap
+const AF_MAX_PAGES_PER_PULL = 200; // runaway backstop only — one pull drains until it finds fills or exhausts the chain
+const AF_EPISODE_SLACK_MS = 5000;  // reap/settle lag tolerance around episode windows
+
+function afReset() {
+  _afRows = []; _afSeen = new Set(); _afSources = null;
+  _afPoolByPrin = null; _afEpisodes = null; _afLoading = null; _afDone = false;
+}
+
+function afClassify(e) {
+  const f = e.kind.fill;
+  const userTxt = e.user.toText ? e.user.toText() : String(e.user);
+  const tsMs = tsToMs(e.ts);
+  let poolName = null;
+  const pool = _afPoolByPrin && _afPoolByPrin.get(userTxt);
+  if (pool) {
+    poolName = pool.name;
+  } else {
+    const ep = (_afEpisodes || []).find((x) => x.marketId === f.marketId
+      && tsMs >= tsToMs(x.openedAt) - AF_EPISODE_SLACK_MS
+      && tsMs <= tsToMs(x.closedAt) + AF_EPISODE_SLACK_MS);
+    if (ep) poolName = ep.poolName;
+  }
+  return {
+    tradeId: Number(f.tradeId), marketId: f.marketId,
+    side: "buy" in f.side ? "buy" : "sell",
+    price: Number(f.price), quantity: Number(f.qty),
+    tsMs, poolName, isPosition: poolName !== null, archived: true,
+  };
+}
+
+async function afEnsure() {
+  if (_afForPrincipal !== appState.myPrincipalText) { afReset(); _afForPrincipal = appState.myPrincipalText; }
+  if (_afSources !== null) return;
+  const [pools, eps] = await Promise.all([
+    appState.actor.getMyMarginPools().catch(() => []),
+    appState.actor.getMyPositionEpisodes().catch(() => []),
+  ]);
+  _afPoolByPrin = new Map((pools || []).map((p) => [p.principal, p]));
+  _afEpisodes = eps || [];
+  let chain = [];
+  try { if (appState.actor.getArchives) chain = (await appState.actor.getArchives()).slice().reverse(); } catch (_) {}
+  _afSources = chain.map((s) => ({ id: s.canisterId, offset: 0, total: null }));
+  if (!_afSources.length) _afDone = true;   // no sidecar (fresh deploy) — hot rows only
+}
+
+// True while older history may still be fetchable from the chain.
+function afMore() { return !_afDone; }
+
+// Pull the caller's archived events; resolves true when new fill rows landed.
+// Single-flight: concurrent view renders share a fetch. The per-user index
+// mixes all event kinds, so one pull keeps paging until it finds fills or
+// exhausts the chain — so `false` means "nothing more will arrive without a
+// state change" (chain done, or the auth guard bounced).
+//
+// CALLER CONTRACT: re-render from .then ONLY when `added || !afMore()`. The
+// guard below returns an INSTANTLY-resolved false while auth state is still
+// bootstrapping (isAuthenticated flips before actor/principal exist on a
+// reload) — an unconditional re-render on that path re-kicks the fetch in the
+// same microtask cycle, and the loop never yields: the page hard-freezes
+// (Chrome's "wait or kill this page", found live 2026-08-07).
+function afFetchNext() {
+  if (_afDone || !appState.actor || !appState.isAuthenticated || !appState.myPrincipalText) return Promise.resolve(false);
+  if (_afLoading) return _afLoading;
+  _afLoading = (async () => {
+    try {
+      await afEnsure();
+      let added = false, pulls = 0;
+      while (!added && !_afDone && pulls < AF_MAX_PAGES_PER_PULL) {
+        const src = _afSources.find((s) => s.total === null || s.offset < s.total);
+        if (!src) { _afDone = true; break; }
+        const res = await appState.actor.getMyArchivedEvents(
+          Principal.fromText(src.id), BigInt(src.offset), BigInt(AF_PAGE));
+        src.total = Number(res.total);
+        const evs = res.events || [];
+        src.offset += evs.length;
+        if (!evs.length) src.offset = src.total;   // drained/empty source — advance past it
+        for (const e of evs) {
+          const seq = Number(e.seq);
+          if (_afSeen.has(seq)) continue;
+          _afSeen.add(seq);
+          if (!("fill" in e.kind)) continue;
+          _afRows.push(afClassify(e));
+          added = true;
+        }
+        if (!_afSources.some((s) => s.total === null || s.offset < s.total)) _afDone = true;
+        pulls += 1;
+      }
+      return added;
+    } catch (e) {
+      console.warn("archived-fills fetch failed:", e);
+      _afDone = true;   // fail closed: hot rows still render; a reload retries
+      return false;
+    } finally { _afLoading = null; }
+  })();
+  return _afLoading;
+}
+
+// View feeds: archived rows not already covered by the given hot tradeIds.
+function afSpotRows(hotIds)     { return _afRows.filter((r) => !r.isPosition && !hotIds.has(r.tradeId)); }
+function afPositionRows(hotIds) { return _afRows.filter((r) =>  r.isPosition && !hotIds.has(r.tradeId)); }
+const AF_TAG = '<span class="af-tag" title="Restored from the durable archive — the live tape only keeps the venue’s recent trades">archive</span>';
+
 // ── Activity panel (Open Orders · Spot History · Positions · Positions History — all viewports) ─
 function renderUserOrdersMobile() {
   const content = document.getElementById("uom-content");
@@ -8257,46 +8590,61 @@ async function renderUomPositionsHistory(content, pagination) {
       appState.actor.getMyMarginPools(),
     ]);
     _poolsCache = pools || [];
-    if (!fills || fills.length === 0) {
-      content.innerHTML = '<div class="uom-empty">No position fills yet</div>';
-      pagination.innerHTML = "";
-      return;
-    }
     const byPrincipal = new Map(_poolsCache.map((p) => [p.principal, p]));
-    const allRows = uomScoped([...fills])
-      .sort((a, b) => tsToMs(b.timestamp) - tsToMs(a.timestamp))
-      .flatMap((t) => {
-        const out = [];
-        const coin = t.marketId.split("-")[0];
-        const ms = tsToMs(t.timestamp);
-        // A buy fill adds long exposure, a sell fill short — the position
-        // vocabulary, not the order one.
-        const mk = (pool, isBuy) => `<tr>
-          <td>${assetCellHTML(coin)}</td>
-          <td class="td-side">${sidePillHTML(isBuy ? "Long" : "Short")}</td>
-          <td class="pos-pool">${poolLabelHTML(Number(pool.id))}</td>
-          <td>${fmtQty(Number(t.quantity), coin)}</td>
-          <td>${fmtUsd(Number(t.price))}</td>
-          <td title="${new Date(ms).toLocaleString()}">${whenLabel(ms)}</td>
-        </tr>`;
-        const bPool = byPrincipal.get(t.buyer.toText ? t.buyer.toText() : String(t.buyer));
-        const sPool = byPrincipal.get(t.seller.toText ? t.seller.toText() : String(t.seller));
-        if (bPool) out.push(mk(bPool, true));
-        if (sPool) out.push(mk(sPool, false));
-        return out;
-      });
+    const hotIds = new Set((fills || []).map((t) => Number(t.id)));
+    // Hot rows: one per pool-side of each trade. A buy fill adds long
+    // exposure, a sell fill short — the position vocabulary, not the order
+    // one. Archived rows merge behind (dedup by tradeId), pool label from
+    // the classification join.
+    const merged = (fills || []).flatMap((t) => {
+      const out = [];
+      const ms = tsToMs(t.timestamp);
+      const bPool = byPrincipal.get(t.buyer.toText ? t.buyer.toText() : String(t.buyer));
+      const sPool = byPrincipal.get(t.seller.toText ? t.seller.toText() : String(t.seller));
+      const mk = (pool, isBuy) => ({ marketId: t.marketId, isBuy, poolHTML: poolLabelHTML(Number(pool.id)),
+        quantity: Number(t.quantity), price: Number(t.price), tsMs: ms, archived: false });
+      if (bPool) out.push(mk(bPool, true));
+      if (sPool) out.push(mk(sPool, false));
+      return out;
+    }).concat(afPositionRows(hotIds).map((r) => ({
+      marketId: r.marketId, isBuy: r.side === "buy",
+      poolHTML: r.poolName ? escH(r.poolName) : "—",
+      quantity: r.quantity, price: r.price, tsMs: r.tsMs, archived: true,
+    })));
+    const allRows = uomScoped(merged).sort((a, b) => b.tsMs - a.tsMs);
+
+    // Backfill from the archive when the view runs dry (nothing loaded, or
+    // the user reached the last loaded page). Re-render only when rows landed
+    // or the chain finished (afFetchNext caller contract — freeze guard).
+    const pages = Math.max(1, Math.ceil(allRows.length / UOM_PAGE_SIZE));
+    if (afMore() && appState.myPrincipalText && (allRows.length === 0 || uomPage >= pages - 1)) {
+      afFetchNext().then((added) => { if ((added || !afMore()) && uomTab === "poshistory") renderUserOrdersMobile(); });
+    }
+
     if (!allRows.length) {
-      content.innerHTML = `<div class="uom-empty">No position fills${uomScopeActive() ? " on this market" : ""}</div>`;
+      content.innerHTML = afMore()
+        ? '<div class="uom-empty">Searching the archive for older history…</div>'
+        : `<div class="uom-empty">No position fills${uomScopeActive() ? " on this market" : ""}</div>`;
       pagination.innerHTML = "";
       return;
     }
-    const pages = Math.max(1, Math.ceil(allRows.length / UOM_PAGE_SIZE));
     uomPage = Math.min(uomPage, pages - 1);
-    const rows = allRows.slice(uomPage * UOM_PAGE_SIZE, (uomPage + 1) * UOM_PAGE_SIZE).join("");
+    const rows = allRows.slice(uomPage * UOM_PAGE_SIZE, (uomPage + 1) * UOM_PAGE_SIZE).map((r) => {
+      const coin = r.marketId.split("-")[0];
+      const anchor = uomAnchor(r.marketId, r.price);
+      return `<tr${r.archived ? ' class="uom-row-archived"' : ""}>
+        <td>${assetCellHTML(coin)}</td>
+        <td class="td-side">${sidePillHTML(r.isBuy ? "Long" : "Short")}</td>
+        <td class="pos-pool">${r.poolHTML}</td>
+        <td>${formatBookQty(r.quantity, anchor)}</td>
+        <td>${fmtUsdPrice(r.price, anchor)}</td>
+        <td title="${new Date(r.tsMs).toLocaleString()}">${whenLabel(r.tsMs)}${r.archived ? " " + AF_TAG : ""}</td>
+      </tr>`;
+    }).join("");
     content.innerHTML = `<table class="positions-table"><thead><tr>
       <th>Asset</th><th class="th-side">Side</th><th class="th-pool">Pool</th><th>Qty</th><th>Price</th><th>When</th>
     </tr></thead><tbody>${rows}</tbody></table>`;
-    renderUomPagination(pagination, pages);
+    renderUomPagination(pagination, pages, afMore());
   } catch (e) {
     content.innerHTML = '<div class="uom-empty">Could not load position fills</div>';
     pagination.innerHTML = "";
@@ -8334,11 +8682,12 @@ function renderUomOpenOrders(content, pagination) {
   const pendingRows = scopedPendings.map((p) => {
     const isBuy = p.takerSide.buy !== undefined;
     const secs = Math.max(0, Math.ceil(p.remainingMs / 1000));
+    const anchor = uomAnchor(p.marketId, p.price);
     return `<div class="uom-row uom-row-pending" title="Pending match — settling against AMM-protected maker">
       <span class="uom-cell-coin">${assetCellHTML(uomCoin(p.marketId))}</span>
       <span>${sidePillHTML(isBuy ? "Buy" : "Sell")}</span>
-      <span>${formatPrice(p.price)}</span>
-      <span>${formatNum(p.quantity)}</span>
+      <span>${formatBookPrice(p.price, anchor)}</span>
+      <span>${formatBookQty(p.quantity, anchor)}</span>
       <span class="uom-settling">${secs > 0 ? `~${secs}s` : "now"}</span>
       <span></span>
     </div>`;
@@ -8350,12 +8699,13 @@ function renderUomOpenOrders(content, pagination) {
     // price update (~1s) releases it. Show "pending" rather than a fill count.
     const staged = stagedOrderIds.has(Number(o.id));
     const isMarket = o.orderType && o.orderType.market !== undefined;
+    const anchor = uomAnchor(o.marketId, o.price);
     return `<div class="uom-row"${staged ? ' title="Pending — awaiting the next price update (~1s); not yet on the book"' : ""}>
       <span class="uom-cell-coin">${assetCellHTML(uomCoin(o.marketId))}</span>
       <span>${sidePillHTML(isBuy ? "Buy" : "Sell")}</span>
-      <span>${staged && isMarket ? "mkt" : formatPrice(o.price)}</span>
-      <span>${formatNum(o.quantity)}</span>
-      <span>${staged ? '<span style="opacity:.65;font-style:italic">pending</span>' : formatNum(o.filled)}</span>
+      <span>${staged && isMarket ? "mkt" : formatBookPrice(o.price, anchor)}</span>
+      <span>${formatBookQty(o.quantity, anchor)}</span>
+      <span>${staged ? '<span style="opacity:.65;font-style:italic">pending</span>' : formatBookQty(o.filled, anchor)}</span>
       <button class="uom-cancel" data-uom-cancel="${o.id}" title="Cancel">✕</button>
     </div>`;
   }).join("");
@@ -8369,12 +8719,13 @@ function renderUomOpenOrders(content, pagination) {
   const marginRows = poolOrders.map((o) => {
     const isBuy = o.side.buy !== undefined;
     const staged = stagedOrderIds.has(Number(o.id));
+    const anchor = uomAnchor(o.marketId, o.price);
     return `<div class="uom-row uom-row-margin" title="${staged ? "Pending — awaiting the next price update (~1s); " : ""}Margin order in pool &quot;${escH(o.poolName)}&quot; — opens a ${isBuy ? "long" : "short"} position when it fills">
       <span class="uom-cell-coin">${assetCellHTML(uomCoin(o.marketId))}</span>
       <span>${sidePillHTML(isBuy ? "Long" : "Short")}</span>
-      <span>${formatPrice(o.price)}</span>
-      <span>${formatNum(o.quantity)}</span>
-      <span>${staged ? '<span style="opacity:.65;font-style:italic">pending</span>' : formatNum(o.filled)}</span>
+      <span>${formatBookPrice(o.price, anchor)}</span>
+      <span>${formatBookQty(o.quantity, anchor)}</span>
+      <span>${staged ? '<span style="opacity:.65;font-style:italic">pending</span>' : formatBookQty(o.filled, anchor)}</span>
       <button class="uom-cancel" data-uom-cancel="${o.id}" title="Cancel">✕</button>
     </div>`;
   }).join("");
@@ -8418,20 +8769,37 @@ async function renderUomHistory(content, pagination) {
     }
   }
 
-  // All markets, newest first (buckets are already newest-first, so a single
-  // merge-sort by timestamp suffices); the panel checkbox narrows the view.
-  const data = uomScoped(
-    Object.values(uomTradeHistoryByMarket).flat()
-      .sort((a, b) => tsToMs(b.timestamp) - tsToMs(a.timestamp))
-  );
+  // All markets, newest first; the panel checkbox narrows the view. Hot rows
+  // first (already loaded), archived rows merged behind them — dedup by
+  // tradeId so a fill still on the hot tape shows once.
+  const hot = Object.values(uomTradeHistoryByMarket).flat();
+  const hotIds = new Set(hot.map((t) => Number(t.id)));
+  const merged = hot.map((t) => ({
+    marketId: t.marketId,
+    // Your side of the fill = which party you were — compare the trade's
+    // buyer principal to your own (same rule as the Account→Spot history).
+    side: (!!appState.myPrincipalText && String(t.buyer) === appState.myPrincipalText) ? "buy" : "sell",
+    price: t.price, quantity: t.quantity, tsMs: tsToMs(t.timestamp), archived: false,
+  })).concat(afSpotRows(hotIds));
+  const data = uomScoped(merged).sort((a, b) => b.tsMs - a.tsMs);
   const total = data.length;
   const pages = Math.max(1, Math.ceil(total / UOM_PAGE_SIZE));
   uomPage = Math.min(uomPage, pages - 1);
   const start = uomPage * UOM_PAGE_SIZE;
   const page = data.slice(start, start + UOM_PAGE_SIZE);
 
+  // Backfill from the archive when the view runs dry: nothing loaded yet, or
+  // the user is on the last loaded page. Re-render only when rows landed or
+  // the chain finished (see afFetchNext's caller contract — an unconditional
+  // re-render here microtask-loops into a page freeze during auth bootstrap).
+  if (afMore() && appState.myPrincipalText && (total === 0 || uomPage >= pages - 1)) {
+    afFetchNext().then((added) => { if ((added || !afMore()) && uomTab === "history") renderUserOrdersMobile(); });
+  }
+
   if (!total) {
-    content.innerHTML = `<div class="uom-empty">No trade history${uomScopeActive() ? " on this market" : ""}</div>`;
+    content.innerHTML = afMore()
+      ? '<div class="uom-empty">Searching the archive for older history…</div>'
+      : `<div class="uom-empty">No trade history${uomScopeActive() ? " on this market" : ""}</div>`;
     pagination.innerHTML = "";
     return;
   }
@@ -8439,28 +8807,28 @@ async function renderUomHistory(content, pagination) {
   content.innerHTML =
     '<div class="uom-header"><span>Asset</span><span>Side</span><span>Price</span><span>Qty</span><span>When</span><span></span></div>' +
     page.map((t) => {
-      const ms = typeof t.timestamp === "bigint" ? Number(t.timestamp / 1000000n) : Number(t.timestamp) / 1000000;
-      // Your side of the fill = which party you were — compare the trade's
-      // buyer principal to your own (same rule as the Account→Spot history).
-      const isBuy = !!appState.myPrincipalText && String(t.buyer) === appState.myPrincipalText;
-      return `<div class="uom-row">
+      const anchor = uomAnchor(t.marketId, t.price);
+      return `<div class="uom-row${t.archived ? " uom-row-archived" : ""}">
         <span class="uom-cell-coin">${assetCellHTML(uomCoin(t.marketId))}</span>
-      <span>${sidePillHTML(isBuy ? "Buy" : "Sell")}</span>
-        <span>${formatPrice(t.price)}</span>
-        <span>${formatNum(t.quantity)}</span>
-        <span title="${new Date(ms).toLocaleString()}">${whenLabel(ms)}</span>
+      <span>${sidePillHTML(t.side === "buy" ? "Buy" : "Sell")}</span>
+        <span>${formatBookPrice(t.price, anchor)}</span>
+        <span>${formatBookQty(t.quantity, anchor)}</span>
+        <span title="${new Date(t.tsMs).toLocaleString()}">${whenLabel(t.tsMs)}${t.archived ? " " + AF_TAG : ""}</span>
         <span></span>
       </div>`;
     }).join("");
 
-  renderUomPagination(pagination, pages);
+  renderUomPagination(pagination, pages, afMore());
 }
 
-function renderUomPagination(el, pages) {
-  if (pages <= 1) { el.innerHTML = ""; return; }
+function renderUomPagination(el, pages, more) {
+  // `more`: older rows may still be fetchable from the archive — keep Next
+  // live at the loaded edge (advancing triggers the backfill) and mark the
+  // page count open-ended.
+  if (pages <= 1 && !more) { el.innerHTML = ""; return; }
   el.innerHTML = `<button id="uom-prev" ${uomPage === 0 ? "disabled" : ""}>‹ Prev</button>
-    <span>${uomPage + 1} / ${pages}</span>
-    <button id="uom-next" ${uomPage >= pages - 1 ? "disabled" : ""}>Next ›</button>`;
+    <span>${uomPage + 1} / ${pages}${more ? "+" : ""}</span>
+    <button id="uom-next" ${uomPage >= pages - 1 && !more ? "disabled" : ""}>Next ›</button>`;
   document.getElementById("uom-prev")?.addEventListener("click", () => { uomPage--; renderUserOrdersMobile(); });
   document.getElementById("uom-next")?.addEventListener("click", () => { uomPage++; renderUserOrdersMobile(); });
 }
@@ -8527,7 +8895,7 @@ function selectMarket(marketId, opts) {
   if (market_) {
     // Asset logo from public/assets/<TOKEN>.svg; hides itself if a market's
     // base token has no logo file yet.
-    titleEl.innerHTML = `<img class="market-logo" src="/assets/${escH(market_.baseToken)}.svg" alt="" onerror="this.style.display='none'">${escH(market_.baseToken)}<span class="market-quote">/${escH(market_.quoteToken)}</span>`;
+    titleEl.innerHTML = `<img class="market-logo" src="/assets/${escH(market_.baseToken)}.svg" alt="" data-hide-on-error>${escH(market_.baseToken)}<span class="market-quote">/${escH(market_.quoteToken)}</span>`;
   } else {
     titleEl.textContent = marketId;
   }
@@ -9020,8 +9388,8 @@ async function refreshSwapGraph(pairChanged = false) {
 function ensureSwapGraphChart() {
   if (swapGraphChart) return;
   const el = document.getElementById("swap-graph-canvas");
-  if (!el || !window.LightweightCharts) return;
-  swapGraphChart = window.LightweightCharts.createChart(el, {
+  if (!el) return;
+  swapGraphChart = createChart(el, {
     width: el.clientWidth,
     height: el.clientHeight || 220,
     layout: {
@@ -9053,7 +9421,7 @@ function ensureSwapGraphChart() {
   // Glacier line — the accent the synthetic (oracle-tracking) candles use,
   // honest about what this is: a ref-price rate line, not a trade tape.
   swapGraphSeries = swapGraphChart.addSeries(
-    window.LightweightCharts.LineSeries,
+    LineSeries,
     { color: "rgba(56, 189, 240, 0.9)", lineWidth: 2, priceLineVisible: true, lastValueVisible: true },
   );
   // Re-fit once on the first real layout: the chart may be created while the
@@ -9966,7 +10334,7 @@ function activateTab(tabName, subpath) {
     activeView.classList.add("active");
     activeView.scrollTop = 0;
     window.scrollTo(0, 0);
-    document.querySelector(".header")?.classList.remove("menu-open", "acct-menu");
+    document.querySelector(".header")?.classList.remove("menu-open", "acct-menu", "sys-menu");
   }
 
   if (tabName === "markets") {
@@ -10084,6 +10452,12 @@ function syncDrawerAcctActive() {
   document.querySelectorAll("[data-acct-go]").forEach((b) =>
     b.classList.toggle("active", onAccount && b.dataset.acctGo === acctTab));
 }
+// Mirror for the System level-2 list: highlight the pane actually open.
+function syncDrawerSysActive() {
+  const onSystem = currentTab === "stats";
+  document.querySelectorAll("[data-sys-go]").forEach((b) =>
+    b.classList.toggle("active", onSystem && b.dataset.sysGo === statsTab));
+}
 
 // ── Event Listeners ─────────────────────────────────────────────
 function setupEventListeners() {
@@ -10135,7 +10509,7 @@ function setupEventListeners() {
   document.getElementById("menu-toggle").addEventListener("click", () => {
     const header = document.querySelector(".header");
     header.classList.toggle("menu-open");
-    header.classList.remove("acct-menu");   // always reopen at the top level
+    header.classList.remove("acct-menu", "sys-menu");   // always reopen at the top level
   });
 
   // Market selector dropdown toggle
@@ -10222,17 +10596,24 @@ function setupEventListeners() {
         syncDrawerAcctActive();
         return;
       }
+      // Same treatment for System: its sub-tabs are a level-2 list rather
+      // than a jump to Overview. No sign-in gate — System is public.
+      if (name === "stats" && header?.classList.contains("menu-open")) {
+        header.classList.add("sys-menu");
+        syncDrawerSysActive();
+        return;
+      }
       // Alias items (Deposit → Account, Play → the Launch page) aren't
       // sections, so the same-tab guard below doesn't apply to them.
       if (ROUTE_ALIASES[name]) {
-        document.querySelector(".header")?.classList.remove("menu-open", "acct-menu");
+        document.querySelector(".header")?.classList.remove("menu-open", "acct-menu", "sys-menu");
         window.location.hash = ROUTE_ALIASES[name];
         return;
       }
       if (currentTab === name) {
         // Same tab tapped — don't thrash history, but on mobile the menu is
         // open and the user expects the tap to dismiss it.
-        document.querySelector(".header")?.classList.remove("menu-open", "acct-menu");
+        document.querySelector(".header")?.classList.remove("menu-open", "acct-menu", "sys-menu");
         return;
       }
       // Clicking "Markets" goes to the last-viewed market (if any) so the
@@ -10253,10 +10634,20 @@ function setupEventListeners() {
   document.getElementById("drawer-acct-back")?.addEventListener("click", () => {
     document.querySelector(".header")?.classList.remove("acct-menu");
   });
+  // System level 2: same back/navigate pair.
+  document.getElementById("drawer-sys-back")?.addEventListener("click", () => {
+    document.querySelector(".header")?.classList.remove("sys-menu");
+  });
+  document.querySelectorAll("[data-sys-go]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelector(".header")?.classList.remove("menu-open", "sys-menu");
+      window.location.hash = "system/" + btn.dataset.sysGo;
+    });
+  });
   document.querySelectorAll("[data-acct-go]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const header = document.querySelector(".header");
-      header?.classList.remove("menu-open", "acct-menu");
+      header?.classList.remove("menu-open", "acct-menu", "sys-menu");
       window.location.hash = "account/" + btn.dataset.acctGo;
     });
   });

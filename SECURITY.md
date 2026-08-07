@@ -3,8 +3,18 @@
 ## Reporting a vulnerability
 
 Please report vulnerabilities **privately** via GitHub's private vulnerability
-reporting on this repository: **Security → Report a vulnerability**
-(https://github.com/dfinity/multidex/security/advisories/new).
+reporting on the public repository: **Security → Report a vulnerability**
+(https://github.com/dfinity/public-multidex/security/advisories/new).
+
+If that is unavailable to you for any reason, email **multidex@dfinity.org**
+instead. Either channel is private; use whichever you can reach.
+
+> This link previously pointed at `dfinity/multidex`, which is a **private**
+> repository — so it 404'd for every external reporter, and there was no working
+> private channel at all. Two independent review teams hit that wall in August
+> 2026 and published in the open rather than sit on their findings; one withheld
+> a user-targeting exploit for want of somewhere to send it. If a link here ever
+> 404s for you, that is a bug in this file — mail the address above and say so.
 
 Please do **not** open public issues or pull requests for security problems, and
 do not test against deployments you do not operate beyond what is needed to

@@ -31,7 +31,14 @@ mm()  { icp canister call --identity rp_mm    backend "$@" 2>&1; }
 pln() { icp canister call --identity rp_plain backend "$@" 2>&1; }
 whl() { icp canister call --identity rp_whale backend "$@" 2>&1; }
 release() { adm setAmmRefPrice "(\"BTC-ICPUSD\", $(e8 50000.0) : nat)" >/dev/null; adm requoteAmm '("BTC-ICPUSD")' >/dev/null; }
-newest_trade() { adm getRecentTrades '("BTC-ICPUSD")' | tr -d '_' ; }
+# The public tape (getRecentTrades) is de-identified PublicTrade (2026-07) —
+# no buyer/seller — so WHO traded is asserted via each identity's caller-scoped
+# fills feed (getMyTradesSinceId): full Trade records where that identity was a
+# party, id > sinceId. Anchoring on an id ALSO scopes each assertion to the
+# trades of its own section — the old newest_trade() returned the whole
+# 100-trade window, so a grep could match any earlier trade, not the newest.
+last_trade_id() { adm getRecentTrades '("BTC-ICPUSD")' | grep -oE "id = [0-9_]+ : nat" | tail -1 | grep -oE "[0-9_]+" | tr -d '_'; }
+fills_since()   { icp canister call --identity "$1" backend getMyTradesSinceId "(${2:-0} : nat, 50 : nat)" 2>&1 | tr -d '_'; }
 
 adm setTestTimersPaused '(true)' >/dev/null 2>&1 || true
 adm resetExchange "()" >/dev/null 2>&1 || true
@@ -49,16 +56,18 @@ adm setTestScorecard "(principal \"$MM\", $(e8 50000) : nat, 0 : nat, 30 : nat, 
 
 echo "── A. tier priority: MM staged LATER beats depositor staged EARLIER ──"
 # One resting ask with room for exactly one of the two buyers.
+BASE=$(last_trade_id)
 mkr placeLimitOrder "(\"BTC-ICPUSD\", variant { sell }, $(e8 50000) : nat, $(e8 0.1) : nat)" >/dev/null
 release   # maker's ask rests
 dep placeLimitOrder "(\"BTC-ICPUSD\", variant { buy }, $(e8 50000) : nat, $(e8 0.1) : nat)" >/dev/null
 sleep 1   # ensure a strictly later ts for the MM (FIFO would favor the depositor)
 mm  placeLimitOrder "(\"BTC-ICPUSD\", variant { buy }, $(e8 50000) : nat, $(e8 0.1) : nat)" >/dev/null
 release   # one pass releases both staged buys — MM must go first
-T=$(newest_trade)
-if echo "$T" | grep -q "buyer = principal \"$MM\""; then
-  ok "the trade's buyer is the MM (tier priority beat FIFO)"
-else nok "expected the MM to take the ask" "$(echo "$T" | grep -oE 'buyer = principal "[^"]+"' | head -1)"; fi
+T=$(fills_since rp_mm "${BASE:-0}")
+DEPT=$(fills_since rp_dep "${BASE:-0}")
+if echo "$T" | grep -q "buyer = principal \"$MM\"" && ! echo "$DEPT" | grep -q "trade = record"; then
+  ok "the trade's buyer is the MM, the depositor filled nothing (tier priority beat FIFO)"
+else nok "expected the MM (alone) to take the ask" "mmFills=$(echo "$T" | grep -c 'trade = record') depFills=$(echo "$DEPT" | grep -c 'trade = record')"; fi
 DEPO=$(dep getMyOrdersOnMarket '("BTC-ICPUSD")')
 if echo "$DEPO" | tr -d '_' | grep -q "price = $(e8 50000)"; then
   ok "the depositor's buy rested unfilled (the ask was gone)"
@@ -72,14 +81,17 @@ release
 # Whale stages a market buy; MM stages fresh repricing intent (sets the shield).
 whl placeMarketOrder "(\"BTC-ICPUSD\", variant { buy }, $(e8 0.2) : nat, $(e8 0.05) : nat, false)" >/dev/null
 mm  placeLimitOrder "(\"BTC-ICPUSD\", variant { sell }, $(e8 50085) : nat, $(e8 0.05) : nat)" >/dev/null
+BASE2=$(last_trade_id)
 # Force the whale's order down the users-only EXPIRY path (no fresh price).
 SID=$(whl getMyStagedOrderIds '()' | tr -d '_' | grep -oE "[0-9]+" | head -1)
 adm setTestDeferredExpiry "(${SID:-0} : nat, 1 : int)" >/dev/null 2>&1
 adm adminRunDeferredExpiry "()" >/dev/null 2>&1
-T2=$(newest_trade)
-if echo "$T2" | grep -q "seller = principal \"$PLN\""; then
-  ok "fallback filled the PLAIN user's worse ask — the shielded MM ask was skipped"
-else nok "expected the plain ask (50120) to fill, not the shielded MM ask (50080)" "$(echo "$T2" | grep -oE 'seller = principal "[^"]+"|price = [0-9]+' | head -2)"; fi
+T2=$(fills_since rp_plain "${BASE2:-0}")
+MMF=$(fills_since rp_mm "${BASE2:-0}")
+if echo "$T2" | grep -q "seller = principal \"$PLN\"" && echo "$T2" | grep -q "price = $(e8 50120) : nat" \
+   && ! echo "$MMF" | grep -q "trade = record"; then
+  ok "fallback filled the PLAIN user's worse ask @50120 — the shielded MM ask was skipped"
+else nok "expected the plain ask (50120) to fill, not the shielded MM ask (50080)" "plainPx=$(echo "$T2" | grep -oE 'price = [0-9]+' | head -1) mmFills=$(echo "$MMF" | grep -c 'trade = record')"; fi
 MMO=$(mm getMyOrdersOnMarket '("BTC-ICPUSD")' | tr -d '_')
 if echo "$MMO" | grep -q "price = $(e8 50080)"; then
   ok "the MM's better ask survived the stall untouched"

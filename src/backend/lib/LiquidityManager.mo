@@ -34,6 +34,19 @@ module {
     price : Nat,
     quantity : Nat,
   ) : { #ok; #err : Text } {
+    // Per-level congestion cap (see Types.MAX_ORDERS_PER_PRICE_LEVEL): a
+    // price already holding the max resting orders takes no more. Checked
+    // FIRST — a full level rejects regardless of balances — and side-scoped:
+    // only the caller's own (side, price) level counts, so a stacked opposite
+    // side never blocks an order that would cross it. Internal placements
+    // (AMM ladder, deferred releases resting a remainder) do not route
+    // through this validation and are exempt by construction.
+    if (OrderBook.getLevelOrderCount(store, marketId, side, price) >= Types.MAX_ORDERS_PER_PRICE_LEVEL) {
+      return #err(
+        "Price level full: " # Nat.toText(Types.MAX_ORDERS_PER_PRICE_LEVEL) #
+        " orders already rest at this exact price on this side. Choose a different price."
+      );
+    };
     switch (side) {
       case (#buy) {
         let orderValue = Fixed.mul(quantity, price, true);

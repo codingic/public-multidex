@@ -120,6 +120,30 @@ module {
     onTradeFees      = func(_, _, _) {};       // legacy/test: nothing to attribute
   };
 
+  // ── Per-call work bounds ───────────────────────────────────────
+  // One matcher invocation consumes at most this many match-loop iterations,
+  // counting EVERY iteration — fills and skips alike, since a skipped maker
+  // (non-takeable AMM quote, expired, self-cross, pending-locked, unaffordable)
+  // costs a book re-walk too. This is the hard per-message bound on matcher
+  // work: with the level index keyed by (timestamp, id) each iteration is
+  // O(log book + excluded-set), so a capped call is bounded by construction
+  // no matter how many orders rest at one price. Uncapped, a single taker
+  // sweeping a stacked level was the same O(K²) shape that trapped
+  // processDeferredExpiry at ~3k same-price orders (40B instruction limit).
+  // On cap-out: a #market taker returns its remainder to the caller (IOC —
+  // re-defer or drop, the existing semantics); a #limit taker rests it.
+  public let MAX_MATCH_ITERATIONS_PER_CALL : Nat = 256;
+  // The noPartialFill (FOK) pre-check promises only what fits in HALF the
+  // iteration budget of distinct makers. The live loop spends at most 2
+  // iterations per maker the simulation examined (a partially pending-locked
+  // maker is touched twice: fill, then exhaust on the re-find), so a promise
+  // built from ≤128 makers always completes within the 256-iteration cap —
+  // an FOK must never pass its pre-check and then stop short on iterations.
+  // Practical meaning: an all-or-nothing order can sweep at most 128 distinct
+  // resting makers; larger jobs are killed at the pre-check, not partially
+  // filled.
+  public let FOK_SIM_MAKER_BUDGET : Nat = 128;
+
   public type MatchResult = {
     trades : [Types.Trade];
     // Pending matches created during this call (only non-empty when one
@@ -215,7 +239,13 @@ module {
     // settled — and break with `availableForFill < eps`.
     let exhausted = Map.empty<Nat, Bool>();
 
-    label matchLoop while (remainingQty > 0) {
+    // Per-call work bound — see MAX_MATCH_ITERATIONS_PER_CALL. Counted at the
+    // top so every path through the body (fill, skip-continue, cancel-continue)
+    // spends exactly one unit.
+    var iterations : Nat = 0;
+
+    label matchLoop while (remainingQty > 0 and iterations < MAX_MATCH_ITERATIONS_PER_CALL) {
+      iterations += 1;
       let best = switch (OrderBook.findBestMatchExcluding(store, marketId, side, ?exhausted)) {
         case null { break matchLoop };
         case (?b) { b };
@@ -456,13 +486,18 @@ module {
     // non-takeable (AMM) / expired / pending-locked makers, count up to the
     // taker's balance, and stop at the first maker it can't afford (orders are
     // walked best-price-first, so a worse-priced maker is never cheaper).
-    // Within a level all orders share the price, so the order we consume them in
-    // cannot change the `available >= quantity` decision the sole caller (the
-    // noPartialFill pre-check) makes — hence no intra-level sort is needed.
+    // Intra-level order is the (timestamp, id) key order — identical to the
+    // live loop's touch order, which the maker budget below depends on: the
+    // promise must be built from exactly the makers the live loop will reach
+    // first.
     let levelIter = switch (makerSide) {
       case (#sell) { Map.entries(lvls) };        // lowest ask first
       case (#buy)  { Map.reverseEntries(lvls) };  // highest bid first
     };
+    // FOK maker budget — see FOK_SIM_MAKER_BUDGET. Counts every OPEN maker
+    // the walk reaches (skipped ones included: the live loop spends an
+    // iteration excluding those too).
+    var examined : Nat = 0;
     label simLoop for ((price, lvl) in levelIter) {
       // Levels are monotonic in price, so once one falls outside the slippage
       // band every worse level does too — stop scanning.
@@ -472,16 +507,22 @@ module {
       };
       if (not withinSlip) { break simLoop };
 
-      for ((id, _) in Map.entries(lvl)) {
+      label lvlWalk for (((_ts, id), _) in Map.entries(lvl)) {
         switch (Map.get(store.orders, Nat.compare, id)) {
           case null {};
           case (?o) {
+            if (not OrderBook.isOpen(o)) { continue lvlWalk };
+            // Budget check BEFORE any skip predicate: every open maker the
+            // walk reaches here is one the live loop would spend an iteration
+            // on (fill, or skip-and-exclude), so all of them draw the budget.
+            examined += 1;
+            if (examined > FOK_SIM_MAKER_BUDGET) { break simLoop };
             // Skip own resting orders (the engine's self-trade prevention does
             // too) so a noPartialFill buy isn't told it can fill against itself.
             // Same BENEFICIAL-owner comparison as the live loop — if the sim
             // counted a pool's depth that the live loop then refuses, FOK would
             // pass a pre-check and partially fill.
-            if (OrderBook.isOpen(o) and not ctx.isNonTakeable(o.id, o.owner) and not ctx.isExpired(o.id)
+            if (not ctx.isNonTakeable(o.id, o.owner) and not ctx.isExpired(o.id)
                 and not Principal.equal(ctx.beneficialOwner(o.owner), ctx.beneficialOwner(taker))) {
               let pendingLocked = ctx.getMakerPending(o.id);
               let obRem = OrderBook.remaining(o);
@@ -599,7 +640,13 @@ module {
     // maker instead of returning a stub-fill. See market-side comment.
     let exhausted = Map.empty<Nat, Bool>();
 
-    label matchLoop while (remainingQty > 0) {
+    // Per-call work bound — see MAX_MATCH_ITERATIONS_PER_CALL. A capped-out
+    // crossing limit rests its remainder exactly like any partial fill; the
+    // rested order is immediately the side's best and later flow finishes it.
+    var iterations : Nat = 0;
+
+    label matchLoop while (remainingQty > 0 and iterations < MAX_MATCH_ITERATIONS_PER_CALL) {
+      iterations += 1;
       let best = switch (OrderBook.findBestMatchExcluding(store, marketId, side, ?exhausted)) {
         case null { break matchLoop };
         case (?b) { b };

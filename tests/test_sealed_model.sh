@@ -72,16 +72,22 @@ adm setTestBalance "(principal \"$UB\", \"ICP\", $(e8 100.0) : nat)" >/dev/null
 USD_BASE=$(awk -v a="$(bal "$UA" ICPUSD)" -v b="$(bal "$AMM" ICPUSD)" -v c="$(bal "$UB" ICPUSD)" -v s="$(bal "$S" ICPUSD)" -v t="$(treas)" 'BEGIN{printf "%.4f", a+b+c+s+t}')
 ICP_BASE=$(awk -v a="$(bal "$UA" ICP)" -v b="$(bal "$AMM" ICP)" -v c="$(bal "$UB" ICP)" -v s="$(bal "$S" ICP)" 'BEGIN{printf "%.4f", a+b+c+s}')
 
-# ── 1. Limit buy 5 @ 11.0 (crosses AMM) → STAGED off-book ──
+# ── 1. Limit buy 5 @ 10.3 (crosses AMM) → STAGED off-book ──
+# The price must satisfy TWO bounds at once, which is why it is not a round
+# number: it has to CROSS the AMM ask (ref 10.0 + 20bps spread ≈ 10.02) so the
+# order is marketable and stages, while staying inside the marketable collar
+# (MARKETABLE_BAND_BPS = 500 → 10.0 × 1.05 = 10.50, main.mo). This was 11.0,
+# i.e. +10%, which the collar has refused since ac59ae8 (2026-07-29) — the
+# order never staged and §1–§3 failed on a fixture that predates the band.
 echo ""
-echo "── 1. Limit buy 5 @ 11.0 → STAGED (off-book, in Open Orders as #staged, 0 filled) ──"
-RES=$(u placeLimitOrder "(\"ICP-ICPUSD\", variant { buy }, $(e8 11.0) : nat, $(e8 5.0) : nat)")
-ICP_P=$(bal "$UA" ICP); NST=$(ua_staged); ON_BOOK=$(book_has_price 11.0)
+echo "── 1. Limit buy 5 @ 10.3 → STAGED (off-book, in Open Orders as #staged, 0 filled) ──"
+RES=$(u placeLimitOrder "(\"ICP-ICPUSD\", variant { buy }, $(e8 10.3) : nat, $(e8 5.0) : nat)")
+ICP_P=$(bal "$UA" ICP); NST=$(ua_staged); ON_BOOK=$(book_has_price 10.3)
 if echo "$RES" | grep -q "ok" \
    && awk -v x="$ICP_P" 'BEGIN{exit (x<0.0000001?0:1)}' \
    && [ "$NST" -ge 1 ] && [ "$ON_BOOK" = "no" ]; then
-  ok "staged: 0 filled, in owner's staged list ($NST), NOT on public book (no bid @ 11.0)"
-else nok "order should be staged off-book + visible to owner" "icp=$ICP_P staged=$NST bid@11?=$ON_BOOK"; fi
+  ok "staged: 0 filled, in owner's staged list ($NST), NOT on public book (no bid @ 10.3)"
+else nok "order should be staged off-book + visible to owner" "icp=$ICP_P staged=$NST bid@10.3?=$ON_BOOK"; fi
 
 # ── 2. Anti-snipe: requote WITHOUT a fresh fetch → NOT released ──
 echo ""
@@ -97,7 +103,10 @@ freshrequote
 ICP1=$(bal "$UA" ICP); USD1=$(bal "$UA" ICPUSD); OO3=$(uorders_market)
 if awk -v i="$ICP1" 'BEGIN{exit (i>4.99?0:1)}' && ! echo "$OO3" | grep -q "staged"; then
   AVG=$(awk -v s="$USD1" -v i="$ICP1" 'BEGIN{printf "%.4f", (100000-s)/i}')
-  if awk -v a="$AVG" 'BEGIN{exit (a < 10.9 ? 0 : 1)}'; then ok "released + filled $ICP1 ICP at avg $AVG (<< 11.0), no longer staged"; else nok "filled at wrong price" "avg=$AVG"; fi
+  # Bound sits BELOW the 10.3 limit on purpose: the point of the assertion is
+  # that the fill took the AMM's ask (≈10.02 + fee), not the buyer's limit. A
+  # bound at or above the limit would pass no matter what price it filled at.
+  if awk -v a="$AVG" 'BEGIN{exit (a < 10.25 ? 0 : 1)}'; then ok "released + filled $ICP1 ICP at avg $AVG (< 10.25, i.e. the AMM ask not the 10.3 limit), no longer staged"; else nok "filled at wrong price" "avg=$AVG"; fi
 else nok "should release + fill after fresh fetch" "icp=$ICP1 stagedLeft?[$(echo "$OO3" | grep -c staged)]"; fi
 
 # ── 4. Passive limit (below market) stages, then rests VISIBLY on release ──

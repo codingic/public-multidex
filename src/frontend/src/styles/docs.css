@@ -200,6 +200,9 @@
   transition: background 0.15s;
 }
 #docs-view .docs-start-cta:hover { background: var(--accent-hover); color: var(--accent-text); }
+/* A .docs-start used as a plain notice (the open-source box on the What-is
+   page) holds a paragraph rather than steps + CTA — no trailing margin. */
+#docs-view .docs-start > p { margin: 0; }
 
 /* Four-card grids read better as balanced pairs than auto-fill's 3+1. */
 #docs-view .docs-map--pair { grid-template-columns: repeat(2, 1fr); }

@@ -626,6 +626,12 @@ select.pos-input { cursor: pointer; }
 .lg-verify-out { margin-top: 10px; font-size: 13px; color: var(--text-dim); min-height: 18px; word-break: break-word; }
 .lg-verify-out.lg-ok  { color: var(--green); }
 .lg-verify-out.lg-bad { color: var(--red); font-weight: 600; }
+/* "Chain self-consistent, certificate NOT verified" — deliberately NOT green.
+   The hash chain checked out but the subnet signature over the head did not
+   run, which is a much weaker claim than the green state makes; the colour is
+   the honest half of that. See ledger.js verify(). */
+.lg-verify-out.lg-warn { color: var(--heather); }
+.lg-verify-out.lg-warn .lg-gap-note { color: var(--text-dim); }
 .lg-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; }
 .lg-sealed { background: rgba(122,134,153,0.18); color: var(--text-dim); }
 .lg-active { background: rgba(0,200,140,0.15); color: var(--green); }

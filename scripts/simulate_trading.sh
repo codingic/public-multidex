@@ -14,6 +14,14 @@
 set -o pipefail
 export PATH="$HOME/.local/bin:$PATH"
 
+# Scratch-file locations (.run/, not fixed names under sticky /tmp) — see
+# scripts/lib/runfiles.sh. This script only READS the price snapshot, but it
+# has to look where inject_history.sh wrote it: reading the old /tmp path
+# after the writers moved would silently fall back to the hardcoded
+# DEFAULT_PRICES and walk a freshly-seeded AMM off its real price.
+# shellcheck source=scripts/lib/runfiles.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/runfiles.sh"
+
 # ── Colors ────────────────────────────────────────────────────────
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -58,13 +66,13 @@ MAX_QTYS=("0.1" "4.0" "80.0" "3000.0")
 
 # Track last known prices (updated when trades occur). Bootstrap from
 # (a) the canister's getMarkets lastPrice if non-zero, falling back
-# to (b) the /tmp/uplands-oracle-prices.txt snapshot if present,
+# to (b) the $MDX_ORACLE_PRICES snapshot if present,
 # falling back to (c) the hardcoded DEFAULT_PRICES.
 LAST_PRICES=("${DEFAULT_PRICES[@]}")
-ORACLE_FILE="/tmp/uplands-oracle-prices.txt"
+ORACLE_FILE="$MDX_ORACLE_PRICES"
 for i in 0 1 2 3; do
   m="${MARKETS[$i]}"; base="${BASE_TOKENS[$i]}"
-  lp=$(icp canister call backend getMarkets '()' 2>/dev/null \
+  lp=$(icp canister call backend getMarkets '()' --identity anonymous 2>/dev/null \
        | awk -v m="$m" '$0 ~ m{f=1} f && /lastPrice/{ v=$3; gsub(/_/,"",v); if (v+0==0) print "0"; else printf "%.8f", v/100000000; exit }')
   if [ -n "$lp" ] && [ "$lp" != "0.0" ] && [ "$lp" != "0" ]; then
     LAST_PRICES[$i]="$lp"
@@ -112,7 +120,17 @@ err()  { echo -e "  ${RED}✗${NC} $1"; STAT_ERROR=$((STAT_ERROR + 1)); }
 section() { echo -e "\n${YELLOW}═══ $1 ═══${NC}"; }
 dim()  { echo -e "  ${DIM}$1${NC}"; }
 
-call() { echo "y" | icp canister call backend "$@" 2>&1; }
+# Trader actions pass their own --identity. Calls that omit it get
+# `--identity anonymous` appended — NEVER the CLI's global default identity,
+# which is machine-shared mutable state that other sessions and connectors
+# move at will (mdex-process-safety §5). Anonymous signs the market reads
+# fine, so identity-less probes stay deterministic.
+call() {
+  case " $* " in
+    *" --identity "*) echo "y" | icp canister call backend "$@" 2>&1 ;;
+    *)                echo "y" | icp canister call backend "$@" --identity anonymous 2>&1 ;;
+  esac
+}
 
 # Integer-money: the backend ledger is Nat base units (10^8). Money args go out
 # as base-unit integers; prices/qtys parsed back from Candid output (which prints
@@ -221,7 +239,7 @@ action_limit_order() {
     # candles we observed were both this drift mechanism in action.)
     if echo "$result" | grep -q 'filled\|partiallyFilled'; then
       local lp_actual
-      lp_actual=$(icp canister call backend getMarkets '()' 2>/dev/null \
+      lp_actual=$(icp canister call backend getMarkets '()' --identity anonymous 2>/dev/null \
         | awk -v m="$market" '$0 ~ m{f=1} f && /lastPrice/{ v=$3; gsub(/_/,"",v); if (v+0==0) print "0"; else printf "%.8f", v/100000000; exit }')
       if [ -n "$lp_actual" ] && [ "$lp_actual" != "0.0" ] && [ "$lp_actual" != "0" ]; then
         LAST_PRICES[$mi]="$lp_actual"

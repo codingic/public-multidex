@@ -67,6 +67,11 @@
 .drawer-acct { display: none; }
 
 /* ── Signed-in user dropdown (desktop far right) ─────────────────── */
+/* Redirect marker on nav shortcuts (Earn → Account/Earn): a small NE arrow
+   telling the user this tab jumps elsewhere rather than opening its own page. */
+.tab .tab-redirect-arrow { margin-left: 4px; opacity: 0.55; vertical-align: 1px; }
+.tab:hover .tab-redirect-arrow, .tab.active .tab-redirect-arrow { opacity: 0.8; }
+
 .user-menu { position: relative; display: none; }        /* shown when .header.authed */
 .header.authed .user-menu { display: block; }
 .header.authed #auth-btn { display: none; }               /* Sign out lives in the dropdown */

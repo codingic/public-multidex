@@ -37,6 +37,16 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# -e/--identity thread through PASS. If the caller named no identity, pin
+# anonymous rather than inherit the CLI's machine-global default, which
+# other sessions and connectors move at will (mdex-process-safety §5).
+# Locally anonymous IS the controller; against engine/subnet an anonymous
+# call fails loudly as a non-controller instead of racing the default.
+case " ${PASS[*]:-} " in
+  *" --identity "*) ;;
+  *) PASS+=(--identity anonymous) ;;
+esac
+
 case "$PROVIDER" in
   google)    METHOD="setGoogleApiKey";    DOTFILE="$(dirname "$0")/.google-api-key" ;;
   anthropic) METHOD="setAnthropicApiKey"; DOTFILE="$(dirname "$0")/.anthropic-api-key" ;;
@@ -51,7 +61,7 @@ if [ -z "$KEY" ]; then
   read -rs KEY; echo >&2
 fi
 
-echo "set_ai_key: calling $METHOD on '$BACKEND' (${PASS[*]:-local defaults})…"
+echo "set_ai_key: calling $METHOD on '$BACKEND' (${PASS[*]})…"
 icp canister call ${PASS[@]+"${PASS[@]}"} "$BACKEND" "$METHOD" "(\"$KEY\")" >/dev/null
 
 # Verify via the public gate the frontend itself uses.

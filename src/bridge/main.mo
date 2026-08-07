@@ -35,9 +35,67 @@ import Blob "mo:core/Blob";
 
 persistent actor Bridge {
 
+  // ── Deployment posture ───────────────────────────────────────────
+  // MIRRORS the DEX's posture axis (src/backend/main.mo — same type, same
+  // committed default, same `transient` reasoning). The Bridge had NO posture
+  // concept at all: devSimulateDeposit/devConfirmDeposits were labelled
+  // "DEV ONLY" in a comment and gated by nothing, and their only real
+  // restraint was the DEX's playDepositCap() — which is active on #play but
+  // returns null on BOTH #dev and #production. So on a flip to #production
+  // these methods (and the claim they feed) would mint UNCAPPED balance into
+  // a value-bearing DEX, and icp.yaml wires this same stub into both
+  // production-facing targets (`engine` and `subnet`/multidex.ai). The gate
+  // now lives here rather than being outsourced.
+  //
+  // `transient` is load-bearing exactly as on the DEX: a plain `let` in a
+  // `persistent actor` is implicitly STABLE, so an edited literal would be
+  // silently overwritten by the stored value on `--mode upgrade` and the flip
+  // would never land. Transient re-evaluates on install AND upgrade.
+  //
+  // The DEX also derives an IS_DEV from this literal; the Bridge deliberately
+  // does not, because nothing here is #dev-only (see requireNotProduction
+  // below for why the line sits at #production). A declared-but-unread
+  // constant is a dead binding — moc says so itself, M0194 — and this file
+  // already carries one such fossil (ASSETS, declared and never used as a
+  // membership test until now). Add IS_DEV when something reads it.
+  public type DeployMode = { #dev; #play; #production };
+  transient let DEPLOY_MODE : DeployMode = #play;
+  transient let IS_PRODUCTION : Bool = DEPLOY_MODE == #production;
+
+  // THE RULE for every posture gate, copied from the DEX's requireDevHook:
+  // refuse LOUDLY, in whichever way the signature allows — a typed #err where
+  // there is a Result channel, a trap where there is not. Never a silent
+  // return.
+  //
+  // WHY THE LINE IS AT #production AND NOT AT #dev. The `dev` prefix on these
+  // two methods is a naming fossil: devSimulateDeposit is the LIVE #play
+  // on-ramp. It is what the Deposit page calls (src/frontend/src/main.js), it
+  // is what drives the play allowance (DEX playDepositReserve →
+  // playDepositCap → PLAY_DEPOSIT_CAP_USD, which is ONLY non-null on #play),
+  // and tests/test_play_deposit_cap.sh exercises it on that posture. Gating
+  // it to #dev would delete the only on-ramp the committed default posture
+  // has. The hole the gate must close is the UNCAPPED posture — #production,
+  // where playDepositCap() returns null and nothing else stands between an
+  // authenticated caller and freshly minted DEX balance.
+  func requireNotProduction(name : Text) : { #ok; #err : Text } {
+    if (IS_PRODUCTION) {
+      return #err(name # " is disabled on #production: this Bridge is a STUB with no custody behind it, so any balance it credits would be unbacked. Deploy the real chain-key Bridge (docs/bridge-and-cks-design.md) before flipping the posture.");
+    };
+    #ok;
+  };
+
   // Depositable assets = the DEX's token ids. ICPUSD stands in for a USD
   // stablecoin (e.g. USDC). transient: a tunable constant, reset on upgrade.
   transient let ASSETS : [Text] = ["BTC", "ETH", "SOL", "ICP", "ICPUSD"];
+
+  // ASSETS was declared and never used as a membership test, and there is no
+  // length check anywhere in this file — so an arbitrary Text went straight
+  // into a permanent map key on both write paths. Every entry point that can
+  // reach `ledgers` validates through here FIRST.
+  func isSupportedAsset(asset : Text) : Bool {
+    for (a in ASSETS.vals()) { if (a == asset) { return true } };
+    false;
+  };
 
   // Per-(user, asset) deposit ledger — the CREDIT axis. `confirmed` is cumulative
   // confirmed inflow (monotonic); `pending` is simulated-but-unconfirmed; `claimed`
@@ -169,6 +227,17 @@ persistent actor Bridge {
   public query func getDex() : async ?Principal { cachedDex() };
   public query func getSupportedAssets() : async [Text] { ASSETS };
 
+  // The Bridge's own posture, readable the same way and with the same
+  // spelling as the DEX's getDeployMode. Deploy scripts and the pre-mainnet
+  // checklist can now assert that the two agree instead of assuming it.
+  public query func getDeployMode() : async Text {
+    switch (DEPLOY_MODE) {
+      case (#dev) { "dev" };
+      case (#play) { "play" };
+      case (#production) { "production" };
+    };
+  };
+
   // ── Addresses ───────────────────────────────────────────────
   public type ChainAddress = { chain : Text; asset : Text; address : Text };
 
@@ -228,11 +297,24 @@ persistent actor Bridge {
   // across the await — the real Bridge needs the same saga discipline).
   public shared (msg) func claim(asset : Text) : async { #ok : Nat; #err : Text } {
     requireAuth(msg.caller);
+    // FIRST statement after auth: an unvalidated asset must never reach a map
+    // key. Without this, claim("<any junk>") was a permanent write.
+    if (not isSupportedAsset(asset)) { return #err("Unsupported asset: " # asset) };
+    switch (requireNotProduction("claim")) { case (#err(e)) { return #err(e) }; case (#ok) {} };
     let dexP = switch (effectiveDex<system>()) { case (?p) { p }; case null { return #err("Bridge is not wired to a DEX yet") } };
     let k = key(msg.caller, asset);
     if (Map.get(claiming, Text.compare, k) != null) { return #err("A claim for " # asset # " is already in progress") };
 
-    let l = ledgerOf(msg.caller, asset);
+    // READ-ONLY lookup, deliberately NOT ledgerOf. ledgerOf is get-or-CREATE,
+    // and returning #err from an update method is a NORMAL RETURN, not a trap
+    // — so the Map.add COMMITS. Calling it above the claimable==0 rejection
+    // meant every no-op claim wrote a permanent ledger row. An absent row is
+    // definitionally confirmed = claimed = 0, so it takes the same branch and
+    // the caller sees the identical message; it just costs no state.
+    let l = switch (Map.get(ledgers, Text.compare, k)) {
+      case (?x) { x };
+      case null { return #err("Nothing to claim for " # asset) };
+    };
     let claimable = if (l.confirmed > l.claimed) { l.confirmed - l.claimed } else { 0 };
     if (claimable == 0) { return #err("Nothing to claim for " # asset) };
 
@@ -269,6 +351,10 @@ persistent actor Bridge {
   // DEX no-ops instead of double-debiting the allowance.
   public shared (msg) func devSimulateDeposit(asset : Text, amount : Nat) : async { #ok; #err : Text } {
     requireAuth(msg.caller);
+    // Validate the asset BEFORE anything can key a map with it (`admitting`,
+    // `admittedUnits` and `ledgers` are all keyed on it below).
+    if (not isSupportedAsset(asset)) { return #err("Unsupported asset: " # asset) };
+    switch (requireNotProduction("devSimulateDeposit")) { case (#err(e)) { return #err(e) }; case (#ok) {} };
     if (amount == 0) { return #err("Amount must be positive") };
     switch (effectiveDex<system>()) {
       case (?dexP) {
@@ -297,6 +383,12 @@ persistent actor Bridge {
   };
   public shared (msg) func devConfirmDeposits() : async () {
     requireAuth(msg.caller);
+    // No Result channel in this signature, so the posture refusal is a TRAP —
+    // loud, per the rule above. (It iterates ASSETS, so it needs no asset
+    // validation of its own: it can only ever touch supported keys.)
+    if (IS_PRODUCTION) {
+      Runtime.trap("devConfirmDeposits is disabled on #production: this Bridge is a STUB with no custody behind it. Deploy the real chain-key Bridge before flipping the posture.");
+    };
     for (asset in ASSETS.vals()) {
       let l = ledgerOf(msg.caller, asset);
       if (l.pending > 0) { l.confirmed += l.pending; l.pending := 0 };

@@ -124,9 +124,9 @@ mops install && icp build
 
 # 2. Create + install on the dedicated subnet from the funded wallet.
 #    (Create with a big cycle endowment; --subnet pins placement.)
-icp deploy backend  -e ic --subnet <PLACEHOLDER-subnet-id> --identity <PLACEHOLDER-wallet> --with-cycles <PLACEHOLDER≈5000T>
-icp deploy bridge   -e ic --subnet <PLACEHOLDER-subnet-id> --identity <PLACEHOLDER-wallet>
-icp deploy frontend -e ic --subnet <PLACEHOLDER-subnet-id> --identity <PLACEHOLDER-wallet>
+icp deploy backend  -e subnet --subnet <PLACEHOLDER-subnet-id> --identity <PLACEHOLDER-wallet> --with-cycles <PLACEHOLDER≈5000T>
+icp deploy bridge   -e subnet --subnet <PLACEHOLDER-subnet-id> --identity <PLACEHOLDER-wallet>
+icp deploy frontend -e subnet --subnet <PLACEHOLDER-subnet-id> --identity <PLACEHOLDER-wallet>
 
 # 3. Wire (re-apply after ANY reinstall — these live in stable vars):
 icp canister call backend setBridge "(principal \"<bridge-id>\")" ...
@@ -136,14 +136,14 @@ icp canister call bridge  setDex    "(principal \"<backend-id>\")" ...
 
 # 3b. Canister ENV VARS (the anti-sybil verifier reads these; they do NOT
 #     apply to an existing canister on redeploy — use settings update):
-icp canister settings update backend -e ic --identity <wallet> \
+icp canister settings update backend -e subnet --identity <wallet> \
   --add-environment-variable "trusted_attribute_signers=rdmx6-jaaaa-aaaaa-aaadq-cai" \
   --add-environment-variable "frontend_origins=https://<frontend-id>.icp0.io,https://<PLACEHOLDER-domain>"
 #   EVERY origin the app is served from must be listed, or Verify-with-Google
 #   fails closed with #FrontendOriginMismatch (the error names the expected list).
 
 # 3c. AI key (can be done or ROTATED post-launch, any time — see scripts/set_ai_key.sh):
-bash scripts/set_ai_key.sh --provider anthropic -e ic --identity <wallet>   # reads scripts/.anthropic-api-key,
+bash scripts/set_ai_key.sh --provider anthropic -e subnet --identity <wallet>   # reads scripts/.anthropic-api-key,
 #   $AI_API_KEY, --key-file, or hidden prompt; verifies aiConfigured()=true after.
 #   LAST provider set WINS (anthropic switches the assistant off Gemini). Use a
 #   HIGH-LIMIT key: aiComplete already rate-limits per principal (20/min · 200/h
@@ -165,7 +165,7 @@ BACKEND=<backend-id> WALLET=<wallet> ./scripts/topup.sh
 #    tmux/systemd — the loops are plain bash):
 #    scripts/.cloud-engine.conf must hold CE_IDENTITY=<controller wallet> (the
 #    funder); then:
-IC_ENV=ic bash scripts/sim_trading.sh 12 2
+IC_ENV=subnet bash scripts/sim_trading.sh 12 2
 #    The runner now SELF-HEALS and BREATHES (2026-07-10): a background
 #    replenisher polls every bot each 60s (public getTestBalance) and resets any
 #    wallet leg below floor back to seed (cash <$10k→$40k, asset <$4k→$15k-at-mid)
@@ -290,7 +290,7 @@ Print this. Each row has its detail section above.
 - [ ] **AI key**: `scripts/set_ai_key.sh --provider <anthropic|google>` with the high-limit key; `aiConfigured()` = true (§3c) — rotatable post-launch any time
 - [ ] **Seed**: `deploy.sh cloud_seed` equivalent — history + $1M AMM + insurance; idempotent (§3.4)
 - [ ] **Cycles cron**: `topup.sh` every 15 min from the funded wallet (backend + archives + bridge) (§1)
-- [ ] **Bots**: `IC_ENV=ic sim_trading.sh 12 2` under tmux/systemd with `CE_IDENTITY` in the conf; confirm mood line + first refills (§3.6)
+- [ ] **Bots**: `IC_ENV=subnet sim_trading.sh 12 2` under tmux/systemd with `CE_IDENTITY` in the conf; confirm mood line + first refills (§3.6)
 - [ ] **Smoke**: run §6 end-to-end, ESPECIALLY the fresh-Google player journey on the canonical domain
 - [ ] **Alerting**: watch liquid headroom (balance − freezing limit), archive/bridge cycles via `getCanisterInfo`, and an OFF-CHAIN uptime check on the domain (a frozen canister can't report itself)
 - [ ] **Do NOT**: enable blackhole-at-seal; wire XRC; wire setFuelRoute; publish the raw canister URL as a sign-in surface

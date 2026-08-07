@@ -16,15 +16,22 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-# `mops generate candid` extracts the interface directly from the Motoko
-# source WITHOUT compiling wasm (needs ic-mops >= 2.19; the old
-# `icp build` + copy-from-.mops/.build two-step did a full build just to
-# read the interface). Output path is mops.toml's [canisters.backend].candid
-# — an intermediate, gitignored; the published copy is what THIS script
-# writes below. Verified byte-identical to the icp-build route (2026-07-31).
-mops generate candid backend >/dev/null
+# Extraction goes through scripts/lib/candid.sh, the SAME helper
+# lint-ratchet.sh verifies this file with. That shared path is the point: a
+# byte-equality gate whose writer and reader are different tools can drift
+# between them, and this one did — the ratchet used `moc --idl` while this
+# script used `mops generate candid`, which additionally needs ic-mops >= 2.19
+# and so failed outright on a machine running 2.13.2 while the check verifying
+# its output ran fine.
+#
+# It writes src/backend/backend.did too: mops.toml declares that path as
+# [canisters.backend].candid and `mops build` treats it as a compat-check
+# INPUT, so a build fails without it. Gitignored — an intermediate; the
+# PUBLISHED copy is what this script assembles below.
+# shellcheck source=scripts/lib/candid.sh
+. "$(dirname "$0")/lib/candid.sh"
 SRC="src/backend/backend.did"
-[ -f "$SRC" ] || { echo "gen-did: $SRC not produced by 'mops generate candid backend'" >&2; exit 1; }
+mdx_emit_candid "$SRC" || { echo "gen-did: could not extract the interface" >&2; exit 1; }
 
 mkdir -p candid
 {

@@ -39,6 +39,12 @@
   <dict>
     <key>MDX_FOREGROUND</key>
     <string>1</string>
+    <!-- launchd jobs do NOT inherit a login shell's PATH. Without this the
+         very first thing the starter does — the runtime posture gate's
+         `icp canister call` — fails "command not found", the job exits, and
+         KeepAlive throttle-loops it forever. icp lives in ~/.local/bin. -->
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
 
   <key>WorkingDirectory</key>

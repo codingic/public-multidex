@@ -18,7 +18,7 @@
 # Usage:
 #   bash scripts/topup_archive.sh                       # local replica, default amount
 #   bash scripts/topup_archive.sh --amount 50t          # custom amount
-#   bash scripts/topup_archive.sh -e ic --identity me   # a deployed engine / mainnet
+#   bash scripts/topup_archive.sh -e engine|subnet --identity me   # a deployed mainnet stack
 #
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
@@ -35,6 +35,16 @@ while [ $# -gt 0 ]; do
     *) echo "Unknown flag: $1" >&2; exit 1 ;;
   esac
 done
+
+# If the caller named no identity, pin anonymous rather than inherit the
+# CLI's machine-global default, which other sessions and connectors move at
+# will (mdex-process-safety §5). Locally anonymous IS the controller;
+# against engine/subnet an anonymous top-up fails loudly instead of racing
+# the default.
+case " ${PASS[*]:-} " in
+  *" --identity "*) ;;
+  *) PASS+=(--identity anonymous) ;;
+esac
 
 info() { printf '\033[0;36m▶\033[0m %s\n' "$1"; }
 ok()   { printf '  \033[0;32m✓\033[0m %s\n' "$1"; }

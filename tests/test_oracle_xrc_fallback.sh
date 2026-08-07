@@ -18,6 +18,7 @@
 
 set -u
 export PATH="$HOME/.local/bin:$PATH"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 pass=0; fail=0
 ok()  { echo -e "${GREEN}✓${NC} $1"; pass=$((pass+1)); }
@@ -27,8 +28,19 @@ e8() { awk -v x="$1" 'BEGIN{ printf "%.0f", x*100000000 }'; }
 adm() { icp canister call --identity anonymous backend "$@" 2>&1; }
 refpx() { adm getAmmPool '("ICP-ICPUSD")' --query | tr -d '_' | grep -oE "refPrice = [0-9]+" | head -1 | grep -oE "[0-9]+"; }
 
-pkill -9 -f "simulate_trading.sh" 2>/dev/null || true
-sleep 1
+# The sim must be dead (header: it moves refPrice mid-assertion).
+# Stop it via the PID-file stopper — NEVER a pattern kill: `pkill -f` cannot
+# tell a local simulator from one driving multidex.ai and took the live fleet
+# down three times (run_all.sh's stopper comment + scripts/lib/bots.sh).
+# run_all.sh already stops the fleet for suite runs; this covers standalone.
+STOPPER="$SCRIPT_DIR/../scripts/stop_bots_local.sh"
+if [ -f "$STOPPER" ]; then
+  bash "$STOPPER" >/dev/null 2>&1 || true
+  sleep 2
+else
+  echo "⚠ stop_bots_local.sh not found at $STOPPER — the local fleet was NOT stopped."
+  echo "  Red results below may be simulator noise rather than regressions."
+fi
 
 adm setTestTimersPaused '(true)' >/dev/null 2>&1 || true
 adm resetExchange "()" >/dev/null 2>&1 || true
@@ -134,9 +146,19 @@ if [ -n "$LIVE" ]; then
       ok "in-band accept cleared the alarm"
     else ok "alarm still set (second accept pended/failed — cleared by UI age-out; div=$(echo "$DIV2" | head -c 60))"; fi
   else
-    if ! echo "$DIV" | grep -q '"ICP"'; then
-      ok "no accept (providers down/pended: $(echo "$R6" | head -c 40)…) and no false alarm"
-    else nok "alarm raised without a healthy accept" "div=[$DIV]"; fi
+    # THREE outcomes here, not two. The divergence alarm is written from the
+    # healthy AGGREGATE, before acceptOrPendPrice decides whether the mark may
+    # move (main.mo). So when the jump breaker PENDS — "price jump pending
+    # confirmation", main.mo:5125 — the alarm is legitimately already set, and
+    # the old "no ok ⇒ no alarm" reading fails on correct behaviour. That is
+    # the common case here: the live 3-provider mark and this section's
+    # synthetic anchor can sit far enough apart to trip the ±250bps breaker.
+    # An alarm with NEITHER an accept nor a pend is still a real failure.
+    if echo "$R6" | grep -q "pending confirmation"; then
+      ok "breaker pended the move; the alarm correctly reflects divergence measured on the healthy aggregate"
+    elif ! echo "$DIV" | grep -q '"ICP"'; then
+      ok "no accept (providers down: $(echo "$R6" | head -c 40)…) and no false alarm"
+    else nok "alarm raised with neither a healthy accept nor a pend" "div=[$DIV] r=[$(echo "$R6" | head -c 60)]"; fi
   fi
   adm setTestXrcRate '("ICP", null)' >/dev/null
   adm setTestPendingJump '("ICP", null)' >/dev/null

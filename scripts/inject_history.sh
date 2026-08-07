@@ -7,7 +7,7 @@
 # multi-week backdrop before the simulation takes over.
 #
 # Writes a side-effect file that downstream scripts read:
-#   /tmp/uplands-oracle-prices.txt
+#   $MDX_ORACLE_PRICES  (default: <repo>/.run/oracle-prices.txt)
 #     Format: "SYMBOL PRICE" per line, e.g.
 #       BTC 75412.3
 #       ETH 2305.01
@@ -16,6 +16,13 @@
 #     this so it doesn't have to hardcode stale "spot ~X" values for
 #     AMM seeding — the AMM always starts at the latest oracle price.
 #
+# POSTURE: injectHistoricalTrades is GENESIS-gated (docs/deployment-modes.md,
+# "The genesis window"): #dev always · #play only until the venue's first
+# enableAmm · #production never. This script probes the gate with an empty
+# batch before fetching anything and exits 2 with the canister's own refusal
+# when the window is closed — so run it BEFORE AMM enable in any #play
+# bring-up (play_start.sh step 4 → 5, deploy.sh step 2 → 2b already do).
+#
 # Usage: bash scripts/inject_history.sh [--days N] [--identity NAME]
 #        IC_ENV=engine|subnet bash scripts/inject_history.sh --days 14 --identity <controller>
 #          → inject into a deployed canister (e.g. a cloud engine) instead of local
@@ -23,9 +30,18 @@
 set -o pipefail
 export PATH="$HOME/.local/bin:$PATH"
 
-# Target network. Unset/empty = the icp default (local replica). Set IC_ENV=ic
-# to inject into a DEPLOYED canister (e.g. a cloud engine) — the calls below get
-# `-e <env>`. The --identity must be authorised for injectHistoricalTrades (a
+# Scratch-file locations (.run/, not fixed names under sticky /tmp) — see
+# scripts/lib/runfiles.sh. Honours an inherited MDX_RUN_DIR, so when a parent
+# (deploy.sh / play_start.sh / seed.sh) spawns this script both agree on where
+# the price snapshot lives.
+# shellcheck source=scripts/lib/runfiles.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/runfiles.sh"
+
+# Target network. Unset/empty = the icp default (local replica). Set
+# IC_ENV=engine|subnet to inject into a DEPLOYED canister — the calls below get
+# `-e <env>`. It must name a DECLARED icp.yaml environment: `ic` is a bare
+# network alias, and none of our canisters are mapped under it.
+# The --identity must be authorised for injectHistoricalTrades (a
 # canister controller on that network).
 ENV_FLAG=""
 [ -n "${IC_ENV:-}" ] && ENV_FLAG="-e ${IC_ENV}"
@@ -69,7 +85,27 @@ QTY_ICP="50.0"
 INJECT_ASSETS="${INJECT_ASSETS:-BTC ETH SOL ICP}"
 want() { case " $INJECT_ASSETS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
-PRICES_FILE="/tmp/uplands-oracle-prices.txt"
+# ── Posture probe — fail fast and HONESTLY when the canister refuses ──
+# An empty batch is side-effect-free (zero records injected, stats untouched)
+# but still runs the full gate chain: controller check + the genesis-window
+# posture gate. When the gate refuses (#err on the current build, a dev-only
+# trap on pre-window builds), every chunk of every asset would fail the same
+# way — historically that surfaced as per-asset chunk errors which the
+# callers then blamed on "CoinGecko rate limits", after burning a minute of
+# fetches. Probe first; refusal here is a posture fact, not a data problem.
+FIRST_ASSET=$(echo $INJECT_ASSETS | awk '{print $1}')
+probe_out=$(echo y | icp canister call $ENV_FLAG backend injectHistoricalTrades \
+    "(\"${FIRST_ASSET:-BTC}-ICPUSD\", vec {})" --identity "$IDENTITY" 2>&1)
+probe_rc=$?
+if [ "$probe_rc" -ne 0 ] || echo "$probe_out" | grep -q "err"; then
+  err "injectHistoricalTrades probe REFUSED before any data was fetched — not a CoinGecko problem. The call said:"
+  err "  $(echo "$probe_out" | grep -m1 -iE 'genesis|dev-only|production|err|reject|trap' | sed 's/^[[:space:]]*//' | head -c 220)"
+  err "  (posture gate — #dev: always · #play: only before the venue's first enableAmm · #production: never;"
+  err "   a transport/identity failure prints its own error above instead)"
+  exit 2
+fi
+
+PRICES_FILE="$MDX_ORACLE_PRICES"
 # Upsert semantics: drop only the lines for assets injected THIS run — a
 # selective INJECT_ASSETS run must not wipe the other assets' snapshot
 # (play_start.sh and the simulator anchor from this file).
@@ -180,7 +216,7 @@ inject_one() {
   # trade size never touches balances.
   local parse_out
   parse_out=$(python3 - "$raw" "$qty" "$asset" "$PRICES_FILE" <<'PY'
-import json, sys, math, random
+import json, sys, math, random, os
 raw = sys.argv[1]; base_qty = float(sys.argv[2]); asset = sys.argv[3]; prices_file = sys.argv[4]
 try:
   data = json.loads(raw)
@@ -188,7 +224,8 @@ except Exception as e:
   # Keep the evidence: the head repr shows invisible bytes, and the full dump
   # answers "what did the API actually send" without re-reproducing.
   print(f"# parse error: {e}; len={len(raw)}; head={raw[:60]!r}", file=sys.stderr)
-  try: open(f"/tmp/uplands-inject-fail-{asset}.txt", "w").write(raw)
+  # Alongside the price snapshot (the .run/ dir), not a fixed /tmp name.
+  try: open(os.path.join(os.path.dirname(prices_file) or ".", f"inject-fail-{asset}.txt"), "w").write(raw)
   except Exception: pass
   sys.exit(1)
 prices = data.get("prices", [])
@@ -273,9 +310,12 @@ PY
     batch+="$r;"
     batch_count=$(( batch_count + 1 ))
     if [ "$batch_count" -ge 250 ]; then
-      if ! out=$(echo y | icp canister call $ENV_FLAG backend injectHistoricalTrades \
-          "(\"$market_id\", vec { $batch })" --identity "$IDENTITY" 2>&1); then
-        err "  chunk injection failed: $(echo "$out" | grep -m1 -iE "error|reject|trap" | head -c 160)"
+      # Failure = a non-zero exit (reject/trap/transport) OR a typed #err in
+      # the reply — the genesis-window refusal is #err, which exits 0.
+      out=$(echo y | icp canister call $ENV_FLAG backend injectHistoricalTrades \
+          "(\"$market_id\", vec { $batch })" --identity "$IDENTITY" 2>&1)
+      if [ $? -ne 0 ] || echo "$out" | grep -q "err"; then
+        err "  chunk injection failed: $(echo "$out" | grep -m1 -iE "err|reject|trap|genesis" | head -c 200)"
         errors=$(( errors + 1 ))
       fi
       total=$(( total + batch_count ))
@@ -283,9 +323,10 @@ PY
     fi
   done
   if [ -n "$batch" ]; then
-    if ! out=$(echo y | icp canister call $ENV_FLAG backend injectHistoricalTrades \
-        "(\"$market_id\", vec { $batch })" --identity "$IDENTITY" 2>&1); then
-      err "  final chunk failed: $(echo "$out" | grep -m1 -iE "error|reject|trap" | head -c 160)"
+    out=$(echo y | icp canister call $ENV_FLAG backend injectHistoricalTrades \
+        "(\"$market_id\", vec { $batch })" --identity "$IDENTITY" 2>&1)
+    if [ $? -ne 0 ] || echo "$out" | grep -q "err"; then
+      err "  final chunk failed: $(echo "$out" | grep -m1 -iE "err|reject|trap|genesis" | head -c 200)"
       errors=$(( errors + 1 ))
     fi
     total=$(( total + batch_count ))
@@ -311,7 +352,9 @@ if [ -s "$PRICES_FILE" ]; then
 fi
 
 if [ "$FAILURES" -gt 0 ]; then
-  echo -e "${YELLOW}History injection completed with $FAILURES failures.${NC}" >&2
+  # The posture probe passed at startup, so these are fetch-side failures
+  # (rate limits / bad data) — or the per-chunk lines above say otherwise.
+  echo -e "${YELLOW}History injection completed with $FAILURES failures (posture probe was OK — see per-asset errors above).${NC}" >&2
   exit 1
 fi
 echo -e "${GREEN}Historical backfill complete.${NC}"

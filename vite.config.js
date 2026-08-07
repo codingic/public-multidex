@@ -10,6 +10,48 @@ import { fileURLToPath } from "url";
 const cloudEngineRaw = (process.env.VITE_CLOUD_ENGINE || "").trim().toLowerCase();
 const CLOUD_ENGINE = cloudEngineRaw === "true" || cloudEngineRaw === "1" || cloudEngineRaw === "yes";
 
+// The app version, single-sourced from package.json. Baked into the bundle as
+// __APP_VERSION__ (the footer badge and the update checker read it) and
+// emitted as /version.json by the plugin below, which deployed clients poll
+// to notice a newer build and refresh themselves (src/frontend/src/
+// update-check.js). Release bumps: package.json here and APP_VERSION in
+// src/backend/main.mo (kept in step by hand; the backend one is diagnostic).
+const APP_VERSION = JSON.parse(readFileSync(fileURLToPath(new URL("./package.json", import.meta.url)), "utf8")).version;
+
+// Emit /version.json alongside the build: { version, builtAt }. minSupported
+// may be added by hand for a BREAKING release — clients older than it show a
+// blocking countdown instead of a dismissable banner (see update-check.js).
+//
+// Also stamps the footer badge INTO the built index.html. The span used to be
+// empty markup filled by main.js mid-init, so every refresh showed a blank
+// badge until the bundle booted — indefinitely, when anything ahead of the
+// stamp hiccuped (seen live 2026-08-07). Build-injected text is visible from
+// the first paint and can't drift: it comes from the same APP_VERSION as the
+// bundle's __APP_VERSION__ (the runtime re-stamp writes identical text).
+function emitVersionJson() {
+  const badge = `VERSION ${APP_VERSION.replace(/\.0$/, "")}`; // same text main.js stamps
+  return {
+    name: "emit-version-json",
+    apply: "build",
+    transformIndexHtml(html) {
+      const needle = '<span class="app-version"></span>';
+      if (!html.includes(needle)) {
+        // The empty span is the contract with main.js's re-stamp — if the
+        // markup drifts, fail the build rather than ship a blank badge again.
+        throw new Error("[version badge] index.html no longer carries the empty .app-version span");
+      }
+      return html.replace(needle, `<span class="app-version">${badge}</span>`);
+    },
+    closeBundle() {
+      const dir = fileURLToPath(new URL("./dist", import.meta.url));
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      writeFileSync(`${dir}/version.json`,
+        JSON.stringify({ version: APP_VERSION, builtAt: new Date().toISOString() }) + "\n");
+      console.log(`[version.json] emitted v${APP_VERSION}`);
+    },
+  };
+}
+
 // The App Connect bridge page (src/frontend/public/ai-connect.html) ships as a
 // TEMPLATE: its ic:canister-id meta holds the literal placeholder below. A
 // connector reads the RAW served HTML (it does NOT run the page's JS), so the
@@ -105,9 +147,10 @@ function emitWellKnownManifest() {
 
 export default defineConfig({
   root: "src/frontend",
-  plugins: [bakeAiConnectCanisterId(), emitWellKnownManifest()],
+  plugins: [bakeAiConnectCanisterId(), emitWellKnownManifest(), emitVersionJson()],
   define: {
     __CLOUD_ENGINE__: JSON.stringify(CLOUD_ENGINE),
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
   },
   build: {
     outDir: "../../dist",

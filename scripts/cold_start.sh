@@ -59,7 +59,16 @@
 #
 # Exit code: 0 on full success, non-zero if any deploy / seed / verify step fails.
 
-set -o pipefail
+# -e as well as -o pipefail. This script's job is a SEQUENCE — network, deploy,
+# wire, top up, seed — where a silent failure early leaves a half-built
+# exchange that looks deployed. Every site that is ALLOWED to fail was audited
+# when -e was added and now says so explicitly with `|| true` (the ones that
+# matter: the two `lsof` probes in zombie_masters, the DEPLOY_MODE grep, the
+# xrc-/fuel-mock status probes, and the read-only diagnostic calls in §5 — all
+# of them tolerate absence by design and every one of them is a PIPELINE, which
+# under `pipefail` fails the whole assignment). `a && b` lists are exempt from
+# -e by the shell's own rules and were left alone.
+set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 
 GREEN='\033[0;32m'
@@ -78,6 +87,13 @@ DO_SEED=true
 TOP_UP_AMOUNT="100t"
 SIMULATE=""
 while [ $# -gt 0 ]; do
+  # Under `set -u` a bare "$2" on a value-less flag aborts with an unbound-
+  # variable message that names nothing useful, and `shift 2` with one arg
+  # left aborts under -e. Name the mistake instead.
+  case "$1" in
+    --mode|--traders|--history-days|--top-up-amount)
+      [ $# -ge 2 ] || { echo "Flag $1 requires a value" >&2; exit 1; } ;;
+  esac
   case "$1" in
     --mode)           MODE="$2";          shift 2 ;;
     --traders)        TRADERS="$2";       shift 2 ;;
@@ -109,6 +125,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+# Scratch-file locations (.run/, not fixed names under sticky /tmp) — see
+# scripts/lib/runfiles.sh.
+# shellcheck source=scripts/lib/runfiles.sh
+. "$SCRIPT_DIR/lib/runfiles.sh"
+
 log()  { echo -e "${CYAN}▶${NC} $1"; }
 ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
 warn() { echo -e "  ${YELLOW}!${NC} $1"; }
@@ -125,7 +146,11 @@ hdr()  { echo -e "\n${YELLOW}═══ $1 ═══${NC}"; }
 # Refuse up front instead. Only guards runs that will actually SEED:
 # --no-seed (pure code update) and `empty` are posture-agnostic.
 if $DO_SEED; then
-  SRC_POSTURE=$(grep -oE 'DEPLOY_MODE : DeployMode = #[a-z]+' src/backend/main.mo 2>/dev/null | head -1 | sed 's/.*#//')
+  # `|| true`: an unreadable/unmatched literal is HANDLED below (the -n
+  # checks), but grep-finds-nothing exits 1 and `head -1` can SIGPIPE the
+  # producer — either way pipefail fails the assignment and -e would kill the
+  # script before the handling ran.
+  SRC_POSTURE=$(grep -oE 'DEPLOY_MODE : DeployMode = #[a-z]+' src/backend/main.mo 2>/dev/null | head -1 | sed 's/.*#//' || true)
   if [ "$MODE" = "play" ]; then
     if [ -n "$SRC_POSTURE" ] && [ "$SRC_POSTURE" != "play" ]; then
       err "--mode play needs DEPLOY_MODE = #play in src/backend/main.mo (found #$SRC_POSTURE)"
@@ -162,15 +187,18 @@ hdr "Replica"
 # back to every pocket-ic on the machine.
 zombie_masters() {
   local owner repo pcwd
-  owner=$(lsof -nP -tiTCP:8000 -sTCP:LISTEN 2>/dev/null | head -1)   # -t: bare PID
+  # Both lsof probes are ALLOWED to find nothing (no replica running / a pid
+  # that just exited): lsof exits non-zero and pipefail would fail the whole
+  # assignment under -e. Same trap deploy.sh documents at its own GATEWAY_PID.
+  owner=$(lsof -nP -tiTCP:8000 -sTCP:LISTEN 2>/dev/null | head -1 || true)   # -t: bare PID
   repo=$(pwd -P)
-  for pid in $(pgrep -f "pocket-ic --ttl" 2>/dev/null); do
-    pcwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
+  for pid in $(pgrep -f "pocket-ic --ttl" 2>/dev/null || true); do
+    pcwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1 || true)
     [ "$pcwd" = "$repo" ] || continue           # someone else's network — leave it alone
     [ "$pid" = "${owner:-}" ] || echo "$pid"
   done
 }
-STRAYS=$(zombie_masters)
+STRAYS=$(zombie_masters || true)
 if [ -n "$STRAYS" ]; then
   warn "zombie pocket-ic master(s): $(echo $STRAYS | tr '\n' ' ')— network is half-alive (calls/outcalls break); restarting it cleanly"
   icp network stop > /dev/null 2>&1 || true
@@ -187,7 +215,7 @@ if curl -s --max-time 2 http://127.0.0.1:8000/api/v2/status > /dev/null 2>&1; th
   ok "replica already running at 127.0.0.1:8000 (single master owns the gateway)"
 else
   log "starting local replica (background)"
-  icp network start --background > /tmp/uplands-network-start.log 2>&1 || true
+  icp network start --background > "$MDX_NETWORK_START_LOG" 2>&1 || true
   # Give it a moment to come up.
   for i in $(seq 1 15); do
     if curl -s --max-time 1 http://127.0.0.1:8000/api/v2/status > /dev/null 2>&1; then
@@ -197,7 +225,7 @@ else
     sleep 1
   done
   if ! curl -s --max-time 2 http://127.0.0.1:8000/api/v2/status > /dev/null 2>&1; then
-    err "replica failed to start — check /tmp/uplands-network-start.log"
+    err "replica failed to start — check $MDX_NETWORK_START_LOG"
     exit 1
   fi
 fi
@@ -207,12 +235,24 @@ if $DO_DEPLOY; then
   hdr "Deploy"
   # Deploy requires controller identity. Anonymous is the controller in
   # local dev (see icp canister status <name> → Controllers).
-  if ! icp identity default anonymous > /dev/null 2>&1; then
+  #
+  # PASS --identity EXPLICITLY on every icp invocation; never set the CLI's
+  # global default identity (mdex-process-safety §5). That default is GLOBAL
+  # state this script does not own: any other tool on the operator's machine
+  # (another checkout, an editor integration, an MCP connector holding its
+  # own principal) can move it between a default-flip and the command a line
+  # later. When that happens the deploy runs as a non-controller and every
+  # canister fails with IC0512 on update_settings, which reads like a
+  # permissions bug in the project rather than a race on shared state. The
+  # flag scopes the identity to the one command and cannot be raced. The
+  # probe below only VERIFIES the anonymous identity resolves — it writes
+  # no CLI state.
+  if ! icp identity principal --identity anonymous > /dev/null 2>&1; then
     err "anonymous identity missing; cannot deploy as controller"
     exit 1
   fi
   log "icp deploy"
-  if ! icp deploy 2>&1 | tail -4; then
+  if ! icp deploy --identity anonymous 2>&1 | tail -20; then
     err "deploy failed"
     exit 1
   fi
@@ -226,8 +266,8 @@ if $DO_DEPLOY; then
   ALICE_PRINCIPAL=$(icp identity principal --identity alice 2>/dev/null || true)
   if [ -n "$ALICE_PRINCIPAL" ]; then
     log "adding alice as canister controller (admin scripts use --identity alice)"
-    icp canister settings update backend --add-controller "$ALICE_PRINCIPAL" --force > /dev/null 2>&1 || true
-    icp canister settings update frontend --add-controller "$ALICE_PRINCIPAL" --force > /dev/null 2>&1 || true
+    icp canister settings update backend --add-controller "$ALICE_PRINCIPAL" --force --identity anonymous > /dev/null 2>&1 || true
+    icp canister settings update frontend --add-controller "$ALICE_PRINCIPAL" --force --identity anonymous > /dev/null 2>&1 || true
     ok "alice promoted to controller ($ALICE_PRINCIPAL)"
   else
     warn "alice identity not found; admin scripts that use --identity alice will fail"
@@ -245,7 +285,9 @@ if $DO_DEPLOY; then
   # and stores nothing, keeping the sim's oracle quiet; tests set rates
   # explicitly. On mainnet this wiring targets the REAL XRC
   # (uf6dk-hyaaa-aaaaq-qaaaq-cai) — see docs/pre-mainnet-checklist.md.
-  XRC_MOCK_ID=$(icp canister status xrc-mock --identity anonymous 2>/dev/null | awk -F': ' '/^Canister Id/{print $2; exit}' | tr -d '[:space:]')
+  # `|| true`: the mock is OPTIONAL — `icp canister status` exits non-zero when
+  # it isn't deployed, and the `if [ -n … ]` below is the intended handling.
+  XRC_MOCK_ID=$(icp canister status xrc-mock --identity anonymous 2>/dev/null | awk -F': ' '/^Canister Id/{print $2; exit}' | tr -d '[:space:]' || true)
   if [ -n "$XRC_MOCK_ID" ]; then
     icp canister call backend setXrcCanister "(opt principal \"$XRC_MOCK_ID\")" --identity anonymous > /dev/null 2>&1 || true
     ok "XRC mock wired (xrc-mock=$XRC_MOCK_ID)"
@@ -254,13 +296,18 @@ if $DO_DEPLOY; then
   # (it plays BOTH the ICP ledger and the CMC, and really deposit_cycles the
   # DEX). On mainnet this wiring targets the real ledger + CMC — see
   # docs/pre-mainnet-checklist.md.
-  FUEL_MOCK_ID=$(icp canister status fuel-mock --identity anonymous 2>/dev/null | awk -F': ' '/^Canister Id/{print $2; exit}' | tr -d '[:space:]')
+  # `|| true`: optional mock, same reasoning as XRC_MOCK_ID above.
+  FUEL_MOCK_ID=$(icp canister status fuel-mock --identity anonymous 2>/dev/null | awk -F': ' '/^Canister Id/{print $2; exit}' | tr -d '[:space:]' || true)
   if [ -n "$FUEL_MOCK_ID" ]; then
     icp canister call backend setFuelRoute "(opt principal \"$FUEL_MOCK_ID\", opt principal \"$FUEL_MOCK_ID\")" --identity anonymous > /dev/null 2>&1 || true
     # The mock forwards REAL cycles on notify_top_up, so it needs a mintable
-    # balance well above any single deposit (tests burn ~1.5T a run).
-    icp canister top-up --amount 20t fuel-mock > /dev/null 2>&1 || true
-    ok "fuel route wired (fuel-mock=$FUEL_MOCK_ID as ledger+CMC, topped 20T)"
+    # balance well above any single deposit — and the ceiling deposit is an
+    # auto-fuel tranche, AUTO_FUEL_ICP_TRANCHE (100 ICP) × 10k cycles/e8s
+    # = 100T, not the ~1.5T a test burns. At 20T that tranche was refused
+    # (pre-2026-08-06: it TRAPPED and wedged the notify saga); 120T covers
+    # one full tranche + the mock's 1T refusal margin + a suite run's burns.
+    icp canister top-up --amount 120t fuel-mock --identity anonymous > /dev/null 2>&1 || true
+    ok "fuel route wired (fuel-mock=$FUEL_MOCK_ID as ledger+CMC, topped 120T)"
   fi
   # Google (Gemini) assistant key — from GOOGLE_API_KEY env (legacy alias
   # AI_API_KEY) or the git-ignored scripts/.google-api-key (never committed).
@@ -334,36 +381,35 @@ fi
 # ── 4. Simulate (optional) ───────────────────────────────────────
 if [ "$SIMULATE" = "yes" ]; then
   hdr "Simulation"
-  log "starting scripts/simulate_trading.sh in background"
-  # Kill any stale simulator first — including orphan ones from earlier
-  # sessions that survived a previous SIGTERM. Stacking simulators is
-  # bad: each carries its own LAST_PRICES anchor that drifts independently
-  # across a long session, and the older one's stale anchor causes the
-  # canister to print trades at wildly off-market prices (e.g. ICP
-  # at $1.27 against an oracle of $2.37). SIGKILL + verification stops
-  # this cold.
-  pkill -f "simulate_trading.sh" 2>/dev/null || true
-  # Give graceful shutdown a moment, then force any survivors.
-  sleep 1
-  pkill -KILL -f "simulate_trading.sh" 2>/dev/null || true
-  # Wait up to 3s for processes to actually disappear.
-  for _ in 1 2 3 4 5 6; do
-    if ! pgrep -f "simulate_trading.sh" > /dev/null 2>&1; then break; fi
-    sleep 0.5
-  done
-  if pgrep -f "simulate_trading.sh" > /dev/null 2>&1; then
-    warn "could not kill prior simulator(s); the new one will stack — check pgrep -fl simulate_trading.sh"
-  fi
 
-  nohup bash "$SCRIPT_DIR/simulate_trading.sh" --speed fast \
-    > /tmp/uplands-sim.log 2>&1 &
-  disown
-  SIM_PID=$!
-  sleep 1
-  if kill -0 "$SIM_PID" 2>/dev/null; then
-    ok "simulator running (pid $SIM_PID, log /tmp/uplands-sim.log)"
+  # ── NO PATTERN KILLS HERE. ──
+  # This block used to be:
+  #     pkill -f "simulate_trading.sh"
+  #     pkill -KILL -f "simulate_trading.sh"
+  # which is the exact pattern scripts/lib/targets.sh and
+  # scripts/stop_local_bots.sh document as having killed the LIVE multidex.ai
+  # fleet — 2026-07-23, 2026-07-28, and again on 2026-08-01. A pattern cannot
+  # tell a local simulator from one driving the subnet: the target used to
+  # live only in IC_ENV, and environment assignments are not part of argv, so
+  # `ps` shows the same string either way. play_start.sh was migrated to the
+  # PID-file architecture; this script was missed.
+  #
+  # Bots are now started and stopped through the same wrappers play_start.sh
+  # uses. mdx_bots_stop kills by ANCESTRY from the PID recorded at launch, so
+  # "stop the local bots" is provably scoped to the local fleet and CANNOT
+  # name a process on another target. The stale-simulator problem the old
+  # comment describes (two simulators, two independently-drifting LAST_PRICES
+  # anchors, trades printing far off the oracle mark) is solved better by the
+  # PID file: mdx_bots_start REFUSES to start a second fleet while the
+  # recorded one is alive, so they cannot stack in the first place.
+  log "stopping any recorded local fleet (PID-file scoped — never by pattern)"
+  bash "$SCRIPT_DIR/stop_bots_local.sh" || warn "stop_bots_local.sh reported a problem — continuing"
+
+  log "starting the local trading fleet (scripts/start_bots_local.sh)"
+  if bash "$SCRIPT_DIR/start_bots_local.sh"; then
+    ok "local fleet running — stop it with: bash scripts/stop_bots_local.sh"
   else
-    warn "simulator exited immediately — check /tmp/uplands-sim.log"
+    warn "bot start failed — start it by hand with scripts/start_bots_local.sh"
   fi
 fi
 
@@ -395,17 +441,22 @@ if [ "$MODE" = "full" ] || [ "$MODE" = "play" ]; then
   # first non-digit to drop the type suffix. Cutting at the first "_"
   # instead would keep only the leading digit group, and the before/
   # after comparison would misread most live refreshes as "unchanged".
+  # Every call in this section is a READ-ONLY DIAGNOSTIC: a failure here means
+  # "we couldn't measure", not "the cold start failed", so each one keeps its
+  # own `|| true` and the reporting below handles the empty case. Without
+  # them, -e would turn an unreachable query into a failed bring-up AFTER the
+  # exchange was successfully deployed and seeded.
   MARKETS=(BTC-ICPUSD ETH-ICPUSD SOL-ICPUSD ICP-ICPUSD)
   PX_BEFORE=()
   for m in "${MARKETS[@]}"; do
-    POOL=$(icp canister call backend getAmmPool "(\"$m\")" 2>&1)
+    POOL=$(icp canister call backend getAmmPool "(\"$m\")" --identity anonymous 2>&1 || true)
     PX=$(echo "$POOL" | awk -F' *= *' '/refPrice / {gsub(/_/,"",$2); sub(/[^0-9].*/,"",$2); print $2; exit}')
     PX_BEFORE+=("$PX")
   done
 
   sleep 90
 
-  STATS=$(icp canister call backend getPriceFeedStats '()' 2>&1)
+  STATS=$(icp canister call backend getPriceFeedStats '()' --identity anonymous 2>&1 || true)
   SUCCESS=$(echo "$STATS" | awk -F' *= *' '/successCount/ {gsub(/_/,"",$2); sub(/[^0-9].*/,"",$2); print $2}')
   FAILURES=$(echo "$STATS" | awk -F' *= *' '/failureCount/ {gsub(/_/,"",$2); sub(/[^0-9].*/,"",$2); print $2}')
   printf "  refreshes: %s successes · %s failures\n" "${SUCCESS:-0}" "${FAILURES:-0}"
@@ -414,7 +465,7 @@ if [ "$MODE" = "full" ] || [ "$MODE" = "play" ]; then
   for i in "${!MARKETS[@]}"; do
     m="${MARKETS[$i]}"
     before="${PX_BEFORE[$i]}"
-    POOL=$(icp canister call backend getAmmPool "(\"$m\")" 2>&1)
+    POOL=$(icp canister call backend getAmmPool "(\"$m\")" --identity anonymous 2>&1 || true)
     PX_AFTER=$(echo "$POOL" | awk -F' *= *' '/refPrice / {gsub(/_/,"",$2); sub(/[^0-9].*/,"",$2); print $2; exit}')
     if [ -n "$before" ] && [ -n "$PX_AFTER" ] && [ "$before" != "$PX_AFTER" ]; then
       printf "  %-12s  %s → %s  ${GREEN}live${NC}\n" "$m" "$before" "$PX_AFTER"
@@ -426,7 +477,7 @@ if [ "$MODE" = "full" ] || [ "$MODE" = "play" ]; then
 
   if [ "$LIVE" -eq 0 ] && [ "${SUCCESS:-0}" -lt 1 ]; then
     warn "price-feed timer appears dead — no refPrice moved in 90s and no successes recorded"
-    echo "  → try directly: icp canister call backend fetchAndSetRefPrice '(\"BTC-ICPUSD\")'"
+    echo "  → try directly: icp canister call backend fetchAndSetRefPrice '(\"BTC-ICPUSD\")' --identity anonymous"
     echo "  → if that works, the outcall path is fine but the timer isn't firing (check postupgrade)"
   elif [ "$LIVE" -eq 0 ]; then
     # Prices very occasionally don't move in a 90s window — unusual
@@ -444,5 +495,7 @@ echo "  Frontend: http://frontend.local.localhost:8000/"
 echo "  Backend : http://$(icp canister list 2>/dev/null | head -1).localhost:8000/"
 echo "  Mode    : $MODE"
 # play mode's bots are launched by play_start.sh, logging to the same file.
-{ [ "$SIMULATE" = "yes" ] || [ "$MODE" = "play" ]; } && echo "  Sim log : tail -f /tmp/uplands-sim.log"
+# Both paths now launch the fleet through scripts/start_bots_local.sh, which
+# logs to the PID-file run dir (scripts/lib/targets.sh: MDX_RUN_DIR).
+{ [ "$SIMULATE" = "yes" ] || [ "$MODE" = "play" ]; } && echo "  Bot log : tail -f $MDX_RUN_DIR/bots-local.log"
 echo ""

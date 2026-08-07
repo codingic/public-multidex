@@ -53,32 +53,102 @@ UPRIN=$(icp identity principal --identity "$U" 2>/dev/null | tail -1)
 
 MARK=$(call getAmmPool "(\"$MKT\")" --query --identity anonymous | grep -oE 'refPrice = [0-9_]+' | head -1 | grep -oE '[0-9_]+' | tr -d '_')
 if [ -z "${MARK:-}" ] || [ "$MARK" = "0" ]; then
-  echo "  SKIP: $MKT has no reference price on this venue"; exit 0
+  echo "  ⊘ SKIP: $MKT has no reference price on this venue"; exit 0
 fi
 QTY=$(python3 -c "print(max(1, (20000000000 * 100000000) // $MARK))")
 HIGH=$(python3 -c "print($MARK * 50)")      # 50x — inside the 100x band, far outside 5%
 LOW=$(python3 -c "print($MARK // 50)")
 ABSURD=$(python3 -c "print($MARK * 500)")   # outside the 100x fat-finger band too
+# Largest quantity this test ever places. Defined HERE because the funding
+# below has to be sized from it — see the note on the base leg.
+QTY_LOW=$(python3 -c "print($QTY * 60)")
 echo "  market=$MKT mark=$MARK qty=$QTY"
 
 # Fund generously: a resting bid 50x above the mark reserves 50x the notional,
 # and these assertions must fail on the COLLAR, never on the balance.
+# The BASE leg is sized from QTY_LOW rather than a fixed amount because QTY
+# scales INVERSELY with the mark — on a cheap base asset QTY_LOW runs to
+# thousands of units, and the old hardcoded 50 made every sell fail on
+# insufficient balance instead of on the collar under test.
+BASE_FUND=$(python3 -c "print($QTY_LOW * 4)")
 call setTestBalance "(principal \"$UPRIN\", \"ICPUSD\", 900000000000000 : nat)" --identity anonymous >/dev/null
-call setTestBalance "(principal \"$UPRIN\", \"$BASE\", 5000000000 : nat)" --identity anonymous >/dev/null
+call setTestBalance "(principal \"$UPRIN\", \"$BASE\", $BASE_FUND : nat)" --identity anonymous >/dev/null
+
+# PRECONDITION: the book's touch must lie INSIDE the collar band.
+#
+# Two different reference points are in play, and the test is only meaningful
+# when they agree. The collar is measured from the AMM pool's refPrice
+# (priceBandCheck, main.mo), but MARKETABILITY is measured against the BOOK
+# (isMarketable → findBestMatch). If the touch sits outside refPrice ± the
+# band, then a probe at ±6% cannot cross anything, is therefore not
+# marketable, and the collar is never consulted — the assertion then fails
+# saying "not refused" when the collar was simply never reached.
+#
+# This is not hypothetical: on a #dev venue seeded by cold_start the BTC book
+# has been observed resting near $75,000 against a pool refPrice of $64,179
+# (17% apart). Nor can the test paper over it by quoting its own maker inside
+# the band — a post-only order there crosses the far-side book and is killed
+# at release, which is exactly what happens. So detect it and say so.
+# Range-based parse (`/asks = /,/}/p`), NOT the old single-line substitute-
+# print: candid pretty-prints the depth record across lines, and a parse that
+# only reads text on the `asks = vec {` line comes back empty on a multi-line
+# response — which made this precondition exit "no two-sided book" as a
+# SILENT pass on venues that had a perfectly good book.
+DEPTH=$(call getOrderBookDepth "(\"$MKT\", null)" --query --identity anonymous 2>&1 | tr -d '_')
+side_prices() { echo "$DEPTH" | sed -n "/$1 = /,/}/p" | grep -oE 'price = [0-9]+' | grep -oE '[0-9]+'; }
+BEST_ASK=$(side_prices asks | sort -n  | head -1)   # lowest ask
+BEST_BID=$(side_prices bids | sort -rn | head -1)   # highest bid
+echo "  book: best ask=${BEST_ASK:-none} best bid=${BEST_BID:-none}"
+if [ -z "${BEST_ASK:-}" ] || [ -z "${BEST_BID:-}" ]; then
+  echo "  ⊘ SKIP: $MKT has no two-sided book — the collar cannot be exercised"; exit 0
+fi
+BAND_HI=$(python3 -c "print(int($MARK * 1.05))")
+BAND_LO=$(python3 -c "print(int($MARK * 0.95))")
+if [ "$BEST_ASK" -gt "$BAND_HI" ] || [ "$BEST_BID" -lt "$BAND_LO" ]; then
+  echo "  ⊘ SKIP: $MKT book touch (bid $BEST_BID / ask $BEST_ASK) is outside the collar band"
+  echo "        [$BAND_LO..$BAND_HI] around refPrice $MARK — no ±6% probe can be marketable,"
+  echo "        so the collar is unreachable. Book and pool refPrice have diverged on this venue."
+  exit 0
+fi
+
+# crosses <price> <side> — 0 if an order at that price would execute at once.
+# Mirrors isMarketable EXACTLY rather than approximating it: a buy at P is
+# marketable <=> P >= best ask; a sell at P <=> P <= best bid. "An ask exists"
+# is NOT the condition — §1 at 50x crosses almost any ask, but §5's +6% probe
+# does not cross an ask resting higher than that, and a coarse gate would let
+# §5 through to fail for a reason the collar never promised.
+crosses() {
+  case "$2" in
+    buy)  [ -n "$BEST_ASK" ] && [ "$1" -ge "$BEST_ASK" ] ;;
+    sell) [ -n "$BEST_BID" ] && [ "$1" -le "$BEST_BID" ] ;;
+  esac
+}
 
 place()   { call placeLimitOrder   "(\"$MKT\", variant { $1 }, $2 : nat, ${3:-$QTY} : nat)" --identity "$U"; }
 placePO() { call placeLimitOrderPO "(\"$MKT\", variant { $1 }, $2 : nat, ${3:-$QTY} : nat, null)" --identity "$U"; }
-# A far-BELOW price makes the notional tiny (price x qty), so a fixed quantity
-# falls under the venue's minimum order value and is refused for THAT reason —
-# nothing to do with the collar. Scale the quantity to keep the notional
-# constant wherever the price is.
-QTY_LOW=$(python3 -c "print($QTY * 60)")
+# QTY_LOW (defined above, next to QTY) exists because a far-BELOW price makes
+# the notional tiny (price x qty), so a fixed quantity falls under the venue's
+# minimum order value and is refused for THAT reason — nothing to do with the
+# collar. Scaling the quantity keeps the notional constant wherever the price is.
 COLLAR="must be within"
 FATFINGER="likely an input error"
 
 # ── §1/§2 marketable, far from the mark → refused ──
-assert_contains "§1 marketable buy 50x ABOVE the mark is refused" "$(place buy "$HIGH")" "$COLLAR"
-assert_contains "§2 marketable sell 50x BELOW the mark is refused" "$(place sell "$LOW" "$QTY_LOW")" "$COLLAR"
+# MARKETABILITY IS A PROPERTY OF THE BOOK, not of the price: the tight collar
+# applies only to orders that would execute NOW, so each refusal assertion is
+# gated on the probe actually crossing the touch. The band precondition above
+# guarantees the ±6% probes cross; the 50x/÷50 probes additionally need the
+# relevant side to exist at all.
+if crosses "$HIGH" buy; then
+  assert_contains "§1 marketable buy 50x ABOVE the mark is refused" "$(place buy "$HIGH")" "$COLLAR"
+else
+  echo "  ⊘ §1 skipped: a buy at $HIGH does not cross the best ask (${BEST_ASK:-none}) — not marketable."
+fi
+if crosses "$LOW" sell; then
+  assert_contains "§2 marketable sell 50x BELOW the mark is refused" "$(place sell "$LOW" "$QTY_LOW")" "$COLLAR"
+else
+  echo "  ⊘ §2 skipped: a sell at $LOW does not cross the best bid (${BEST_BID:-none}) — not marketable."
+fi
 
 # ── §3/§4 resting, far from the mark → allowed ──
 # Post-only guarantees these REST (maker-or-kill), so reaching an id proves the
@@ -99,7 +169,13 @@ assert_not_contains "§5 a sell AT the mark is not collared" "$R" "$COLLAR"
 IN=$(python3 -c "print(int($MARK * 1.04))")
 OUT=$(python3 -c "print(int($MARK * 1.06))")
 assert_not_contains "§5 marketable buy +4% (inside the collar) passes" "$(place buy "$IN")" "$COLLAR"
-assert_contains     "§5 marketable buy +6% (outside) is refused"       "$(place buy "$OUT")" "$COLLAR"
+# Same book dependency as §1: +6% is only refused if it is MARKETABLE, which
+# needs a resting ask at or below it to cross.
+if crosses "$OUT" buy; then
+  assert_contains   "§5 marketable buy +6% (outside) is refused"       "$(place buy "$OUT")" "$COLLAR"
+else
+  echo "  ⊘ §5 +6% refusal skipped: a buy at $OUT does not cross the best ask (${BEST_ASK:-none})."
+fi
 
 # ── §6 the loose fat-finger band still applies to everything ──
 # 500x is outside the 100x band, so even a RESTING order is refused — and by

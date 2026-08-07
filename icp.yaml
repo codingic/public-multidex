@@ -89,7 +89,15 @@ canisters:
       configuration:
         dir: dist
         build:
-          - npm install
+          # `npm ci`, NOT `npm install`. ci installs EXACTLY what
+          # package-lock.json pins and fails if the lockfile and package.json
+          # disagree; install is free to resolve a newer semver-compatible
+          # version and to REWRITE the lockfile mid-build. Since this is the
+          # build that produces the assets served from multidex.ai, that
+          # difference is the whole supply-chain question: with `install` the
+          # committed lockfile is a suggestion, and the bytes shipped to users
+          # depend on when the deploy happened to run.
+          - npm ci
           - npm run build
     settings:
       environment_variables:

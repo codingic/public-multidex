@@ -420,6 +420,35 @@
   font-size: 11px;
   font-weight: 500;
 }
+/* Archived-history rows (Spot/Positions History, Account trades): fills
+   restored from the durable archive after the hot tape evicted them. Slightly
+   dimmed, with a small tag so restored rows are distinguishable from live. */
+.uom-row-archived { opacity: 0.82; }
+.af-tag {
+  display: inline-block;
+  font-size: 9px;
+  line-height: 1.4;
+  padding: 0 4px;
+  margin-left: 5px;
+  border: 1px solid var(--text-dim);
+  border-radius: 3px;
+  color: var(--text-dim);
+  vertical-align: 1px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+/* Inside the Markets activity panel the tag shares the 1fr "When" cell with
+   the time (the trailing 32px column is the cancel-button slot — a tag there
+   clips), so it rides compact, uom-mgn-tag sized. It sits AFTER the time, so
+   if a narrow panel ever truncates the cell it eats the decoration, not the
+   data. */
+#user-orders-mobile .af-tag {
+  font-size: 8.5px;
+  padding: 0 3px;
+  margin-left: 4px;
+  letter-spacing: 0.02em;
+}
+.af-more-row td { text-align: center; padding: 8px 0; }
 .uom-pagination {
   display: flex;
   align-items: center;

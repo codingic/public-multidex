@@ -274,6 +274,22 @@ module {
   // dust balances must never be stranded/unsellable.
   public let MIN_ORDER_ICPUSD : Nat = 1_000_000_000;    // 10.0 ICPUSD
 
+  // Max open orders resting at ONE price on one market-side. A congestion
+  // bound, not an economic one: every path that sweeps a level (a large
+  // taker, the AMM sweep, liquidation sells, deferred-expiry releases) does
+  // work proportional to the level's order count per message, so the count
+  // must not be attacker-unbounded. 512 sits well under the ~3k same-price
+  // orders measured to trap the 40B instruction limit pre-fix, and far above
+  // organic congestion at magnet prices (the per-user open-order cap is 100).
+  // REJECT-new, never evict: eviction would let a spammer displace honest
+  // makers' queue positions, while rejection denies only this exact price —
+  // one tick away is always free on the 10^-8 grid. Enforced at STAGING
+  // (LiquidityManager.validateNewOrder), so a burst staged before any of it
+  // rests can overshoot the cap by the in-flight staged cohort (bounded by
+  // the global staged shed, ~2k); the engine's per-call iteration cap is what
+  // makes any overshoot harmless.
+  public let MAX_ORDERS_PER_PRICE_LEVEL : Nat = 512;
+
   // Combined cross-market bid exposure cap = CROSS_MARKET_BID_FACTOR × cash.
   public let CROSS_MARKET_BID_FACTOR : Nat = 300_000_000;   // 3.0
 

@@ -42,12 +42,23 @@ newest_trade_px() { local v; v=$(tk getRecentTrades '("BTC-ICPUSD")' | grep -oE 
 # reach the test's far levels (by design: no wicking into stranded book). A
 # marketable limit crosses resting orders AT THE MAKER'S PRICE with no edge
 # cap, which is exactly the "which level does the index pick?" probe we need.
-# Fire, release (fresh stamp postdates the staged taker), wait for the trade,
-# echo the realized fill price in human units.
+# One bound DOES apply to the taker: a marketable limit must price within ±5%
+# of the mark (MARKETABLE_BAND_BPS = 500, 2026-07) or it is rejected at
+# placement. So the taker prices sit just inside the band edges ([47500,
+# 52500] around the 50000 ref), and every ladder level a taker must reach
+# lives inside the band too.
+# Fire (failing LOUDLY on rejection — a collared taker would otherwise burn
+# the whole wait loop), release (fresh stamp postdates the staged taker),
+# wait for the trade, echo the realized fill price in human units.
 place_and_price() {
-  local side="$1" qty="$2" prev="$3" elapsed=0 px
-  case "$side" in buy) px=60000.0 ;; sell) px=40000.0 ;; esac
-  tk placeLimitOrder "(\"BTC-ICPUSD\", variant { $side }, $(e8 "$px") : nat, $(e8 "$qty") : nat)" >/dev/null
+  local side="$1" qty="$2" prev="$3" elapsed=0 px r
+  case "$side" in buy) px=52400.0 ;; sell) px=47600.0 ;; esac
+  r=$(tk placeLimitOrder "(\"BTC-ICPUSD\", variant { $side }, $(e8 "$px") : nat, $(e8 "$qty") : nat)")
+  if ! echo "$r" | grep -q "ok = record"; then
+    echo "taker $side @ $px REJECTED: $(echo "$r" | tr '\n' ' ')" >&2
+    echo "rejected"   # deliberately non-numeric → the caller's price check fails now, not after 20s
+    return 1
+  fi
   release   # fresh stamp postdating the staged taker → it releases + crosses the book
   while [ "$elapsed" -lt 20 ]; do
     local cur; cur=$(last_trade_id)
@@ -79,9 +90,9 @@ adm setTestBalance "(principal \"$PM\", \"ICPUSD\", $(e8 5000000.0) : nat)" >/de
 
 # ── 1. Best ASK = lowest price (minEntry) ──
 echo "── 1. Taker buy crosses the LOWEST ask among several ──"
-mk placeLimitOrder "(\"BTC-ICPUSD\", variant { sell }, $(e8 60000.0) : nat, $(e8 0.1) : nat)" >/dev/null
+mk placeLimitOrder "(\"BTC-ICPUSD\", variant { sell }, $(e8 52450.0) : nat, $(e8 0.1) : nat)" >/dev/null
 mk placeLimitOrder "(\"BTC-ICPUSD\", variant { sell }, $(e8 52000.0) : nat, $(e8 0.1) : nat)" >/dev/null
-mk placeLimitOrder "(\"BTC-ICPUSD\", variant { sell }, $(e8 55000.0) : nat, $(e8 0.1) : nat)" >/dev/null
+mk placeLimitOrder "(\"BTC-ICPUSD\", variant { sell }, $(e8 52200.0) : nat, $(e8 0.1) : nat)" >/dev/null
 release   # maker asks rest on the public book
 PREV=$(last_trade_id)
 PX=$(place_and_price buy 0.05 "$PREV")
@@ -90,7 +101,7 @@ if awk -v p="$PX" 'BEGIN { exit (p>51999 && p<52001 ? 0 : 1) }'; then ok "matche
 
 # ── 2. Fully consuming the best level prunes it → next-lowest becomes touch ──
 echo ""
-echo "── 2. Exhaust the 52000 ask → next buy crosses 55000 ──"
+echo "── 2. Exhaust the 52000 ask → next buy crosses 52200 ──"
 # Step 1 left 0.05 of the 0.1 @ 52000; buy it out (full fill → the level is
 # pruned from the index via removeFromOpenIndexes, the same path cancel uses).
 # (Wait for this exhausting buy to settle before measuring the next one, so the
@@ -99,8 +110,8 @@ PREV=$(last_trade_id)
 place_and_price buy 0.05 "$PREV" >/dev/null
 PREV=$(last_trade_id)
 PX=$(place_and_price buy 0.05 "$PREV")
-echo "   filled @ $PX (expect 55000)"
-if awk -v p="$PX" 'BEGIN { exit (p>54999 && p<55001 ? 0 : 1) }'; then ok "index advanced to next-lowest after the best level was fully filled"; else nok "did not advance correctly" "avgPrice=$PX"; fi
+echo "   filled @ $PX (expect 52200)"
+if awk -v p="$PX" 'BEGIN { exit (p>52199 && p<52201 ? 0 : 1) }'; then ok "index advanced to next-lowest after the best level was fully filled"; else nok "did not advance correctly" "avgPrice=$PX"; fi
 
 # ── 3. Best BID = highest price (maxEntry) ──
 echo ""

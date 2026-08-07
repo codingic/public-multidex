@@ -1,311 +1,807 @@
 {
  "phase": 1,
- "asOf": "2026-08-01 02:40 UTC",
- "totalRanked": 1442,
+ "asOf": "2026-08-01 04:58 UTC (Phase I close \u2014 sealed on-chain)",
+ "totalRanked": 1366,
  "rows": [
   {
    "rank": 1,
    "username": "Swift-Lynx-80",
-   "profitUsd": 410729.23,
-   "returnBps": 45104,
+   "profitUsd": 411481.28,
+   "returnBps": 45112,
    "feeLevel": 3,
    "badgeCount": 9
   },
   {
    "rank": 2,
    "username": "Noble-Falcon-95",
-   "profitUsd": 392092.19,
-   "returnBps": 39209,
+   "profitUsd": 392808.61,
+   "returnBps": 39280,
    "feeLevel": 3,
    "badgeCount": 9
   },
   {
    "rank": 3,
    "username": "Bold-Phoenix-59",
-   "profitUsd": 216660.46,
-   "returnBps": 21666,
+   "profitUsd": 216907.31,
+   "returnBps": 21690,
    "feeLevel": 3,
    "badgeCount": 9
   },
   {
    "rank": 4,
    "username": "Calm-Shark-96",
-   "profitUsd": 69570.95,
-   "returnBps": 6957,
+   "profitUsd": 155519.1,
+   "returnBps": 15551,
    "feeLevel": 2,
    "badgeCount": 4
   },
   {
    "rank": 5,
    "username": "Frost-Fox-88",
-   "profitUsd": 59664.46,
-   "returnBps": 6031,
+   "profitUsd": 139857.15,
+   "returnBps": 14133,
    "feeLevel": 2,
    "badgeCount": 4
   },
   {
    "rank": 6,
    "username": "Silver-Stag-27",
-   "profitUsd": 58182.86,
-   "returnBps": 5999,
+   "profitUsd": 134102.74,
+   "returnBps": 13816,
    "feeLevel": 0,
    "badgeCount": 2
   },
   {
    "rank": 7,
-   "username": "Iron-Heron-83",
-   "profitUsd": 57173.61,
-   "returnBps": 6042,
-   "feeLevel": 3,
-   "badgeCount": 9
+   "username": "Amber-Otter-88",
+   "profitUsd": 133330.4,
+   "returnBps": 13333,
+   "feeLevel": 1,
+   "badgeCount": 3
   },
   {
    "rank": 8,
    "username": "Wild-Moose-91",
-   "profitUsd": 57050.33,
-   "returnBps": 5955,
+   "profitUsd": 128824.31,
+   "returnBps": 13436,
    "feeLevel": 0,
    "badgeCount": 2
   },
   {
    "rank": 9,
-   "username": "Amber-Otter-88",
-   "profitUsd": 54867.57,
-   "returnBps": 5486,
+   "username": "Deep-Viper-54",
+   "profitUsd": 125265.3,
+   "returnBps": 12734,
    "feeLevel": 1,
    "badgeCount": 3
   },
   {
    "rank": 10,
-   "username": "Deep-Viper-54",
-   "profitUsd": 50148.04,
-   "returnBps": 5099,
-   "feeLevel": 1,
-   "badgeCount": 3
+   "username": "Wise-Nebula-37",
+   "profitUsd": 107246.47,
+   "returnBps": 10809,
+   "feeLevel": 0,
+   "badgeCount": 2
   },
   {
    "rank": 11,
-   "username": "Calm-Shark-21",
-   "profitUsd": 41387.72,
-   "returnBps": 4233,
+   "username": "Wild-Moose-81",
+   "profitUsd": 103736.69,
+   "returnBps": 10722,
    "feeLevel": 1,
    "badgeCount": 3
   },
   {
    "rank": 12,
-   "username": "Brave-Raven-25",
-   "profitUsd": 40121.88,
-   "returnBps": 4012,
-   "feeLevel": 2,
-   "badgeCount": 3
-  },
-  {
-   "rank": 13,
-   "username": "Dusty-Warden-15",
-   "profitUsd": 38781.64,
-   "returnBps": 3878,
+   "username": "Lone-Moose-61",
+   "profitUsd": 101553.47,
+   "returnBps": 10155,
    "feeLevel": 1,
    "badgeCount": 3
   },
   {
+   "rank": 13,
+   "username": "Silent-Shark-63",
+   "profitUsd": 97023.99,
+   "returnBps": 9702,
+   "feeLevel": 2,
+   "badgeCount": 7
+  },
+  {
    "rank": 14,
-   "username": "Wise-Nebula-37",
-   "profitUsd": 38193.84,
-   "returnBps": 3850,
-   "feeLevel": 0,
-   "badgeCount": 2
+   "username": "Brave-Raven-25",
+   "profitUsd": 95934.95,
+   "returnBps": 9593,
+   "feeLevel": 2,
+   "badgeCount": 3
   },
   {
    "rank": 15,
-   "username": "Wild-Moose-81",
-   "profitUsd": 37647.19,
-   "returnBps": 3893,
+   "username": "Dusty-Warden-15",
+   "profitUsd": 95428.56,
+   "returnBps": 9542,
    "feeLevel": 1,
    "badgeCount": 3
   },
   {
    "rank": 16,
-   "username": "Brave-Raven-80",
-   "profitUsd": 36095.76,
-   "returnBps": 3775,
-   "feeLevel": 2,
-   "badgeCount": 3
-  },
-  {
-   "rank": 17,
-   "username": "Lone-Moose-61",
-   "profitUsd": 33760.27,
-   "returnBps": 3376,
-   "feeLevel": 1,
-   "badgeCount": 3
-  },
-  {
-   "rank": 18,
-   "username": "Silent-Shark-23",
-   "profitUsd": 33733.12,
-   "returnBps": 3352,
-   "feeLevel": 3,
-   "badgeCount": 9
-  },
-  {
-   "rank": 19,
    "username": "Calm-Bear-76",
-   "profitUsd": 32784.46,
-   "returnBps": 3265,
+   "profitUsd": 95204.68,
+   "returnBps": 9481,
    "feeLevel": 0,
    "badgeCount": 4
   },
   {
-   "rank": 20,
-   "username": "Bold-Phoenix-34",
-   "profitUsd": 32180.76,
-   "returnBps": 3285,
+   "rank": 17,
+   "username": "Dark-Crane-11",
+   "profitUsd": 91236.67,
+   "returnBps": 9330,
+   "feeLevel": 2,
+   "badgeCount": 3
+  },
+  {
+   "rank": 18,
+   "username": "Calm-Shark-21",
+   "profitUsd": 90949.91,
+   "returnBps": 9300,
    "feeLevel": 1,
    "badgeCount": 3
   },
   {
-   "rank": 21,
-   "username": "Dark-Crane-11",
-   "profitUsd": 31559.28,
-   "returnBps": 3229,
+   "rank": 19,
+   "username": "Fierce-Wraith-22",
+   "profitUsd": 88480.16,
+   "returnBps": 8848,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 20,
+   "username": "Brave-Raven-80",
+   "profitUsd": 82062.91,
+   "returnBps": 8577,
    "feeLevel": 2,
    "badgeCount": 3
   },
   {
+   "rank": 21,
+   "username": "Cosmic-Buck-55",
+   "profitUsd": 81623.2,
+   "returnBps": 8179,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
    "rank": 22,
-   "username": "Silent-Shark-63",
-   "profitUsd": 30774.77,
-   "returnBps": 3077,
-   "feeLevel": 2,
-   "badgeCount": 7
+   "username": "Wild-Viper-91",
+   "profitUsd": 80116.6,
+   "returnBps": 8083,
+   "feeLevel": 1,
+   "badgeCount": 3
   },
   {
    "rank": 23,
-   "username": "Amber-Wolf-76",
-   "profitUsd": 30378.2,
-   "returnBps": 3138,
+   "username": "Bold-Phoenix-34",
+   "profitUsd": 77809.44,
+   "returnBps": 7939,
    "feeLevel": 1,
    "badgeCount": 3
   },
   {
    "rank": 24,
-   "username": "Keen-Crow-37",
-   "profitUsd": 29040.83,
-   "returnBps": 3189,
-   "feeLevel": 1,
+   "username": "Wild-Viper-76",
+   "profitUsd": 67761.98,
+   "returnBps": 6820,
+   "feeLevel": 2,
    "badgeCount": 3
   },
   {
    "rank": 25,
-   "username": "Wild-Moose-21",
-   "profitUsd": 26995.31,
-   "returnBps": 2699,
-   "feeLevel": 4,
-   "badgeCount": 9
+   "username": "Amber-Wolf-76",
+   "profitUsd": 66455.65,
+   "returnBps": 6862,
+   "feeLevel": 1,
+   "badgeCount": 3
   },
   {
    "rank": 26,
-   "username": "Wild-Viper-91",
-   "profitUsd": 26955.25,
-   "returnBps": 2719,
-   "feeLevel": 1,
-   "badgeCount": 3
+   "username": "Fair-Eagle-56",
+   "profitUsd": 62984.05,
+   "returnBps": 6445,
+   "feeLevel": 0,
+   "badgeCount": 1
   },
   {
    "rank": 27,
-   "username": "Fierce-Wraith-22",
-   "profitUsd": 25498.81,
-   "returnBps": 2549,
-   "feeLevel": 1,
-   "badgeCount": 3
+   "username": "Silent-Heron-43",
+   "profitUsd": 59521.38,
+   "returnBps": 6493,
+   "feeLevel": 2,
+   "badgeCount": 5
   },
   {
    "rank": 28,
-   "username": "Cosmic-Buck-55",
-   "profitUsd": 23640.04,
-   "returnBps": 2368,
-   "feeLevel": 1,
-   "badgeCount": 3
+   "username": "Iron-Heron-83",
+   "profitUsd": 57183.92,
+   "returnBps": 6042,
+   "feeLevel": 3,
+   "badgeCount": 9
   },
   {
    "rank": 29,
-   "username": "Wild-Viper-76",
-   "profitUsd": 23624.2,
-   "returnBps": 2378,
-   "feeLevel": 2,
+   "username": "Keen-Crow-37",
+   "profitUsd": 53096.85,
+   "returnBps": 5820,
+   "feeLevel": 1,
    "badgeCount": 3
   },
   {
    "rank": 30,
    "username": "Dark-Crane-16",
-   "profitUsd": 22896.32,
-   "returnBps": 2330,
+   "profitUsd": 50607.0,
+   "returnBps": 5150,
    "feeLevel": 1,
    "badgeCount": 3
   },
   {
    "rank": 31,
-   "username": "Fair-Eagle-56",
-   "profitUsd": 20589.07,
-   "returnBps": 2107,
-   "feeLevel": 0,
-   "badgeCount": 1
+   "username": "Mystic-Nebula-12",
+   "profitUsd": 49978.52,
+   "returnBps": 5143,
+   "feeLevel": 1,
+   "badgeCount": 3
   },
   {
    "rank": 32,
-   "username": "Brave-Wren-48",
-   "profitUsd": 20384.33,
-   "returnBps": 2084,
+   "username": "Noble-Otter-73",
+   "profitUsd": 48881.69,
+   "returnBps": 5030,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 33,
+   "username": "Dark-Crane-68",
+   "profitUsd": 47392.42,
+   "returnBps": 4773,
    "feeLevel": 0,
    "badgeCount": 1
   },
   {
-   "rank": 33,
-   "username": "Iron-Heron-48",
-   "profitUsd": 18037.75,
-   "returnBps": 1803,
-   "feeLevel": 3,
-   "badgeCount": 9
-  },
-  {
    "rank": 34,
-   "username": "Mystic-Nebula-12",
-   "profitUsd": 16772.41,
-   "returnBps": 1726,
-   "feeLevel": 1,
-   "badgeCount": 3
-  },
-  {
-   "rank": 35,
-   "username": "Fair-Eagle-64",
-   "profitUsd": 16629.1,
-   "returnBps": 1689,
-   "feeLevel": 1,
-   "badgeCount": 3
-  },
-  {
-   "rank": 36,
    "username": "Fair-Eagle-31",
-   "profitUsd": 15688.56,
-   "returnBps": 1568,
+   "profitUsd": 46436.97,
+   "returnBps": 4643,
    "feeLevel": 0,
    "badgeCount": 2
   },
   {
+   "rank": 35,
+   "username": "Brave-Wren-48",
+   "profitUsd": 46346.34,
+   "returnBps": 4739,
+   "feeLevel": 0,
+   "badgeCount": 1
+  },
+  {
+   "rank": 36,
+   "username": "Fair-Eagle-64",
+   "profitUsd": 43893.7,
+   "returnBps": 4457,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
    "rank": 37,
    "username": "Dark-Tiger-93",
-   "profitUsd": 15533.72,
-   "returnBps": 1591,
+   "profitUsd": 43628.47,
+   "returnBps": 4468,
    "feeLevel": 2,
    "badgeCount": 5
   },
   {
    "rank": 38,
    "username": "Cosmic-Buck-85",
-   "profitUsd": 15251.09,
-   "returnBps": 1525,
+   "profitUsd": 42414.3,
+   "returnBps": 4241,
    "feeLevel": 1,
    "badgeCount": 3
+  },
+  {
+   "rank": 39,
+   "username": "Silent-Shark-23",
+   "profitUsd": 33740.53,
+   "returnBps": 3352,
+   "feeLevel": 3,
+   "badgeCount": 9
+  },
+  {
+   "rank": 40,
+   "username": "Iron-Buck-50",
+   "profitUsd": 32716.0,
+   "returnBps": 3271,
+   "feeLevel": 2,
+   "badgeCount": 5
+  },
+  {
+   "rank": 41,
+   "username": "Cosmic-Stag-47",
+   "profitUsd": 31674.79,
+   "returnBps": 4045,
+   "feeLevel": 0,
+   "badgeCount": 1
+  },
+  {
+   "rank": 42,
+   "username": "Calm-Bear-51",
+   "profitUsd": 31452.97,
+   "returnBps": 3145,
+   "feeLevel": 2,
+   "badgeCount": 3
+  },
+  {
+   "rank": 43,
+   "username": "Deep-Viper-49",
+   "profitUsd": 28351.14,
+   "returnBps": 2823,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 44,
+   "username": "Wild-Moose-21",
+   "profitUsd": 27121.82,
+   "returnBps": 2712,
+   "feeLevel": 4,
+   "badgeCount": 9
+  },
+  {
+   "rank": 45,
+   "username": "Fair-Wolf-51",
+   "profitUsd": 27016.75,
+   "returnBps": 2827,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 46,
+   "username": "Noble-Otter-68",
+   "profitUsd": 24790.41,
+   "returnBps": 2479,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 47,
+   "username": "Cosmic-Buck-70",
+   "profitUsd": 24548.6,
+   "returnBps": 2520,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 48,
+   "username": "Fierce-Wraith-22",
+   "profitUsd": 23782.81,
+   "returnBps": 2491,
+   "feeLevel": 2,
+   "badgeCount": 3
+  },
+  {
+   "rank": 49,
+   "username": "Noble-Falcon-35",
+   "profitUsd": 20800.63,
+   "returnBps": 2080,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 50,
+   "username": "Dusty-Warden-50",
+   "profitUsd": 19328.03,
+   "returnBps": 1932,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 51,
+   "username": "Noble-Otter-48",
+   "profitUsd": 19118.24,
+   "returnBps": 1948,
+   "feeLevel": 0,
+   "badgeCount": 2
+  },
+  {
+   "rank": 52,
+   "username": "Brave-Raven-30",
+   "profitUsd": 18570.22,
+   "returnBps": 1857,
+   "feeLevel": 2,
+   "badgeCount": 3
+  },
+  {
+   "rank": 53,
+   "username": "Mystic-Nebula-67",
+   "profitUsd": 18213.37,
+   "returnBps": 1809,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 54,
+   "username": "Iron-Heron-48",
+   "profitUsd": 18044.75,
+   "returnBps": 1804,
+   "feeLevel": 3,
+   "badgeCount": 9
+  },
+  {
+   "rank": 55,
+   "username": "Pure-Phoenix-66",
+   "profitUsd": 17757.37,
+   "returnBps": 1778,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 56,
+   "username": "Iron-Heron-40",
+   "profitUsd": 17442.35,
+   "returnBps": 5271,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 57,
+   "username": "Brave-Wren-43",
+   "profitUsd": 16130.7,
+   "returnBps": 1649,
+   "feeLevel": 3,
+   "badgeCount": 7
+  },
+  {
+   "rank": 58,
+   "username": "Gold-Bear-39",
+   "profitUsd": 15370.28,
+   "returnBps": 1562,
+   "feeLevel": 2,
+   "badgeCount": 3
+  },
+  {
+   "rank": 59,
+   "username": "Calm-Shark-51",
+   "profitUsd": 15055.66,
+   "returnBps": 1505,
+   "feeLevel": 1,
+   "badgeCount": 5
+  },
+  {
+   "rank": 60,
+   "username": "Frost-Fox-43",
+   "profitUsd": 14595.08,
+   "returnBps": 1492,
+   "feeLevel": 3,
+   "badgeCount": 9
+  },
+  {
+   "rank": 61,
+   "username": "Swift-Lynx-65",
+   "profitUsd": 14515.7,
+   "returnBps": 1484,
+   "feeLevel": 3,
+   "badgeCount": 9
+  },
+  {
+   "rank": 62,
+   "username": "Deep-Viper-14",
+   "profitUsd": 14199.02,
+   "returnBps": 2250,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 63,
+   "username": "Pure-Phoenix-84",
+   "profitUsd": 13888.35,
+   "returnBps": 1458,
+   "feeLevel": 0,
+   "badgeCount": 3
+  },
+  {
+   "rank": 64,
+   "username": "Lone-Moose-66",
+   "profitUsd": 13875.41,
+   "returnBps": 1387,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 65,
+   "username": "Lone-Moose-21",
+   "profitUsd": 13739.04,
+   "returnBps": 1373,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 66,
+   "username": "Quick-Hawk-27",
+   "profitUsd": 12199.55,
+   "returnBps": 1240,
+   "feeLevel": 2,
+   "badgeCount": 3
+  },
+  {
+   "rank": 67,
+   "username": "Pure-Fox-11",
+   "profitUsd": 11715.26,
+   "returnBps": 1195,
+   "feeLevel": 3,
+   "badgeCount": 7
+  },
+  {
+   "rank": 68,
+   "username": "Noble-Otter-75",
+   "profitUsd": 11440.22,
+   "returnBps": 1172,
+   "feeLevel": 2,
+   "badgeCount": 7
+  },
+  {
+   "rank": 69,
+   "username": "Jade-Crane-31",
+   "profitUsd": 11374.54,
+   "returnBps": 1349,
+   "feeLevel": 0,
+   "badgeCount": 1
+  },
+  {
+   "rank": 70,
+   "username": "Dusty-Drake-83",
+   "profitUsd": 11345.79,
+   "returnBps": 1167,
+   "feeLevel": 2,
+   "badgeCount": 6
+  },
+  {
+   "rank": 71,
+   "username": "Silent-Shark-51",
+   "profitUsd": 10586.69,
+   "returnBps": 1076,
+   "feeLevel": 2,
+   "badgeCount": 6
+  },
+  {
+   "rank": 72,
+   "username": "Lone-Moose-96",
+   "profitUsd": 10509.04,
+   "returnBps": 1050,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 73,
+   "username": "Fierce-Falcon-10",
+   "profitUsd": 10393.51,
+   "returnBps": 1039,
+   "feeLevel": 0,
+   "badgeCount": 2
+  },
+  {
+   "rank": 74,
+   "username": "Jade-Crane-91",
+   "profitUsd": 10123.99,
+   "returnBps": 1036,
+   "feeLevel": 2,
+   "badgeCount": 4
+  },
+  {
+   "rank": 75,
+   "username": "Brave-Wren-53",
+   "profitUsd": 9994.29,
+   "returnBps": 1023,
+   "feeLevel": 3,
+   "badgeCount": 7
+  },
+  {
+   "rank": 76,
+   "username": "Jade-Horse-39",
+   "profitUsd": 9773.89,
+   "returnBps": 1002,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 77,
+   "username": "Dark-Crane-56",
+   "profitUsd": 9677.16,
+   "returnBps": 967,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 78,
+   "username": "Frost-Fox-11",
+   "profitUsd": 9566.68,
+   "returnBps": 1010,
+   "feeLevel": 3,
+   "badgeCount": 9
+  },
+  {
+   "rank": 79,
+   "username": "Swift-Tiger-98",
+   "profitUsd": 9536.52,
+   "returnBps": 1045,
+   "feeLevel": 2,
+   "badgeCount": 4
+  },
+  {
+   "rank": 80,
+   "username": "Dusty-Warden-75",
+   "profitUsd": 8935.62,
+   "returnBps": 893,
+   "feeLevel": 0,
+   "badgeCount": 3
+  },
+  {
+   "rank": 81,
+   "username": "Dusty-Warden-35",
+   "profitUsd": 8694.34,
+   "returnBps": 956,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 82,
+   "username": "Cosmic-Buck-20",
+   "profitUsd": 8454.32,
+   "returnBps": 907,
+   "feeLevel": 0,
+   "badgeCount": 3
+  },
+  {
+   "rank": 83,
+   "username": "Amber-Wolf-73",
+   "profitUsd": 7901.05,
+   "returnBps": 817,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 84,
+   "username": "Noble-Falcon-55",
+   "profitUsd": 7899.11,
+   "returnBps": 808,
+   "feeLevel": 2,
+   "badgeCount": 4
+  },
+  {
+   "rank": 85,
+   "username": "Quick-Hawk-92",
+   "profitUsd": 6742.01,
+   "returnBps": 674,
+   "feeLevel": 2,
+   "badgeCount": 6
+  },
+  {
+   "rank": 86,
+   "username": "Mystic-Eagle-24",
+   "profitUsd": 6489.59,
+   "returnBps": 663,
+   "feeLevel": 2,
+   "badgeCount": 4
+  },
+  {
+   "rank": 87,
+   "username": "Silver-Stag-97",
+   "profitUsd": 6476.39,
+   "returnBps": 778,
+   "feeLevel": 0,
+   "badgeCount": 1
+  },
+  {
+   "rank": 88,
+   "username": "Dusty-Drake-73",
+   "profitUsd": 6383.71,
+   "returnBps": 638,
+   "feeLevel": 2,
+   "badgeCount": 4
+  },
+  {
+   "rank": 89,
+   "username": "Lone-Moose-46",
+   "profitUsd": 6243.81,
+   "returnBps": 670,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 90,
+   "username": "Pure-Phoenix-41",
+   "profitUsd": 5774.3,
+   "returnBps": 633,
+   "feeLevel": 2,
+   "badgeCount": 3
+  },
+  {
+   "rank": 91,
+   "username": "Mystic-Eagle-14",
+   "profitUsd": 5488.65,
+   "returnBps": 565,
+   "feeLevel": 3,
+   "badgeCount": 9
+  },
+  {
+   "rank": 92,
+   "username": "Iron-Heron-78",
+   "profitUsd": 5454.02,
+   "returnBps": 545,
+   "feeLevel": 2,
+   "badgeCount": 6
+  },
+  {
+   "rank": 93,
+   "username": "Swift-Tiger-60",
+   "profitUsd": 5385.09,
+   "returnBps": 579,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 94,
+   "username": "Quick-Hawk-37",
+   "profitUsd": 5354.25,
+   "returnBps": 550,
+   "feeLevel": 2,
+   "badgeCount": 4
+  },
+  {
+   "rank": 95,
+   "username": "Deep-Crow-54",
+   "profitUsd": 5304.45,
+   "returnBps": 646,
+   "feeLevel": 1,
+   "badgeCount": 3
+  },
+  {
+   "rank": 96,
+   "username": "Jade-Crane-16",
+   "profitUsd": 5261.86,
+   "returnBps": 995,
+   "feeLevel": 2,
+   "badgeCount": 4
+  },
+  {
+   "rank": 97,
+   "username": "Gold-Hawk-34",
+   "profitUsd": 5100.09,
+   "returnBps": 524,
+   "feeLevel": 2,
+   "badgeCount": 3
+  },
+  {
+   "rank": 98,
+   "username": "Wise-Nebula-72",
+   "profitUsd": 4965.33,
+   "returnBps": 496,
+   "feeLevel": 2,
+   "badgeCount": 6
+  },
+  {
+   "rank": 99,
+   "username": "Keen-Lynx-50",
+   "profitUsd": 4943.26,
+   "returnBps": 494,
+   "feeLevel": 2,
+   "badgeCount": 6
+  },
+  {
+   "rank": 100,
+   "username": "Dark-Crane-31",
+   "profitUsd": 4813.65,
+   "returnBps": 625,
+   "feeLevel": 2,
+   "badgeCount": 5
   }
  ]
 }

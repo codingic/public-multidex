@@ -5,6 +5,7 @@ import Fixed "Fixed";
 import Int "mo:core/Int";
 import Iter "mo:core/Iter";
 import Option "mo:core/Option";
+import Order "mo:core/Order";
 import Principal "mo:core/Principal";
 import Text "mo:core/Text";
 import Types "Types";
@@ -20,12 +21,22 @@ module {
     // ── Secondary indexes ──────────────────────────────────────────
     openOrdersByMarketSide : Map.Map<Text, Map.Map<Nat, Bool>>;  // "MARKET:side" → {orderId}
     // Price-ordered level index per market-side: "MARKET:side" → (price →
-    // {orderId}). mo:core Map is a sorted tree, so the touch is the min
-    // (asks) / max (bids) key — giving O(log N) best-price lookup instead
-    // of an O(N) linear scan over every resting order (the bottleneck that
-    // let a growing book peg the canister). Maintained alongside
+    // {(timestamp, orderId)}). mo:core Map is a sorted tree, so the touch is
+    // the min (asks) / max (bids) key — giving O(log N) best-price lookup
+    // instead of an O(N) linear scan over every resting order (the bottleneck
+    // that let a growing book peg the canister). Maintained alongside
     // openOrdersByMarketSide in add/removeFromOpenIndexes.
-    levelsByMarketSide     : Map.Map<Text, Map.Map<Nat, Map.Map<Nat, Bool>>>;
+    //
+    // The INNER set is keyed by (timestamp, id) — the book's time-priority
+    // order — so the level's FIRST entry IS its priority head and
+    // findBestMatchExcluding reads it in O(log K) instead of walking all K
+    // same-price orders per call. That walk made a taker sweeping a level
+    // O(K²), which is what let ~3k orders stacked at ONE price trap the
+    // 40B-instruction limit (the measured processDeferredExpiry wedge).
+    // Keying by id alone can't replace it: a staged order rests under a
+    // FRESH id at release but keeps its SUBMISSION timestamp, so id order
+    // and time-priority order genuinely diverge within a level.
+    levelsByMarketSide     : Map.Map<Text, Map.Map<Nat, Map.Map<(Int, Nat), Bool>>>;
     tradesByMarket         : Map.Map<Text, List.List<Types.Trade>>;
     openOrdersByUser       : Map.Map<Text, Map.Map<Nat, Bool>>;  // principal text → {orderId}
     // Aggregated depth per market-side: "MARKET:side" → (price → (remaining
@@ -86,7 +97,7 @@ module {
       var nextTradeId = 1;
       trades = List.empty<Types.Trade>();
       openOrdersByMarketSide = Map.empty<Text, Map.Map<Nat, Bool>>();
-      levelsByMarketSide     = Map.empty<Text, Map.Map<Nat, Map.Map<Nat, Bool>>>();
+      levelsByMarketSide     = Map.empty<Text, Map.Map<Nat, Map.Map<(Int, Nat), Bool>>>();
       tradesByMarket         = Map.empty<Text, List.List<Types.Trade>>();
       openOrdersByUser       = Map.empty<Text, Map.Map<Nat, Bool>>();
       levelAggByMarketSide   = Map.empty<Text, Map.Map<Nat, (Nat, Nat)>>();
@@ -109,6 +120,18 @@ module {
 
   func userMarketKey(user : Principal, marketId : Types.MarketId) : Text {
     Principal.toText(user) # "|" # marketId;
+  };
+
+  // Time-priority order for a level's inner set: earliest submission
+  // timestamp first, id as the tie-break (ids are unique, so keys are too).
+  // This is EXACTLY the priority findBestMatchExcluding used to compute by
+  // walking the whole level — encoded in the key so the head is O(log K).
+  // Public: the upgrade migration rebuilds level maps with it.
+  public func levelKeyCompare(a : (Int, Nat), b : (Int, Nat)) : Order.Order {
+    switch (Int.compare(a.0, b.0)) {
+      case (#equal) { Nat.compare(a.1, b.1) };
+      case (other)  { other };
+    };
   };
 
   // ── Incremental aggregate maintenance ──────────────────────────
@@ -174,16 +197,17 @@ module {
     Map.add(msSet, Nat.compare, order.id, true);
     Map.add(store.openOrdersByMarketSide, Text.compare, msKey, msSet);
 
-    // Price-level index (ordered by price → O(log N) best-price lookup).
+    // Price-level index (ordered by price → O(log N) best-price lookup;
+    // inner set ordered by (timestamp, id) → O(log K) time-priority head).
     let lvls = switch (Map.get(store.levelsByMarketSide, Text.compare, msKey)) {
-      case null { Map.empty<Nat, Map.Map<Nat, Bool>>() };
+      case null { Map.empty<Nat, Map.Map<(Int, Nat), Bool>>() };
       case (?m) { m };
     };
     let lvl = switch (Map.get(lvls, Nat.compare, order.price)) {
-      case null { Map.empty<Nat, Bool>() };
+      case null { Map.empty<(Int, Nat), Bool>() };
       case (?s) { s };
     };
-    Map.add(lvl, Nat.compare, order.id, true);
+    Map.add(lvl, levelKeyCompare, (order.timestamp, order.id), true);
     Map.add(lvls, Nat.compare, order.price, lvl);
     Map.add(store.levelsByMarketSide, Text.compare, msKey, lvls);
 
@@ -213,15 +237,18 @@ module {
       };
     };
 
-    // Price-level index — remove the id and prune the level if now empty
-    // (so minEntry/maxEntry never land on an empty price).
+    // Price-level index — remove the entry and prune the level if now empty
+    // (so minEntry/maxEntry never land on an empty price). The key is
+    // reconstructible because timestamp and id are immutable for the life of
+    // an order (fills/adjusts touch quantity and status only), and callers
+    // pass the pre-mutation record.
     switch (Map.get(store.levelsByMarketSide, Text.compare, msKey)) {
       case null {};
       case (?lvls) {
         switch (Map.get(lvls, Nat.compare, order.price)) {
           case null {};
           case (?lvl) {
-            ignore Map.delete(lvl, Nat.compare, order.id);
+            ignore Map.delete(lvl, levelKeyCompare, (order.timestamp, order.id));
             if (Map.size(lvl) == 0) {
               ignore Map.delete(lvls, Nat.compare, order.price);
             } else {
@@ -233,13 +260,25 @@ module {
       };
     };
 
-    // User index
+    // User index — remove the id and prune the OUTER entry once the user's
+    // last open order leaves, exactly as the price-level index does above.
+    // Without the prune the map keeps an (empty) entry for every principal
+    // that has EVER placed an order, for the life of the canister: unbounded
+    // growth in the upgrade-carried heap, and an ever-longer full-map walk
+    // for main.mo's sweepStaleUserOrders and tickTier, which both iterate it
+    // whole. Nothing reads an empty entry — every accessor here reports the
+    // same 0/[] for "absent" and "present but empty", and rebuildIndexes
+    // already reconstructs the map without them.
     let userKey = Principal.toText(order.owner);
     switch (Map.get(store.openOrdersByUser, Text.compare, userKey)) {
       case null {};
       case (?s) {
         ignore Map.delete(s, Nat.compare, order.id);
-        Map.add(store.openOrdersByUser, Text.compare, userKey, s);
+        if (Map.size(s) == 0) {
+          ignore Map.delete(store.openOrdersByUser, Text.compare, userKey);
+        } else {
+          Map.add(store.openOrdersByUser, Text.compare, userKey, s);
+        };
       };
     };
 
@@ -274,6 +313,38 @@ module {
       };
       List.add(mList, t);
       Map.add(store.tradesByMarket, Text.compare, t.marketId, mList);
+    };
+  };
+
+  // Rebuild ONLY the price-level index from master data. O(open orders × log)
+  // — bounded by the resting book, never by the trade tape, so unlike the full
+  // rebuildIndexes it is safe inside an upgrade. Built as the worker for the
+  // retired one-shot (timestamp, id) re-key migration (applied to every
+  // target 2026-08-07); kept because the unit suite pins its reconstruction
+  // and any future level-map migration will need exactly this.
+  public func rebuildLevelIndex(store : OrderStore) {
+    Map.clear(store.levelsByMarketSide);
+    for ((_, o) in Map.entries(store.orders)) {
+      if (isOpen(o)) {
+        let msKey = marketSideKey(o.marketId, o.side);
+        let lvls = switch (Map.get(store.levelsByMarketSide, Text.compare, msKey)) {
+          case null {
+            let m = Map.empty<Nat, Map.Map<(Int, Nat), Bool>>();
+            Map.add(store.levelsByMarketSide, Text.compare, msKey, m);
+            m;
+          };
+          case (?m) { m };
+        };
+        let lvl = switch (Map.get(lvls, Nat.compare, o.price)) {
+          case null {
+            let s = Map.empty<(Int, Nat), Bool>();
+            Map.add(lvls, Nat.compare, o.price, s);
+            s;
+          };
+          case (?s) { s };
+        };
+        Map.add(lvl, levelKeyCompare, (o.timestamp, o.id), true);
+      };
     };
   };
 
@@ -438,9 +509,13 @@ module {
     };
     label scan for ((_price, lvl) in levelIter) {
       // Within a level all orders share the price → pure time priority
-      // (earliest timestamp, id as tie-break). Skip excluded/closed ids.
-      var best : ?Types.Order = null;
-      for ((id, _) in Map.entries(lvl)) {
+      // (earliest timestamp, id as tie-break) — which is the inner set's KEY
+      // ORDER, so the first non-excluded open entry IS the level's best.
+      // Cost: O(log K + entries skipped), not the O(K) full-level walk that
+      // made a taker sweeping K same-price makers quadratic. Skipped entries
+      // are excluded ids (pending-locked / non-takeable / self makers the
+      // engine already passed over) plus the defensive closed/missing check.
+      for (((_ts, id), _) in Map.entries(lvl)) {
         let excluded = switch (excludeIds) {
           case null { false };
           case (?set) { Option.isSome(Map.get(set, Nat.compare, id)) };
@@ -448,22 +523,11 @@ module {
         if (not excluded) {
           switch (Map.get(store.orders, Nat.compare, id)) {
             case null {};
-            case (?o) {
-              if (isOpen(o)) {
-                switch (best) {
-                  case null { best := ?o };
-                  case (?b) {
-                    if (o.timestamp < b.timestamp or (o.timestamp == b.timestamp and o.id < b.id)) {
-                      best := ?o;
-                    };
-                  };
-                };
-              };
-            };
+            case (?o) { if (isOpen(o)) { return ?o } };
           };
         };
       };
-      switch (best) { case (?o) { return ?o }; case null {} }; // level empty/excluded → next
+      // level exhausted (all excluded/closed) → next-best price
     };
     null;
   };
@@ -510,6 +574,17 @@ module {
     switch (Map.get(store.openOrdersByUser, Text.compare, Principal.toText(user))) {
       case null { 0 };
       case (?s) { Map.size(s) };
+    };
+  };
+
+  // Number of open orders resting at ONE price on one market-side — O(log N)
+  // read of the maintained level aggregate. Used by the per-level placement
+  // cap (Types.MAX_ORDERS_PER_PRICE_LEVEL): bounding K at a price bounds the
+  // work of every path that sweeps a level.
+  public func getLevelOrderCount(store : OrderStore, marketId : Types.MarketId, side : Types.Side, price : Nat) : Nat {
+    switch (Map.get(store.levelAggByMarketSide, Text.compare, marketSideKey(marketId, side))) {
+      case null { 0 };
+      case (?lvls) { Option.get(Map.get(lvls, Nat.compare, price), (0, 0)).1 };
     };
   };
 

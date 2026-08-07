@@ -155,6 +155,23 @@ eqN("FOK sell kill: taker base untouched", Accounts.getBalance(ff_a, bob, base),
 Debug.print("── symmetric maker/taker fee + STP ──");
 let treas = Principal.fromText("ryjl3-tyaaa-aaaaa-aaaba-cai"); // stand-in treasury
 
+// Beneficial-owner resolver — the test's stand-in for main.mo's archiveOwnerOf:
+// a margin pool's derived principal resolves to the POOL'S OWNER, every other
+// principal to itself. EVERY ctx below routes STP through this, so the plain
+// alice-vs-alice case is a genuine resolver miss (not a hardcoded identity) and
+// the sibling-pool cases can only pass if the engine compares BENEFICIARIES
+// rather than raw principals. carol owns two pools; dave owns one.
+let carol  = Principal.fromText("rrkah-fqaaa-aaaaa-aaaaq-cai");
+let dave   = Principal.fromText("r7inp-6aaaa-aaaaa-aaabq-cai");
+let poolC1 = Principal.fromText("rkp4c-7iaaa-aaaaa-aaaca-cai");  // carol's pool #1
+let poolC2 = Principal.fromText("qoctq-giaaa-aaaaa-aaaea-cai");  // carol's pool #2
+let poolD1 = Principal.fromText("renrk-eyaaa-aaaaa-aaada-cai");  // dave's pool
+func beneficial(p : Principal) : Principal {
+  if (Principal.equal(p, poolC1) or Principal.equal(p, poolC2)) { carol }
+  else if (Principal.equal(p, poolD1)) { dave }
+  else { p };
+};
+
 // A ctx mirroring the real engine contract: quoteFee is PURE (role→bps→floor),
 // creditTreasury skims the combined fee to `treas`, onSelfTrade cancels the
 // resting self-maker (as cancelSelfMaker does in main.mo) and reports its id.
@@ -171,6 +188,7 @@ func mkFeeCtx(acc : Accounts.AccountState, store : OB.OrderStore, onCancel : (Na
   };
   creditTreasury   = func(fee) { if (fee > 0) { Accounts.addBalance(acc, treas, QUOTE, fee) } };
   onSelfTrade      = func(id, _owner) { ignore OB.cancelOrder(store, id); onCancel(id) };
+  beneficialOwner  = beneficial;   // pools → their owner; everyone else → themselves
   onTradeFees      = func(_, _, _) {};
 };
 
@@ -222,6 +240,64 @@ eqN("stp: onSelfTrade cancelled the resting bid", st_cancelled, st_bid.id);
 eqN("stp: alice QUOTE untouched", Accounts.getBalance(st_a, alice, QUOTE), 10_005_000_000);
 eqN("stp: alice base untouched", Accounts.getBalance(st_a, alice, base), 100_000_000);
 
+// ── (3b) STP on the BENEFICIAL owner — DIFFERENT principals, SAME owner.
+//        carol's pool C2 market-sells into carol's pool C1's resting bid. The
+//        raw principals differ, so a Principal.equal(taker, maker) check lets
+//        this cross print; only the beneficialOwner comparison stops it. This
+//        is the exact case beneficialOwner was introduced for (9e418f7) — a
+//        margin pool is a sub-account, so a wallet crossing its own pool is one
+//        party on both sides of the print. ──
+let bp_s = OB.emptyStore();
+let bp_a = Accounts.emptyState();
+Accounts.setBalance(bp_a, poolC1, QUOTE, 10_005_000_000);      // funds C1's resting bid
+Accounts.setBalance(bp_a, poolC2, base, 100_000_000);          // C2's base to sell
+let bp_bid = OB.createOrder(bp_s, mkt, poolC1, #buy, #limit, 10_000_000_000, 100_000_000, 1);
+var bp_cancelled : Nat = 0;
+let bp_r = MX.executeMarketOrderProtected(bp_s, bp_a, mkt, base, poolC2, #sell, 100_000_000, 10_000_000, false, 2, mkFeeCtx(bp_a, bp_s, func(id) { bp_cancelled := id }));
+truth("stp beneficial: the two sides really ARE different principals", not Principal.equal(poolC1, poolC2));
+truth("stp beneficial: ...resolving to the SAME beneficiary", Principal.equal(beneficial(poolC1), beneficial(poolC2)));
+eqN("stp beneficial: sibling-pool cross does not fill", bp_r.totalFilled, 0);
+truth("stp beneficial: no trade recorded (no washed volume)", bp_r.trades.size() == 0);
+eqN("stp beneficial: onSelfTrade cancelled the sibling's resting bid", bp_cancelled, bp_bid.id);
+eqN("stp beneficial: C1 QUOTE untouched", Accounts.getBalance(bp_a, poolC1, QUOTE), 10_005_000_000);
+eqN("stp beneficial: C2 base untouched", Accounts.getBalance(bp_a, poolC2, base), 100_000_000);
+
+// ── (3c) Control for (3b): DIFFERENT beneficial owners still cross normally,
+//        so (3b) cannot be passing because the resolver collapses every pool
+//        onto one beneficiary. dave's pool D1 takes carol's pool C1's bid —
+//        a genuine fill, fee'd exactly like the sellfee case (pools are
+//        fee-bearing). ──
+let bx_s = OB.emptyStore();
+let bx_a = Accounts.emptyState();
+Accounts.setBalance(bx_a, poolC1, QUOTE, 10_005_000_000);      // maker-buyer: C + makerFee
+Accounts.setBalance(bx_a, poolD1, base, 100_000_000);          // taker-seller: 1 BTC
+ignore OB.createOrder(bx_s, mkt, poolC1, #buy, #limit, 10_000_000_000, 100_000_000, 1);
+var bx_cancelled : Nat = 0;
+let bx_r = MX.executeMarketOrderProtected(bx_s, bx_a, mkt, base, poolD1, #sell, 100_000_000, 10_000_000, false, 2, mkFeeCtx(bx_a, bx_s, func(id) { bx_cancelled := id }));
+truth("stp control: different owners → different beneficiaries", not Principal.equal(beneficial(poolC1), beneficial(poolD1)));
+eqN("stp control: pools of DIFFERENT owners do cross", bx_r.totalFilled, 100_000_000);
+eqN("stp control: onSelfTrade never fired", bx_cancelled, 0);
+eqN("stp control: taker-seller got C-takerFee", Accounts.getBalance(bx_a, poolD1, QUOTE), 9_990_000_000);
+eqN("stp control: maker-buyer paid C+makerFee → 0", Accounts.getBalance(bx_a, poolC1, QUOTE), 0);
+
+// ── (3d) The FOK pre-check resolves beneficiaries too — simulateAvailableFill
+//        is the SECOND beneficialOwner call site, and it must agree with the
+//        live loop: a sibling pool's depth cannot count toward an
+//        all-or-nothing fill, or FOK passes its pre-check and then partially
+//        fills. The pre-check is a pure simulation and kills before the match
+//        loop, so it never reaches onSelfTrade — the sibling's bid still rests. ──
+let bk_s = OB.emptyStore();
+let bk_a = Accounts.emptyState();
+Accounts.setBalance(bk_a, poolC1, QUOTE, 100_000_000_000);
+Accounts.setBalance(bk_a, poolC2, base, 100_000_000);
+let bk_bid = OB.createOrder(bk_s, mkt, poolC1, #buy, #limit, 10_000_000_000, 100_000_000, 1);
+let bk_r = MX.executeMarketOrderProtected(bk_s, bk_a, mkt, base, poolC2, #sell, 100_000_000, 10_000_000, true, 2, mkFeeCtx(bk_a, bk_s, func(_) {}));
+eqN("stp FOK: sibling-pool depth is not fillable → kill", bk_r.totalFilled, 0);
+truth("stp FOK: no trades", bk_r.trades.size() == 0);
+eqN("stp FOK: taker base untouched", Accounts.getBalance(bk_a, poolC2, base), 100_000_000);
+truth("stp FOK: killed in the pre-check — sibling's bid still rests",
+  switch (OB.getOrder(bk_s, bk_bid.id)) { case (?o) { OB.isOpen(o) }; case null { false } });
+
 // ── (4) EXEMPT counterparty (the pool-vs-AMM case): a fee-bearing taker buys from
 //        an EXEMPT maker (AMM/insurance/treasury). Only the taker leg is fee'd — the
 //        exempt seller keeps the FULL tradeCost, treasury gets just the taker fee.
@@ -248,6 +324,7 @@ let ex_ctx : MX.ProtectionCtx = {
   };
   creditTreasury   = func(fee) { if (fee > 0) { Accounts.addBalance(ex_a, treas, QUOTE, fee) } };
   onSelfTrade      = func(_, _) {};
+  beneficialOwner  = beneficial;
   onTradeFees      = func(_, _, _) {};
 };
 let ex_before = Accounts.getBalance(ex_a, ammP, QUOTE) + Accounts.getBalance(ex_a, bob, QUOTE) + Accounts.getBalance(ex_a, treas, QUOTE);
@@ -327,5 +404,87 @@ let (lw_o, lw_t, _, _) = MX.executeLimitOrder(
 );
 truth("legacy wrapper: one clock stamps both order and trade",
   lw_o.timestamp == 7_777 and lw_t.size() == 1 and lw_t[0].timestamp == 7_777);
+
+// ════════════════════════════════════════════════════════════════════
+// PER-CALL ITERATION CAP. One matcher invocation spends at most
+// MAX_MATCH_ITERATIONS_PER_CALL loop iterations, so a single message's
+// matcher work is bounded no matter how many orders rest at one price
+// (uncapped, a taker sweeping a stacked level was the O(K²) shape that
+// trapped the instruction limit at ~3k same-price orders). Cap-out
+// semantics: a #market taker returns the remainder (IOC), a #limit taker
+// rests it. The FOK pre-check promises only FOK_SIM_MAKER_BUDGET (= half
+// the cap) distinct makers, so a passed pre-check always completes — a
+// bigger all-or-nothing job is killed cleanly, never partially filled.
+// ════════════════════════════════════════════════════════════════════
+Debug.print("── per-call iteration cap ──");
+let CAP = MX.MAX_MATCH_ITERATIONS_PER_CALL;
+let SIM = MX.FOK_SIM_MAKER_BUDGET;
+let mq : Nat = 1_000_000;             // 0.01 BTC per maker → $1 per fill at $100
+var i : Nat = 0;
+
+// ── market taker over the cap: exactly CAP fills, remainder returned ──
+let ic_s = OB.emptyStore();
+let ic_a = Accounts.emptyState();
+Accounts.setBalance(ic_a, alice, base, 300_000_000);      // 3 BTC backs all makers
+Accounts.setBalance(ic_a, bob, QUOTE, 100_000_000_000);   // 1000 ICPUSD
+i := 0;
+while (i < CAP + 4) {
+  ignore OB.createOrder(ic_s, mkt, alice, #sell, #limit, 10_000_000_000, mq, 1);
+  i += 1;
+};
+let ic_r = MX.executeMarketOrder(ic_s, ic_a, mkt, base, bob, #buy, (CAP + 4) * mq, 10_000_000, false, 2);
+eqN("cap market: exactly CAP makers filled", ic_r.totalFilled, CAP * mq);
+eqN("cap market: remainder returned unfilled (IOC)", ic_r.remainingQty, 4 * mq);
+eqN("cap market: one trade per maker", ic_r.trades.size(), CAP);
+eqN("cap market: the uncapped makers still rest", OB.getLevelOrderCount(ic_s, mkt, #sell, 10_000_000_000), 4);
+eqN("cap market: taker paid for exactly CAP fills",
+  Accounts.getBalance(ic_a, bob, QUOTE), 100_000_000_000 - CAP * 100_000_000);
+
+// ── limit taker over the cap: CAP fills, remainder RESTS at its limit ──
+let cl_s = OB.emptyStore();
+let cl_a = Accounts.emptyState();
+Accounts.setBalance(cl_a, alice, base, 300_000_000);
+Accounts.setBalance(cl_a, bob, QUOTE, 100_000_000_000);
+i := 0;
+while (i < CAP + 4) {
+  ignore OB.createOrder(cl_s, mkt, alice, #sell, #limit, 10_000_000_000, mq, 1);
+  i += 1;
+};
+let (cl_o, cl_t, _, _) = MX.executeLimitOrder(cl_s, cl_a, mkt, base, bob, #buy, 10_000_000_000, (CAP + 4) * mq, 2);
+eqN("cap limit: CAP fills", cl_t.size(), CAP);
+eqN("cap limit: filled quantity = CAP makers", cl_o.filled, CAP * mq);
+truth("cap limit: remainder rests open", OB.isOpen(cl_o));
+eqN("cap limit: rested remainder", OB.remaining(cl_o), 4 * mq);
+
+// ── FOK over the sim budget: killed at the pre-check, book untouched ──
+let fk_s = OB.emptyStore();
+let fk_a = Accounts.emptyState();
+Accounts.setBalance(fk_a, alice, base, 300_000_000);
+Accounts.setBalance(fk_a, bob, QUOTE, 100_000_000_000);
+i := 0;
+while (i < SIM + 2) {
+  ignore OB.createOrder(fk_s, mkt, alice, #sell, #limit, 10_000_000_000, mq, 1);
+  i += 1;
+};
+let fk_r = MX.executeMarketOrder(fk_s, fk_a, mkt, base, bob, #buy, (SIM + 2) * mq, 10_000_000, true, 2);
+eqN("FOK over budget: killed, nothing fills", fk_r.totalFilled, 0);
+truth("FOK over budget: no trades", fk_r.trades.size() == 0);
+eqN("FOK over budget: every maker still rests", OB.getLevelOrderCount(fk_s, mkt, #sell, 10_000_000_000), SIM + 2);
+eqN("FOK over budget: taker balance untouched", Accounts.getBalance(fk_a, bob, QUOTE), 100_000_000_000);
+
+// ── FOK within the sim budget: fills in full ──
+let fw_s = OB.emptyStore();
+let fw_a = Accounts.emptyState();
+Accounts.setBalance(fw_a, alice, base, 300_000_000);
+Accounts.setBalance(fw_a, bob, QUOTE, 100_000_000_000);
+i := 0;
+while (i < 100) {
+  ignore OB.createOrder(fw_s, mkt, alice, #sell, #limit, 10_000_000_000, mq, 1);
+  i += 1;
+};
+let fw_r = MX.executeMarketOrder(fw_s, fw_a, mkt, base, bob, #buy, 100 * mq, 10_000_000, true, 2);
+eqN("FOK within budget: fills in full", fw_r.totalFilled, 100 * mq);
+eqN("FOK within budget: nothing left", fw_r.remainingQty, 0);
+eqN("FOK within budget: level swept clean", OB.getLevelOrderCount(fw_s, mkt, #sell, 10_000_000_000), 0);
 
 Debug.print("── MatchingEngine.test PASSED ──");

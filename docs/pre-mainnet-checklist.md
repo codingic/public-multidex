@@ -46,7 +46,19 @@ sim behaviour while `DEPLOY_MODE = #dev`.
   - `debugInspectByUsername("<any-username>")` as a controller →
     `found = false`, empty record.
   - `setTestBalance` no-ops; `getTestBalance` returns `0`.
-  - `claimPlayFunds()` → `#err(… deposit real assets via the Bridge)`.
+  - `setTestEmailBinding` **traps** (`requireDevHook`, `#dev`-only — it used
+    to be reachable on `#play`).
+  - `injectHistoricalTrades` → `#err("injectHistoricalTrades is not available
+    on #production")`. (On `#play` it is genesis-gated instead — accepted only
+    until the venue's first `enableAmm`; see docs/deployment-modes.md, "The
+    genesis window".)
+  - `fundArbitrageur`, `extMarketSwap`, and `donateToVault(_, false)` all
+    `#err` — the unbacked-credit interlock every sibling already had.
+  - ~~`claimPlayFunds()` → `#err(…)`~~ **REMOVED: the method is retired** (it is
+    absent from `main.mo` and `candid/backend.did`, `PLAY_BASKET` is gone, and
+    the `tests/test_play_claim.sh` this step used to cite does not exist). The
+    live on-ramp is the `PLAY_DEPOSIT_CAP_USD` reservation flow; verify that
+    instead.
 - [ ] **Wire the oracle fallback**: `setXrcCanister(opt principal
       "uf6dk-hyaaa-aaaaq-qaaaq-cai")` (the real XRC), then smoke:
       `adminRefreshXrcAnchors()` + `getXrcAnchors()` shows fresh anchors for

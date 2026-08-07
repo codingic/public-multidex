@@ -46,11 +46,13 @@ export const DOCS_PAGES = [
       <div class="docs-start">
         <div class="docs-start-head">Start here — about a minute</div>
         <ol class="docs-start-steps">
-          <li><b>Sign in</b> with Internet Identity, top right. No email, no password, no KYC.</li>
-          <li><b>Collect your free dummy crypto.</b> Every account gets a play allowance to
-          trade with — that's your starting stack.</li>
-          <li><b>Trade.</b> <a href="#swap">Swap</a> is the friendliest door;
-          <a href="#markets">Markets</a> is the full trading floor.</li>
+          <li><b>Sign-in</b> with Internet Identity and stay anonymous with passkeys (note: while 
+          the exchange remains in Play mode, you must sign in via a linked Google account, which
+          is anonymized, to help keep each player to a single account).</li>
+          <li><b>Collect your free dummy crypto</b> <a href="#account/deposit">here</a>, to join
+          the trading competition and win real ICP.</li>
+          <li><b>Trade</b> simply using <a href="#swap">Swap</a> or the full orderbook
+          <a href="#markets">Markets</a> with spot and margin trading features.</li>
           <li><b>Climb the <a href="#leaderboard">leaderboard</a></b>, which scores skill —
           your profit against simply holding what you started with.</li>
         </ol>
@@ -103,7 +105,7 @@ export const DOCS_PAGES = [
       genuinely sophisticated financial application, produced by AI, running end-to-end as on-chain
       code with no servers hiding behind it, which enables you to analyse your position, and execute
       trades, <a href="#docs/mcp">using your favourite AI chat</a>. The source is open; you can read every line (see
-      <a href="https://github.com/dfinity/multidex">the repository</a>) and judge the work yourself.</p>
+      <a href="https://github.com/dfinity/public-multidex">the repository</a>) and judge the work yourself.</p>
 
       <h2 id="docs-sec-owned">Owned by nobody, run by the NNS</h2>
       <p>MULTI/DEX will be <b>owned by nobody</b>. There is no company behind it, no operator, no
@@ -120,7 +122,7 @@ export const DOCS_PAGES = [
       <p>The community isn't just watching; it's part of development. Trading hard is itself the
       contribution — every order you place and every edge case you hit stresses a venue that is
       being proven before it handles real value. Read the
-      <a href="https://github.com/dfinity/multidex">source</a>, poke at the mechanics, earn
+      <a href="https://github.com/dfinity/public-multidex">source</a>, poke at the mechanics, earn
       <a href="#docs/badges">badges</a>, and send anything that looks wrong to
       <a href="mailto:multidex@dfinity.org">multidex@dfinity.org</a>. That is the entire point of
       the weeks in play mode.</p>
@@ -195,6 +197,14 @@ export const DOCS_PAGES = [
       <h1>What is MULTI/DEX?</h1>
       <p class="docs-lead">A complete crypto exchange — order book, AMM, margin, yield, custody,
       analytics and even its AI — running as a single autonomous service on the Internet Computer.</p>
+
+      <div class="docs-start">
+        <div class="docs-start-head">Open source</div>
+        <p>MULTI/DEX is open source at
+        <a href="https://github.com/dfinity/public-multidex" target="_blank" rel="noopener">github.com/dfinity/public-multidex</a>.
+        Send issues, and links to pull requests on forks, to
+        <a href="mailto:multidex@dfinity.org">multidex@dfinity.org</a> — and sometimes win bounties.</p>
+      </div>
 
       <p>MULTI/DEX is the most advanced DeFi application ever created. Moreover, every component
       — the sealed matching engine, the order books, the
@@ -1416,8 +1426,15 @@ node scripts/verify_ledger.mjs --backend &lt;canister-id&gt; \\
       <h2 id="docs-sec-intelli">Intelligence: query the venue like a database</h2>
       <p>The <b>Intelligence</b> tab exposes a live query surface (OQL) over the exchange and the archive:
       markets, order books, events, pools, positions — with <b>row-level scoping</b> enforced
-      server-side. Public data is public; your rows are yours; other users' private rows simply never
-      leave the canister. Presets cover the common questions, or write your own queries.</p>
+      server-side. Your pools, positions, balances and closed orders are yours alone: those entities are
+      owner-scoped and another caller's rows never leave the canister.</p>
+      <p><b>What is deliberately public.</b> This is an anti-mixer venue, so the money-flow ledger is a
+      published record, not a private one: <b>every user's deposits and withdrawals are readable by
+      anyone, attributed to the principal that made them</b>, through the archive and the public event
+      tape. That is a design requirement — it is what makes reserves and flows independently
+      verifiable — not an accident, and it is worth understanding before you fund an account. Trade
+      fills and liquidations are likewise attributed on the tape. Presets cover the common questions,
+      or write your own queries.</p>
 
       <h2 id="docs-sec-ai">And AI that can read it all</h2>
       <p>The <b>AI Assistant</b> drives that same query surface in natural language — it can walk the live
@@ -1641,13 +1658,13 @@ node scripts/verify_ledger.mjs --backend &lt;canister-id&gt; \\
           at DFINITY's discretion — there is no standing bounty programme (see SECURITY.md). One
           address for both: multidex@dfinity.org.</span>
         </a>
-        <a class="docs-map-card" href="https://github.com/dfinity/multidex" target="_blank" rel="noopener noreferrer">
+        <a class="docs-map-card" href="https://github.com/dfinity/public-multidex" target="_blank" rel="noopener noreferrer">
           <span class="docs-map-part">Open source</span>
           <span class="docs-map-title">Read every line</span>
           <span class="docs-map-blurb">The complete exchange — matching engine, AMM, custody, UI,
-          these very docs — is public at github.com/dfinity/multidex.</span>
+          these very docs — is public at github.com/dfinity/public-multidex.</span>
         </a>
-        <a class="docs-map-card" href="https://github.com/dfinity/multidex/fork" target="_blank" rel="noopener noreferrer">
+        <a class="docs-map-card" href="https://github.com/dfinity/public-multidex/fork" target="_blank" rel="noopener noreferrer">
           <span class="docs-map-part">Propose</span>
           <span class="docs-map-title">Fork it, ship it</span>
           <span class="docs-map-blurb">Think you can make it better? Fork the repo, deploy your
@@ -1665,11 +1682,11 @@ node scripts/verify_ledger.mjs --backend &lt;canister-id&gt; \\
       it earns the bounty. Choose the payout that exists.</p>
 
       <h2 id="docs-sec-propose"><span class="docs-num">2</span>Proposing changes</h2>
-      <p>Because the exchange is <a href="https://github.com/dfinity/multidex" target="_blank"
+      <p>Because the exchange is <a href="https://github.com/dfinity/public-multidex" target="_blank"
       rel="noopener noreferrer">open source</a> and the platform permissionless, a proposal here
       isn't a slide deck — it's a working exchange:</p>
       <ol>
-        <li>Fork <a href="https://github.com/dfinity/multidex" target="_blank" rel="noopener noreferrer">github.com/dfinity/multidex</a>
+        <li>Fork <a href="https://github.com/dfinity/public-multidex" target="_blank" rel="noopener noreferrer">github.com/dfinity/public-multidex</a>
         and build your improvement.</li>
         <li>Deploy your version to the Internet Computer, so anyone can try it live.</li>
         <li>Send DFINITY the link — <a href="mailto:multidex@dfinity.org">multidex@dfinity.org</a> —
@@ -1694,6 +1711,52 @@ node scripts/verify_ledger.mjs --backend &lt;canister-id&gt; \\
       on-chain asset swap and order-book exchange, with an order-book AMM, where assets on
       multiple chains can be trustlessly deposited, traded, and withdrawn directly, and AIware
       functionality lets users analyze the markets and their positions, and trade, via AI.</p>
+
+      <h3>1.52 — 2 August 2026</h3>
+      <ul>
+        <li><b>The app keeps itself up to date.</b> Until now a new release only
+        reached you if you happened to hard-refresh — a browser will happily serve a cached page
+        for days. Each build now publishes its version, and the app checks for a newer one: a tab
+        you're using shows a small <b>"A new version is available"</b> card with a Refresh button
+        (dismissable — it never reloads while you're mid-trade), while a tab sitting in the
+        background quietly refreshes itself, so you come back to a current app without ever seeing
+        a prompt. Reloading costs nothing: orders, positions and balances live on-chain, and the
+        page you were on is preserved. This is the last release you'll need to refresh by hand.
+        System → Canisters also now shows the <b>backend's version</b>, so you can see at a glance
+        which build the exchange is running.</li>
+        <li>Earn: depositing to or withdrawing from the AMM Vault, and staking or unstaking the
+        Insurance Fund, now confirm with the same <b>toast</b> every other action uses — the result
+        previously appeared as a line at the foot of the page, under the Insurance box, which made
+        a vault deposit look like it was reporting on Insurance. The figures behind it are refreshed
+        too: <b>Overview, Wallet and the header account value now update immediately</b> after an
+        Earn action instead of waiting for the next background poll to notice.</li>
+        <li>Header: the account value beside your name is now vertically centred with the nav (it
+        sat a few pixels low), and on mobile the account value is shown in the header itself rather
+        than only inside the menu. <b>System</b> gains a mobile sub-menu listing its sections —
+        Overview, Issues, AMM, Insurance Fund, Treasury, Canisters, Events — matching the way the
+        account menu already worked.</li>
+      </ul>
+
+      <h3>1.51 — 1 August 2026</h3>
+      <ul>
+        <li>Fixed a position-reporting bug: unwinding a position in slices could <b>freeze the
+        Realized figure and silently rewrite the Entry price</b> to a later fill's price, which
+        in turn skewed uPnL — a long entered at 2.07 and reduced at higher prices could show a
+        loss while the account was in profit. The cause was a settlement race: placing an order
+        briefly blanked the position record's internal size, and an order that was
+        <b>immediately marketable</b> (a resting counter-order already at its price) settled
+        before the record was repaired, so the engine booked the reducing fill as if it opened a
+        fresh position. Orders that rested a while escaped, which is why the first sells of an
+        unwind reported correctly and later ones froze. <b>Balances and account value were never
+        wrong</b> — the money always moved correctly; only the position panel's Entry/Realized
+        (and the episode history derived from them) misreported. The settlement path now keeps
+        the running size intact, and a regression test pins the exact race ordering plus the
+        accounting laws: entry never moves on a reduce, realized grows by (price − entry) ×
+        quantity on every reducing fill, increases blend the entry VWAP, and uPnL always equals
+        (mark − entry) × size. One caveat: a position already corrupted before this fix keeps
+        its rewritten entry until it is closed — the figures heal on the next fresh
+        position.</li>
+      </ul>
 
       <h3>1.50 — 1 August 2026</h3>
       <ul>
@@ -1871,11 +1934,11 @@ node scripts/verify_ledger.mjs --backend &lt;canister-id&gt; \\
       <h3>1.17 — the public snapshot</h3>
       <ul>
         <li>The exchange's code goes public at
-        <a href="https://github.com/dfinity/multidex" target="_blank" rel="noopener noreferrer">github.com/dfinity/multidex</a>.</li>
+        <a href="https://github.com/dfinity/public-multidex" target="_blank" rel="noopener noreferrer">github.com/dfinity/public-multidex</a>.</li>
       </ul>
 
       <p class="docs-dim">Curated highlights, newest first. The complete, commit-level history is
-      public in the <a href="https://github.com/dfinity/multidex" target="_blank"
+      public in the <a href="https://github.com/dfinity/public-multidex" target="_blank"
       rel="noopener noreferrer">repository</a>.</p>
     `,
   },

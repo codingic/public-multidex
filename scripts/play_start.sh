@@ -10,7 +10,13 @@
 #   - setTestBalance          controller-only operator funding (bots, ladder
 #                             makers, the AMM LP) — recorded in extNetFlow so
 #                             the profit leaderboard stays honest
-#   - injectHistoricalTrades  chart backdrop (via inject_history.sh)
+#   - injectHistoricalTrades  chart backdrop (via inject_history.sh) —
+#                             GENESIS-GATED on #play: the canister accepts it
+#                             only until the venue's first enableAmm, #err
+#                             after (one-way; reinstall re-arms, season resets
+#                             do not). Works here because step 4 (history)
+#                             runs on the fresh reinstall, before step 5's
+#                             enableAmm. See docs/deployment-modes.md.
 #   - createAmmPool / setAmmConfig / seedAmmPool / setAmmSkewConfig /
 #     enableAmm / setAmmAutoInventory   controller AMM lifecycle
 #   - fetchAndSetRefPrice     REAL prices; setAmmRefPrice returns #err on #play
@@ -40,6 +46,12 @@
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
+
+# Scratch-file locations (.run/, not fixed names under sticky /tmp) — see
+# scripts/lib/runfiles.sh. Exported, so inject_history.sh lands on the same
+# price-snapshot path this script then reads back.
+# shellcheck source=scripts/lib/runfiles.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/runfiles.sh"
 export PATH="$HOME/.local/bin:$PATH"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -97,7 +109,7 @@ ok "canisters present (backend=$BACKEND_ID bridge=$BRIDGE_ID)"
 # ── 1. Build + reinstall (fresh play state) ───────────────────────
 hdr "Build + reinstall"
 log "icp build (backend + bridge wasm)"
-icp build > /tmp/uplands-play-build.log 2>&1 || die "build failed — see /tmp/uplands-play-build.log"
+icp build > "$MDX_PLAY_BUILD_LOG" 2>&1 || die "build failed — see $MDX_PLAY_BUILD_LOG"
 ok "built"
 
 log "reinstalling backend (wipes ALL exchange state)"
@@ -122,7 +134,7 @@ ok "Bridge ↔ DEX auto-wired via canister env vars"
 FUEL_MOCK_ID=$(icp canister status fuel-mock --identity anonymous 2>/dev/null | awk -F': ' '/^Canister Id/{print $2; exit}' | tr -d '[:space:]')
 if [ -n "$FUEL_MOCK_ID" ]; then
   adm setFuelRoute "(opt principal \"$FUEL_MOCK_ID\", opt principal \"$FUEL_MOCK_ID\")" > /dev/null || true
-  icp canister top-up --amount 20t fuel-mock > /dev/null 2>&1 || true
+  icp canister top-up --amount 20t fuel-mock --identity anonymous > /dev/null 2>&1 || true
   ok "fuel route wired (fuel-mock as ledger+CMC, topped 20T)"
 else
   warn "fuel-mock not found — auto-fuel Stage 2 unwired"
@@ -181,12 +193,16 @@ adm setTestBalance "(principal \"$LP_PRINCIPAL\", \"ICPUSD\", $(e8 $(( TVL_TOTAL
 ok "LP quote leg funded (\$$(( TVL_TOTAL / 2 + 50000 )) ICPUSD)"
 
 # ── 4. Price history (chart backdrop) ─────────────────────────────
+# ORDER MATTERS: injectHistoricalTrades is genesis-gated on #play — accepted
+# only until the FIRST enableAmm of the install, then #err forever (a season
+# reset does not re-arm it; the reinstall in step 1 is what re-armed it for
+# this run). Keep this step ahead of step 5's enableAmm.
 hdr "Price history"
-rm -f /tmp/uplands-oracle-prices.txt
+rm -f "$MDX_ORACLE_PRICES"
 if [ "$HIST_DAYS" -gt 0 ]; then
   log "injecting $HIST_DAYS days of CoinGecko history (this takes a minute)…"
   bash scripts/inject_history.sh --days "$HIST_DAYS" --identity anonymous \
-    || warn "history injection had failures (CoinGecko rate limits?) — chart backdrop may be partial"
+    || warn "history injection had failures — see inject_history.sh's lines above for the real cause (it probes the posture gate first, so a refusal is named as such, not blamed on rate limits); chart backdrop may be partial"
 else
   warn "HISTORY_DAYS=0 — skipping the chart backdrop"
 fi
@@ -230,8 +246,8 @@ for market in $MARKETS; do
   # has lastPrice=0 and no snapshot line — the sim would then trade at the
   # stale default and walk the fresh AMM off its real price (seen with BTC:
   # default 78000 vs live 63200). Upsert the live price for every market.
-  { grep -v "^$base_tok " /tmp/uplands-oracle-prices.txt 2>/dev/null; echo "$base_tok $px"; } > /tmp/uplands-oracle-prices.txt.new \
-    && mv /tmp/uplands-oracle-prices.txt.new /tmp/uplands-oracle-prices.txt
+  { grep -v "^$base_tok " "$MDX_ORACLE_PRICES" 2>/dev/null; echo "$base_tok $px"; } > "$MDX_ORACLE_PRICES.new" \
+    && mv "$MDX_ORACLE_PRICES.new" "$MDX_ORACLE_PRICES"
 
   # Makers' base inventory: $15k of this market's base each (the $100k
   # parity mix) — sized here because the quantity needs the live price.
@@ -328,8 +344,8 @@ bash scripts/start_bots_local.sh || warn "bot start failed — run scripts/start
 # ── 8. Frontend ───────────────────────────────────────────────────
 hdr "Frontend"
 log "icp deploy frontend (build + certified asset sync)"
-icp deploy frontend --identity anonymous > /tmp/uplands-play-frontend.log 2>&1 \
-  || warn "frontend deploy failed — see /tmp/uplands-play-frontend.log"
+icp deploy frontend --identity anonymous > "$MDX_PLAY_FRONTEND_LOG" 2>&1 \
+  || warn "frontend deploy failed — see $MDX_PLAY_FRONTEND_LOG"
 ok "frontend deployed"
 
 # ── 9. Summary ────────────────────────────────────────────────────
