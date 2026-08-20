@@ -12,15 +12,10 @@ import Iter "mo:core/Iter";
 import List "mo:core/List";
 import Text "mo:core/Text";
 import Nat "mo:core/Nat";
-import Array "mo:core/Array";
 import Types "Types";
 import EvmRpcTypes "EvmRpcTypes";
 import Constants "Constants";
 import Hex "Hex";
-
-// (txHash, recipient) pulled from a block receipt; `to` is null for
-// contract-creation txs (no ETH transfer target)
-type ReceiptHit = { txHash : Text; to : ?Text };
 
 persistent actor EthDepositDetector {
 
@@ -91,10 +86,10 @@ persistent actor EthDepositDetector {
   };
 
   // raw JSON-RPC via multi_request (multi-provider consensus); null on error
-  func multiRequestText(json : Text, cfg : ?EvmRpcTypes.RpcConfig, cycles : Nat) : async ?Text {
+  func multiRequestText(json : Text) : async ?Text {
     let rpc : EvmRpcTypes.EvmRpc = actor (Principal.toText(evmRpc()));
     try {
-      let r = await (with cycles = cycles) rpc.multi_request(Constants.ETH_CHAIN, cfg, json);
+      let r = await (with cycles = Constants.EVM_RPC_CYCLES) rpc.multi_request(Constants.ETH_CHAIN, null, json);
       switch r {
         case (#Consistent x) { switch x { case (#Ok t) { ?t }; case (#Err _) { null } } };
         case (#Inconsistent _) { null };
@@ -117,7 +112,7 @@ persistent actor EthDepositDetector {
   func evmGetTx(hash : Text) : async ?Types.Transfer {
     let json = "{\"jsonrpc\":\"2.0\",\"method\":\"eth_getTransactionByHash\",\"params\":[\""
       # hash # "\"],\"id\":1}";
-    let t = await multiRequestText(json, null, Constants.EVM_RPC_CYCLES);
+    let t = await multiRequestText(json);
     switch t {
       case null { null };
       case (?s) {
@@ -149,68 +144,38 @@ persistent actor EthDepositDetector {
     };
   };
 
-  // One RPC returns the whole block's receipts. We keep (txHash, to) for each
-  // and let the caller match `to` against the (potentially million-entry)
-  // watchedAddresses, fetching value only for hits. This collapses per-block
-  // ETH RPC from ~hundreds of eth_getTransactionByHash calls to one receipt
-  // call + a handful of value lookups.
-  func ethGetBlockReceipts(h : Nat) : async [ReceiptHit] {
-    let json = "{\"jsonrpc\":\"2.0\",\"method\":\"eth_getBlockReceipts\",\"params\":[\""
-      # Nat.toText(h) # "\"],\"id\":1}";
-    let cfg : EvmRpcTypes.RpcConfig = {
-      responseSizeEstimate = ?(4_000_000 : Nat64);   // whole-block receipt payload can be MB-sized
-      responseConsensus = null;
-    };
-    let t = await multiRequestText(json, ?cfg, Constants.EVM_RPC_RECEIPTS_CYCLES);
-    switch t {
-      case null { [] };
-      case (?s) {
-        switch (Json.parse(s)) {
-          case (#err _) { [] };
-          case (#ok j) {
-            switch (Json.getAsArray(j, "result")) {
-              case (#err _) { [] };
-              case (#ok receipts) {
-                let hits = List.empty<ReceiptHit>();
-                for (r in receipts.vals()) {
-                  let txHash = switch (Json.getAsText(r, "transactionHash")) {
-                    case (#ok v) { v }; case (#err _) { "" };
-                  };
-                  if (txHash != "") {
-                    // `to` is null for contract-creation txs (no ETH target)
-                    let to = switch (Json.getAsText(r, "to")) {
-                      case (#ok v) { ?v }; case (#err _) { null };
-                    };
-                    hits.add({ txHash = txHash; to = to });
-                  };
-                };
-                List.toArray(hits);
-              };
-            };
-          };
-        };
+  // fetch a block's transaction hashes via eth_getBlockByNumber (standard
+  // method); null on error. The caller resolves each hash via evmGetTx and
+  // matches `to` against watchedAddresses.
+  func getBlock(h : Nat) : async ?[Text] {
+    let rpc : EvmRpcTypes.EvmRpc = actor (Principal.toText(evmRpc()));
+    try {
+      let r = await (with cycles = Constants.EVM_RPC_CYCLES) rpc.eth_getBlockByNumber(Constants.ETH_CHAIN, null, #Number h);
+      switch r {
+        case (#Consistent x) { switch x { case (#Ok b) { ?b.transactions }; case (#Err _) { null } } };
+        case (#Inconsistent _) { null };
       };
-    };
+    } catch (_) { null };
   };
 
-  // pull Transfer logs for a batch of watched token contracts; the on-chain
-  // `addresses` filter keeps the returned log volume small, and the recipient
-  // is still matched locally against the (potentially million-entry) watchedAddresses
-  func ethGetLogs(h : Nat, contracts : [Text]) : async [EvmRpcTypes.LogEntry] {
+  // pull all Transfer logs for a block (no on-chain address filter); the
+  // watched-contract check and the recipient check both happen locally in
+  // extractLogEntry
+  func ethGetLogs(h : Nat) : async ?[EvmRpcTypes.LogEntry] {
     let rpc : EvmRpcTypes.EvmRpc = actor (Principal.toText(evmRpc()));
     let args : EvmRpcTypes.GetLogsArgs = {
       fromBlock = ?#Number h;
       toBlock = ?#Number h;
-      addresses = contracts;   // filter by watched token contracts on-chain
+      addresses = [];   // empty = no address filter: pull the block's Transfer logs whole
       topics = ?[ [Constants.TRANSFER_SIG] ];   // Transfer(address,address,uint256)
     };
     try {
       let r = await (with cycles = Constants.EVM_RPC_CYCLES) rpc.eth_getLogs(Constants.ETH_CHAIN, null, args);
       switch r {
-        case (#Consistent x) { switch x { case (#Ok logs) { logs }; case (#Err _) { [] } } };
-        case (#Inconsistent _) { [] };
+        case (#Consistent x) { switch x { case (#Ok logs) { ?logs }; case (#Err _) { null } } };
+        case (#Inconsistent _) { null };
       };
-    } catch (_) { [] };
+    } catch (_) { null };
   };
 
   // record only Transfer logs from a watched token to a watched deposit address
@@ -256,40 +221,36 @@ persistent actor EthDepositDetector {
     };
   };
 
-  func scanBlockProd(h : Nat) : async () {
-    // ETH native deposits: one receipt call covers the whole block; only
-    // receipts whose `to` is a watched address get a value lookup
-    for (r in (await ethGetBlockReceipts(h)).vals()) {
-      switch (r.to) {
-        case null {};
-        case (?toAddr) {
-          let to = Hex.lowerHex(toAddr);
-          if (Map.get(watchedAddresses, Text.compare, to) != null) {
-            switch (await evmGetTx(r.txHash)) {
-              case (?tx) { if (tx.amountRaw > 0) { recordDeposit(h, tx) } };
-              case null {};
+  func scanBlockProd(h : Nat) : async Bool {
+    var ok = true;
+    // ETH native deposits: fetch the block's tx hashes, resolve each via
+    // eth_getTransactionByHash, and record those whose `to` is a watched address
+    switch (await getBlock(h)) {
+      case null { ok := false };
+      case (?txHashes) {
+        for (hash in txHashes.vals()) {
+          switch (await evmGetTx(hash)) {
+            case (?tx) {
+              if (tx.amountRaw > 0 and Map.get(watchedAddresses, Text.compare, tx.to) != null) {
+                recordDeposit(h, tx);
+              };
             };
+            // a single tx lookup failing is transient (network/provider) — mark
+            // the block failed so scanBlocks retries it rather than skipping the tx
+            case null { ok := false };
           };
         };
       };
     };
-    // ERC-20 Transfer logs: filter by watched token contracts on-chain (log
-    // volume stays small); split into batches so the addresses array never
-    // exceeds provider limits, then match recipients locally
+    // ERC-20 Transfer logs: pull the block's Transfer logs whole, then match
+    // the watched contract and the watched recipient locally in extractLogEntry
     if (Map.size(watchedTokens) > 0) {
-      let contracts = Iter.toArray(Map.keys(watchedTokens));
-      var i = 0;
-      while (i < contracts.size()) {
-        let n = if (contracts.size() - i < Constants.LOG_ADDR_BATCH) {
-          contracts.size() - i;
-        } else {
-          Constants.LOG_ADDR_BATCH;
-        };
-        let batch = Array.tabulate<Text>(n, func(k : Nat) : Text { contracts[i + k] });
-        for (log in (await ethGetLogs(h, batch)).vals()) { extractLogEntry(h, log) };
-        i += n;
+      switch (await ethGetLogs(h)) {
+        case null { ok := false };
+        case (?logs) { for (log in logs.vals()) { extractLogEntry(h, log) } };
       };
     };
+    ok;
   };
 
   func scanBlocks() : async () {
@@ -312,7 +273,14 @@ persistent actor EthDepositDetector {
 
     var h = blockHeight + 1;
     while (h <= batchEnd) {
-      await scanBlockProd(h);
+      let ok = await scanBlockProd(h);
+      if (not ok) {
+        // a block RPC failed → leave blockHeight where it is so the next cycle
+        // retries this block; already-recorded deposits are idempotent (dedup)
+        confirmDeposits(tip);
+        ignore Map.delete(scanning, Text.compare, "scan");
+        return;
+      };
       h += 1;
     };
     blockHeight := batchEnd;

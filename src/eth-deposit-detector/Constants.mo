@@ -20,15 +20,6 @@ let CONFIRMED_BLOCKS : Nat = 35;       // move to depositsConfirmed at this dept
 let SCAN_INTERVAL_SEC : Nat = 5;       // poll cadence
 let EVM_RPC_CYCLES : Nat = 10_000_000_000;
 
-// max contracts per eth_getLogs call — providers cap the `addresses` array
-// length, so watched tokens are queried in batches of this size
-let LOG_ADDR_BATCH : Nat = 100;
-
-// larger cycle budget for eth_getBlockReceipts — the whole-block receipt
-// payload can be MB-sized, so it needs far more cycles than a single tx;
-// EVM-RPC refunds any unused cycles
-let EVM_RPC_RECEIPTS_CYCLES : Nat = 200_000_000_000;
-
 func parseCanisterEnv<system>(name : Text) : ?Principal {
   switch (Runtime.envVar<system>(name)) {
     case (?t) { if (t.size() > 0 and t.size() < 64) { ?Principal.fromText(t) } else { null } };

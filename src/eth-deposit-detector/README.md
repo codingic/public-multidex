@@ -23,14 +23,14 @@
 ### 2.3 单区块处理 `scanBlockProd(h)`
 针对每个待扫区块并行跑两条独立的检测路径：
 
-**A. ETH 原生转账（无日志，必须靠 receipt）**
-- 一次 `eth_getBlockReceipts` 拿到整块所有 receipt，提取每条的 `transactionHash` 与 `to`（`to == null` 的合约创建交易直接跳过）。
-- 只对本块中 `to` 命中 `watchedAddresses` 的交易，补一次 `eth_getTransactionByHash` 取 `value`，再 `recordDeposit`。
-- **为什么这样设计**：原生 ETH 转账不发日志，`eth_getLogs` 查不到；若改成逐笔 `eth_getTransactionByHash`，主网单块 100~300+ 笔交易就要几百次 RPC（单块 1~3T cycles、串行极慢）。改成整块 receipt 一次 RPC，RPC 次数从「每块几百次」降到「每块几次命中」，百万地址下才成立。
+**A. ETH 原生转账（无日志，逐笔解析交易）**
+- 一次 `eth_getBlockByNumber`（`getBlock`）拿到整块的交易哈希列表 `transactions`。
+- 对每笔交易哈希调 `eth_getTransactionByHash`（`evmGetTx`）拿到 `to`/`value`，命中 `watchedAddresses` 且 `value > 0` 的才 `recordDeposit`。
+- 原生 ETH 转账不发日志，`eth_getLogs` 查不到，所以必须逐笔解析交易。
 
 **B. ERC-20 转账（有 Transfer 日志）**
-- 把 `watchedTokens`（约 200 个）按 `LOG_ADDR_BATCH(100)` 切片，每批一次 `eth_getLogs`，链上用 `addresses = [batch]` 按合约过滤——返回日志量小、可控、不会被 provider 截断。
-- 每条日志本地走 `extractLogEntry`：先校验 `topics`（Transfer 事件、topic 数量 ≥ 3、topic[2] 为目标地址），再用 `Map.get(watchedAddresses, recipient)` 匹配收款地址，命中才入库。
+- 一次 `eth_getLogs` 拉回该区块的全部 Transfer 日志（`addresses = []` 不过滤合约地址，`topics` 只留 `TRANSFER_SIG` 预过滤事件签名）。
+- 每条日志本地走 `extractLogEntry`：先校验 `topics`（Transfer 事件、topic 数量 ≥ 3），再判断**是否调用了被 watch 的合约**（`Map.get(watchedTokens, log.address)`），再判断 **to 地址是否正确**（`Map.get(watchedAddresses, 从 topic[2] 提取的收款地址)`），命中才入库。
 
 ### 2.4 确认数与存档 `confirmDeposits(tip)`
 每次扫描推进后调用：
@@ -42,8 +42,8 @@
 
 | 关注点 | 做法 |
 | --- | --- |
-| 百万充值地址 | 过滤尽量推到链上（ERC-20 按合约 `addresses` 过滤）；本地只用 `Map.get(watchedAddresses, …)` 做 O(log n)≈20 次比较，百万级毫无压力 |
-| ETH 检测成本 | `eth_getBlockReceipts` 整块一次 RPC + 命中才补 value，而非逐笔查询 |
+| 百万充值地址 | ERC-20 先整块拉 Transfer 日志，本地用 `Map.get` 做「合约 + 收款地址」两级 O(log n) 匹配（百万地址 ≈20 次比较无压力）；ETH 走标准 `eth_getBlockByNumber` + 逐笔 `eth_getTransactionByHash` |
+| ETH 检测成本 | `eth_getBlockByNumber`（`getBlock`）拿区块哈希列表，再逐笔 `eth_getTransactionByHash`（`evmGetTx`）解析 to/value |
 | 地址规范化 | `registerDepositAddress` 强制归一成 `0x` + 小写，与日志 topic 派生的 key 一致，否则会**静默漏检全部 ERC-20 充值** |
 | 重复入库防护 | 去重双查 `deposits` + `confirmedKeys`；`postupgrade` 从已有 `depositsConfirmed` 回填 `confirmedKeys` |
 | 幂等 / 防重组 | `DELAY_BLOCKS` 延迟、`CONFIRMED_BLOCKS` 阈值、dedup key（`txHash#native` / `txHash#logIndex`） |
@@ -76,8 +76,8 @@
 1. **`depositsConfirmed` 无限增长**：永久存档数组会随用户量长期膨胀，撑高 canister 内存。已在该变量处标 `TODO`——需分桶存储 / backend 消费后清理。（已实现 `confirmedKeys` 防重复，但存档本身未限容）
 2. **全量返回接口**：`getDepositAddresses()` / `getConfirmedDeposits()` 当前返回整个数组，百万级会撑爆 query 响应，**需加分页**。
 3. **逐个注册不可行**：`registerDepositAddress` 一次只注册一个地址，100 万地址需调用 100 万次，**需提供批量注册接口**（如 `registerDepositAddresses([(owner, addr)])`）。
-4. **`eth_getBlockReceipts` 响应上限**：`responseSizeEstimate` 与 cycles 为经验值；若某区块 receipt 体积超过 provider 上限，该接口返回 `[]`，**该块 ETH 会被漏扫**（不影响 ERC-20 分支）。极端活跃区块建议加 per-block retry 或回退方案。
-5. **provider 截断风险**：ERC-20 路径按合约过滤后日志量已很小，但理论超大区块仍可能被截断；`eth_getLogs` 返回 `Err` 时本模块返回 `[]`（不崩溃，但漏扫该块）。
+4. **ETH 逐笔解析成本**：`getBlock` 拿到区块哈希列表后，需对每笔交易调一次 `eth_getTransactionByHash`（`evmGetTx`）。主网单块 100~300+ 笔交易 → 每块几百次串行 RPC（单块约 1~3T cycles、较慢），百万地址下成本偏高；若需优化可改回 `eth_getBlockReceipts`（一次拿整块 receipt，但该方法是 Erigon 起家、部分 provider 可能不支持）。
+5. **全量 Transfer 日志量级**：ERC-20 路径整块拉取全部 Transfer 日志，活跃区块的 Transfer 事件可能数千条，若超过 provider 单次 `eth_getLogs` 返回上限，`ethGetLogs` 返回 `null` → 该块标记失败、下一轮重试。必要时加 `GetLogsRpcConfig.responseSizeEstimate` 或回退按合约分批。
 
 ## 7. 代码结构
 
