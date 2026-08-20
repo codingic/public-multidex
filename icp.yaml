@@ -52,6 +52,19 @@ canisters:
         __META_PROJECT: "MULTI/DEX"
         __META_NAME: "Bridge"
 
+  - name: eth-deposit-detector
+    recipe:
+      type: "@dfinity/motoko@v5.0.0"
+      # Dedicated ETH deposit-detection backend (src/eth-deposit-detector/main.mo).
+      # Watches each user's deposit address, recognises inbound ETH, waits for
+      # block confirmations, then credits the DEX via backend.creditAndRegister.
+      # canister config (main, args) lives in mops.toml
+      # [canisters.eth-deposit-detector].
+    settings:
+      environment_variables:
+        __META_PROJECT: "MULTI/DEX"
+        __META_NAME: "ETH Deposit Detector"
+
   - name: arb
     recipe:
       type: "@dfinity/motoko@v5.0.0"
@@ -129,7 +142,7 @@ networks:
 environments:
   - name: engine    # OpenCloud cloud engine (frontend seapz-…)
     network: ic
-    canisters: [backend, bridge, frontend, arb]
+    canisters: [backend, bridge, eth-deposit-detector, frontend, arb]
   - name: subnet    # dedicated subnet serving multidex.ai (frontend hcv4s-…)
     network: ic
-    canisters: [backend, bridge, frontend, arb]
+    canisters: [backend, bridge, eth-deposit-detector, frontend, arb]

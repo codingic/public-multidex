@@ -4963,6 +4963,15 @@ persistent actor Uplands {
   // adds the user to registeredUsers. (Set with setBridge after deploying both.)
   var _bridgePrincipal : ?Principal = null;
 
+  // ETH custody canister (src/eth-deposit-detector). It is the dedicated
+  // scanner that watches each user's Ethereum deposit address, waits for
+  // confirmations, and credits confirmed ETH into the DEX via
+  // creditAndRegister — exactly the role the Bridge plays for the other
+  // assets. Whitelisted here as a SECOND custody canister so each token is
+  // credited by exactly one canister (ETH → detector, BTC/SOL → bridge),
+  // keeping the per-(user,token) creditedSeq high-water free of contention.
+  var _ethDetectorPrincipal : ?Principal = null;
+
   // ── Sibling-canister discovery (icp-cli pitfall 22) ──────────────
   // `icp deploy` injects every project canister's id into every canister's
   // settings as PUBLIC_CANISTER_ID:<name>, correct per environment — local
@@ -4991,6 +5000,7 @@ persistent actor Uplands {
   // propagates on the next update call without waiting for an upgrade.
   transient var _envBridgeCache : ?Principal = envPrincipal<system>("PUBLIC_CANISTER_ID:bridge");
   transient var _envArbCache : ?Principal = envPrincipal<system>("PUBLIC_CANISTER_ID:arb");
+  transient var _envEthDetectorCache : ?Principal = envPrincipal<system>("PUBLIC_CANISTER_ID:eth-deposit-detector");
 
   func effectiveBridge<system>() : ?Principal {
     switch (_bridgePrincipal) {
@@ -5004,6 +5014,12 @@ persistent actor Uplands {
       case null { _envArbCache := envPrincipal<system>("PUBLIC_CANISTER_ID:arb"); _envArbCache };
     };
   };
+  func effectiveEthDetector<system>() : ?Principal {
+    switch (_ethDetectorPrincipal) {
+      case (?p) { ?p };
+      case null { _envEthDetectorCache := envPrincipal<system>("PUBLIC_CANISTER_ID:eth-deposit-detector"); _envEthDetectorCache };
+    };
+  };
   // Capability-free views for queries and sync helpers.
   func cachedBridge() : ?Principal {
     switch (_bridgePrincipal) { case (?p) { ?p }; case null { _envBridgeCache } };
@@ -5011,12 +5027,23 @@ persistent actor Uplands {
   func cachedArb() : ?Principal {
     switch (_arbPrincipal) { case (?p) { ?p }; case null { _envArbCache } };
   };
+  func cachedEthDetector() : ?Principal {
+    switch (_ethDetectorPrincipal) { case (?p) { ?p }; case null { _envEthDetectorCache } };
+  };
 
   public shared (msg) func setBridge(p : Principal) : async () {
     requireController(msg.caller);
     _bridgePrincipal := ?p;
   };
   public query func getBridge() : async ?Principal { cachedBridge() };
+
+  // ETH custody canister wiring (mirror of setBridge/getBridge). Set this to
+  // the deployed eth-deposit-detector canister so it may credit confirmed ETH.
+  public shared (msg) func setEthDetector(p : Principal) : async () {
+    requireController(msg.caller);
+    _ethDetectorPrincipal := ?p;
+  };
+  public query func getEthDetector() : async ?Principal { cachedEthDetector() };
 
   // ── Arbitrage canister: simulated external market ─────────────────
   // docs/amm-vault-design.md §"The missing arbitrageur". Synthetic play assets
@@ -5472,7 +5499,8 @@ persistent actor Uplands {
 
   public shared (msg) func creditAndRegister(user : Principal, token : Types.TokenId, amount : Nat, seq : Nat) : async { #ok; #err : Text } {
     let isBridge = switch (effectiveBridge<system>()) { case (?b) { Principal.equal(msg.caller, b) }; case null { false } };
-    if (not (isBridge or Principal.isController(msg.caller))) { return #err("Only the Bridge canister may credit deposits") };
+    let isEthDetector = switch (effectiveEthDetector<system>()) { case (?d) { Principal.equal(msg.caller, d) }; case null { false } };
+    if (not (isBridge or isEthDetector or Principal.isController(msg.caller))) { return #err("Only the Bridge canister (or the ETH custody canister) may credit deposits") };
     if (amount == 0) { return #err("Amount must be positive") };
     ensureInit<system>();
     // Idempotency gate: a seq we've already applied (or passed) is a replay —
@@ -5870,7 +5898,8 @@ persistent actor Uplands {
     outstanding : [(Types.TokenId, Nat)],
   ) : async { #ok; #err : Text } {
     let isBridge = switch (effectiveBridge<system>()) { case (?b) { Principal.equal(msg.caller, b) }; case null { false } };
-    if (not (isBridge or Principal.isController(msg.caller))) { return #err("Only the Bridge canister may check deposit admission") };
+    let isEthDetector = switch (effectiveEthDetector<system>()) { case (?d) { Principal.equal(msg.caller, d) }; case null { false } };
+    if (not (isBridge or isEthDetector or Principal.isController(msg.caller))) { return #err("Only the Bridge canister (or the ETH custody canister) may check deposit admission") };
     if (amount == 0) { return #err("Amount must be positive") };
     switch (playDepositCap()) {
       case null { #ok };
@@ -5926,7 +5955,8 @@ persistent actor Uplands {
     seq : Nat,
   ) : async { #ok; #err : Text } {
     let isBridge = switch (effectiveBridge<system>()) { case (?b) { Principal.equal(msg.caller, b) }; case null { false } };
-    if (not (isBridge or Principal.isController(msg.caller))) { return #err("Only the Bridge canister may admit deposits") };
+    let isEthDetector = switch (effectiveEthDetector<system>()) { case (?d) { Principal.equal(msg.caller, d) }; case null { false } };
+    if (not (isBridge or isEthDetector or Principal.isController(msg.caller))) { return #err("Only the Bridge canister (or the ETH custody canister) may admit deposits") };
     if (amount == 0) { return #err("Amount must be positive") };
     switch (playDepositCap()) {
       case null { #ok };   // no cap → nothing to consume (claims are uncapped too)

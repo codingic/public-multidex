@@ -29,6 +29,10 @@ args = [ "--default-persistent-actors", "--implicit-package=core", "--public-met
 main = "src/bridge/main.mo"
 args = [ "--default-persistent-actors", "--implicit-package=core" ]
 
+[canisters.eth-deposit-detector]
+main = "src/eth-deposit-detector/main.mo"
+args = [ "--default-persistent-actors", "--implicit-package=core" ]
+
 [canisters.arb]
 main = "src/arb/main.mo"
 args = [ "--default-persistent-actors", "--implicit-package=core" ]
