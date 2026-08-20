@@ -65,6 +65,20 @@ canisters:
         __META_PROJECT: "MULTI/DEX"
         __META_NAME: "ETH Deposit Detector"
 
+  - name: solchain-deposit
+    recipe:
+      type: "@dfinity/motoko@v5.0.0"
+      # Dedicated Solana deposit-detection backend (src/solchain-deposit/main.mo).
+      # Watches each user's deposit address (base58), polls getSignaturesForAddress
+      # on the dfinity sol-rpc canister, resolves each new signature via
+      # getTransaction, recognises inbound SOL / SPL-token transfers, waits for
+      # slot confirmations, then archives them for the DEX to read.
+      # canister config (main, args) lives in mops.toml [canisters.solchain-deposit].
+    settings:
+      environment_variables:
+        __META_PROJECT: "MULTI/DEX"
+        __META_NAME: "SOL Deposit Detector"
+
   - name: arb
     recipe:
       type: "@dfinity/motoko@v5.0.0"
@@ -142,7 +156,7 @@ networks:
 environments:
   - name: engine    # OpenCloud cloud engine (frontend seapz-…)
     network: ic
-    canisters: [backend, bridge, eth-deposit-detector, frontend, arb]
+    canisters: [backend, bridge, eth-deposit-detector, solchain-deposit, frontend, arb]
   - name: subnet    # dedicated subnet serving multidex.ai (frontend hcv4s-…)
     network: ic
-    canisters: [backend, bridge, eth-deposit-detector, frontend, arb]
+    canisters: [backend, bridge, eth-deposit-detector, solchain-deposit, frontend, arb]

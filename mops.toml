@@ -33,6 +33,10 @@ args = [ "--default-persistent-actors", "--implicit-package=core" ]
 main = "src/eth-deposit-detector/main.mo"
 args = [ "--default-persistent-actors", "--implicit-package=core" ]
 
+[canisters.solchain-deposit]
+main = "src/solchain-deposit/main.mo"
+args = [ "--default-persistent-actors", "--implicit-package=core" ]
+
 [canisters.arb]
 main = "src/arb/main.mo"
 args = [ "--default-persistent-actors", "--implicit-package=core" ]
