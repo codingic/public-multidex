@@ -4971,6 +4971,10 @@ persistent actor Uplands {
   // credited by exactly one canister (ETH → detector, BTC/SOL → bridge),
   // keeping the per-(user,token) creditedSeq high-water free of contention.
   var _ethDetectorPrincipal : ?Principal = null;
+  // SOL and BTC deposit detectors — same custody role as the ETH detector above:
+  // each scans its chain and credits confirmed deposits via creditAndRegister.
+  var _solDetectorPrincipal : ?Principal = null;
+  var _btcDetectorPrincipal : ?Principal = null;
 
   // ── Sibling-canister discovery (icp-cli pitfall 22) ──────────────
   // `icp deploy` injects every project canister's id into every canister's
@@ -5001,6 +5005,8 @@ persistent actor Uplands {
   transient var _envBridgeCache : ?Principal = envPrincipal<system>("PUBLIC_CANISTER_ID:bridge");
   transient var _envArbCache : ?Principal = envPrincipal<system>("PUBLIC_CANISTER_ID:arb");
   transient var _envEthDetectorCache : ?Principal = envPrincipal<system>("PUBLIC_CANISTER_ID:eth-deposit-detector");
+  transient var _envSolDetectorCache : ?Principal = envPrincipal<system>("PUBLIC_CANISTER_ID:solchain-deposit");
+  transient var _envBtcDetectorCache : ?Principal = envPrincipal<system>("PUBLIC_CANISTER_ID:btcchain-deposit");
 
   func effectiveBridge<system>() : ?Principal {
     switch (_bridgePrincipal) {
@@ -5020,6 +5026,18 @@ persistent actor Uplands {
       case null { _envEthDetectorCache := envPrincipal<system>("PUBLIC_CANISTER_ID:eth-deposit-detector"); _envEthDetectorCache };
     };
   };
+  func effectiveSolDetector<system>() : ?Principal {
+    switch (_solDetectorPrincipal) {
+      case (?p) { ?p };
+      case null { _envSolDetectorCache := envPrincipal<system>("PUBLIC_CANISTER_ID:solchain-deposit"); _envSolDetectorCache };
+    };
+  };
+  func effectiveBtcDetector<system>() : ?Principal {
+    switch (_btcDetectorPrincipal) {
+      case (?p) { ?p };
+      case null { _envBtcDetectorCache := envPrincipal<system>("PUBLIC_CANISTER_ID:btcchain-deposit"); _envBtcDetectorCache };
+    };
+  };
   // Capability-free views for queries and sync helpers.
   func cachedBridge() : ?Principal {
     switch (_bridgePrincipal) { case (?p) { ?p }; case null { _envBridgeCache } };
@@ -5029,6 +5047,12 @@ persistent actor Uplands {
   };
   func cachedEthDetector() : ?Principal {
     switch (_ethDetectorPrincipal) { case (?p) { ?p }; case null { _envEthDetectorCache } };
+  };
+  func cachedSolDetector() : ?Principal {
+    switch (_solDetectorPrincipal) { case (?p) { ?p }; case null { _envSolDetectorCache } };
+  };
+  func cachedBtcDetector() : ?Principal {
+    switch (_btcDetectorPrincipal) { case (?p) { ?p }; case null { _envBtcDetectorCache } };
   };
 
   public shared (msg) func setBridge(p : Principal) : async () {
@@ -5044,6 +5068,20 @@ persistent actor Uplands {
     _ethDetectorPrincipal := ?p;
   };
   public query func getEthDetector() : async ?Principal { cachedEthDetector() };
+
+  // SOL custody canister wiring (mirror of setEthDetector/getEthDetector).
+  public shared (msg) func setSolDetector(p : Principal) : async () {
+    requireController(msg.caller);
+    _solDetectorPrincipal := ?p;
+  };
+  public query func getSolDetector() : async ?Principal { cachedSolDetector() };
+
+  // BTC custody canister wiring (mirror of setEthDetector/getEthDetector).
+  public shared (msg) func setBtcDetector(p : Principal) : async () {
+    requireController(msg.caller);
+    _btcDetectorPrincipal := ?p;
+  };
+  public query func getBtcDetector() : async ?Principal { cachedBtcDetector() };
 
   // ── Arbitrage canister: simulated external market ─────────────────
   // docs/amm-vault-design.md §"The missing arbitrageur". Synthetic play assets
@@ -5500,7 +5538,9 @@ persistent actor Uplands {
   public shared (msg) func creditAndRegister(user : Principal, token : Types.TokenId, amount : Nat, seq : Nat) : async { #ok; #err : Text } {
     let isBridge = switch (effectiveBridge<system>()) { case (?b) { Principal.equal(msg.caller, b) }; case null { false } };
     let isEthDetector = switch (effectiveEthDetector<system>()) { case (?d) { Principal.equal(msg.caller, d) }; case null { false } };
-    if (not (isBridge or isEthDetector or Principal.isController(msg.caller))) { return #err("Only the Bridge canister (or the ETH custody canister) may credit deposits") };
+    let isSolDetector = switch (effectiveSolDetector<system>()) { case (?d) { Principal.equal(msg.caller, d) }; case null { false } };
+    let isBtcDetector = switch (effectiveBtcDetector<system>()) { case (?d) { Principal.equal(msg.caller, d) }; case null { false } };
+    if (not (isBridge or isEthDetector or isSolDetector or isBtcDetector or Principal.isController(msg.caller))) { return #err("Only the Bridge canister or a deposit detector (ETH/SOL/BTC) may credit deposits") };
     if (amount == 0) { return #err("Amount must be positive") };
     ensureInit<system>();
     // Idempotency gate: a seq we've already applied (or passed) is a replay —
@@ -5899,7 +5939,9 @@ persistent actor Uplands {
   ) : async { #ok; #err : Text } {
     let isBridge = switch (effectiveBridge<system>()) { case (?b) { Principal.equal(msg.caller, b) }; case null { false } };
     let isEthDetector = switch (effectiveEthDetector<system>()) { case (?d) { Principal.equal(msg.caller, d) }; case null { false } };
-    if (not (isBridge or isEthDetector or Principal.isController(msg.caller))) { return #err("Only the Bridge canister (or the ETH custody canister) may check deposit admission") };
+    let isSolDetector = switch (effectiveSolDetector<system>()) { case (?d) { Principal.equal(msg.caller, d) }; case null { false } };
+    let isBtcDetector = switch (effectiveBtcDetector<system>()) { case (?d) { Principal.equal(msg.caller, d) }; case null { false } };
+    if (not (isBridge or isEthDetector or isSolDetector or isBtcDetector or Principal.isController(msg.caller))) { return #err("Only the Bridge canister or a deposit detector (ETH/SOL/BTC) may check deposit admission") };
     if (amount == 0) { return #err("Amount must be positive") };
     switch (playDepositCap()) {
       case null { #ok };
@@ -5956,7 +5998,9 @@ persistent actor Uplands {
   ) : async { #ok; #err : Text } {
     let isBridge = switch (effectiveBridge<system>()) { case (?b) { Principal.equal(msg.caller, b) }; case null { false } };
     let isEthDetector = switch (effectiveEthDetector<system>()) { case (?d) { Principal.equal(msg.caller, d) }; case null { false } };
-    if (not (isBridge or isEthDetector or Principal.isController(msg.caller))) { return #err("Only the Bridge canister (or the ETH custody canister) may admit deposits") };
+    let isSolDetector = switch (effectiveSolDetector<system>()) { case (?d) { Principal.equal(msg.caller, d) }; case null { false } };
+    let isBtcDetector = switch (effectiveBtcDetector<system>()) { case (?d) { Principal.equal(msg.caller, d) }; case null { false } };
+    if (not (isBridge or isEthDetector or isSolDetector or isBtcDetector or Principal.isController(msg.caller))) { return #err("Only the Bridge canister or a deposit detector (ETH/SOL/BTC) may admit deposits") };
     if (amount == 0) { return #err("Amount must be positive") };
     switch (playDepositCap()) {
       case null { #ok };   // no cap → nothing to consume (claims are uncapped too)

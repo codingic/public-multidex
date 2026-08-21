@@ -30,7 +30,7 @@ main = "src/bridge/main.mo"
 args = [ "--default-persistent-actors", "--implicit-package=core" ]
 
 [canisters.eth-deposit-detector]
-main = "src/eth-deposit-detector/main.mo"
+main = "src/ethchain-deposit/main.mo"
 args = [ "--default-persistent-actors", "--implicit-package=core" ]
 
 [canisters.solchain-deposit]

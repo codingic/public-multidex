@@ -55,7 +55,7 @@ canisters:
   - name: eth-deposit-detector
     recipe:
       type: "@dfinity/motoko@v5.0.0"
-      # Dedicated ETH deposit-detection backend (src/eth-deposit-detector/main.mo).
+      # Dedicated ETH deposit-detection backend (src/ethchain-deposit/main.mo).
       # Watches each user's deposit address, recognises inbound ETH, waits for
       # block confirmations, then credits the DEX via backend.creditAndRegister.
       # canister config (main, args) lives in mops.toml
