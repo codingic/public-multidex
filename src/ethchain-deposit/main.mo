@@ -1,6 +1,6 @@
 // ETH deposit detector: scan Ethereum blocks, parse inbound ETH/ERC-20
 // transfers, store them in `deposits`, and archive deeply-confirmed ones into
-// the `depositsConfirmed` array. No crediting — the DEX reads the archive.
+// the `depositsConfirmed` Map (keyed by dedup key). No crediting — the DEX reads the archive.
 
 import Map "mo:core/Map";
 import Principal "mo:core/Principal";
@@ -51,12 +51,14 @@ persistent actor EthDepositDetector {
   // internal ETH has kind "internal-<traceIdx>" (so two internal CALLs to the
   // same watched address in one tx don't collide); ERC-20 uses txHash#logIndex.
   let deposits = Map.empty<Text, Types.Deposit>();
-  // permanent archive of deposits that reached CONFIRMED_BLOCKS
-  // TODO: unbounded growth — at millions of users this array grows forever and
+  // permanent archive of deposits that reached CONFIRMED_BLOCKS, keyed by the
+  // same dedup key (txHash#kind / txHash#logIndex) used in `deposits`. Because
+  // it's keyed, re-archiving a transfer is a no-op and the archive doubles as
+  // the "already settled" membership check used by recordDeposit — so no
+  // separate `confirmedKeys` set is needed (and can't drift out of sync).
+  // TODO: still unbounded — at millions of users this Map grows forever and
   // inflates canister memory; needs bucketing / backend-consumption-then-prune.
-  var depositsConfirmed : [Types.Deposit] = [];
-  // keys already archived, so a re-scanned transfer isn't archived twice
-  let confirmedKeys = Map.empty<Text, ()>();
+  let depositsConfirmed = Map.empty<Text, Types.Deposit>();
 
   let scanning = Map.empty<Text, Bool>();
 
@@ -98,7 +100,7 @@ persistent actor EthDepositDetector {
   };
 
   public query func getConfirmedDeposits() : async [Types.Deposit] {
-    depositsConfirmed;
+    Iter.toArray(Map.values(depositsConfirmed));
   };
 
   // raw JSON-RPC via multi_request (multi-provider consensus); null on error
@@ -299,7 +301,7 @@ persistent actor EthDepositDetector {
     // deposit to the same watched address without clobbering each other
     let dk = if (t.token == null) { t.txHash # "#" # t.kind }
              else { t.txHash # "#" # Nat.toText(t.logIndex) };
-    if (Map.get(deposits, Text.compare, dk) == null and Map.get(confirmedKeys, Text.compare, dk) == null) {
+    if (Map.get(deposits, Text.compare, dk) == null and Map.get(depositsConfirmed, Text.compare, dk) == null) {
       Map.add(deposits, Text.compare, dk, {
         txHash = t.txHash;
         logIndex = t.logIndex;
@@ -401,43 +403,28 @@ persistent actor EthDepositDetector {
     ignore Map.delete(scanning, Text.compare, "scan");
   };
 
-  // move deposits that reached CONFIRMED_BLOCKS into depositsConfirmed; refresh
-  // confirmations for the rest
+  // Move deposits that reached CONFIRMED_BLOCKS out of the pending `deposits`
+  // Map into the `depositsConfirmed` Map (keyed by dk, so re-archiving is a
+  // no-op and the archive itself is the "already settled" check). Refresh
+  // confirmations for the rest. Mutating `deposits` during its own iteration is
+  // unsafe, so the deletes/additions happen in a second pass.
   func confirmDeposits(tip : Nat) {
-    let moved = List.empty<Types.Deposit>();
-    let movedKeys = List.empty<Text>();
+    let moved = List.empty<(Text, Types.Deposit)>();
     let toRefresh = List.empty<(Text, Types.Deposit)>();
     for ((dk, d) in Map.entries(deposits)) {
       let confirmations = if (tip > d.blockHeight) { tip - d.blockHeight } else { 0 };
       if (confirmations >= Constants.CONFIRMED_BLOCKS) {
-        moved.add({
-          d with
-          confirmations = confirmations;
-        });
-        movedKeys.add(dk);
+        moved.add((dk, { d with confirmations }));
       } else if (confirmations != d.confirmations) {
-        toRefresh.add((
-          dk,
-          {
-            d with
-            confirmations = confirmations;
-          },
-        ));
+        toRefresh.add((dk, { d with confirmations }));
       };
     };
-    // delete archived entries AFTER the iteration — mutating the map mid-iteration is unsafe
-    for (dk in List.toArray(movedKeys).vals()) {
+    for ((dk, d) in List.toArray(moved).vals()) {
+      Map.add(depositsConfirmed, Text.compare, dk, d);
       ignore Map.delete(deposits, Text.compare, dk);
-      Map.add(confirmedKeys, Text.compare, dk, ());
     };
     for ((dk, d) in List.toArray(toRefresh).vals()) {
       Map.add(deposits, Text.compare, dk, d);
-    };
-    let movedArr = List.toArray(moved);
-    if (movedArr.size() > 0) {
-      let combined = List.fromArray<Types.Deposit>(depositsConfirmed);
-      List.append(combined, moved);
-      depositsConfirmed := List.toArray(combined);
     };
   };
 
@@ -449,12 +436,9 @@ persistent actor EthDepositDetector {
 
   system func postupgrade() {
     Map.clear(scanning);
-    // backfill the archive-key set from existing confirmed deposits so a
-    // re-scanned transfer isn't archived twice right after an upgrade
-    for (d in depositsConfirmed.vals()) {
-      let dk = if (d.token == null) { d.txHash # "#" # d.kind } else { d.txHash # "#" # Nat.toText(d.logIndex) };
-      Map.add(confirmedKeys, Text.compare, dk, ());
-    };
+    // depositsConfirmed is the authoritative settled archive (a Map keyed by
+    // dk); recordDeposit consults it directly, so there is no separate key set
+    // to rebuild after an upgrade.
   };
 
   system func inspect({ caller : Principal }) : Bool {
