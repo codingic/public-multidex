@@ -140,22 +140,35 @@ persistent actor BtcDepositDetector {
     } catch (_) { false };
   };
 
+  // upsert: insert when unseen; refresh the stored block height when a UTXO
+  // transitions from mempool (height 0) to a mined block (height > 0), so the
+  // confirmation count in confirmDeposits can accrue. `amount`/`to`/`asset`
+  // never change for a fixed outpoint, only the height does.
   func recordDeposit(d : Types.Deposit) {
     if (d.amountRaw == 0) { return };
-    if (Map.get(deposits, Text.compare, d.dedupKey) == null
-        and Map.get(confirmedKeys, Text.compare, d.dedupKey) == null) {
-      Map.add(deposits, Text.compare, d.dedupKey, {
-        signature = d.signature;
-        slot = d.slot;
-        asset = d.asset;
-        token = d.token;
-        from = d.from;
-        to = d.to;
-        amountRaw = d.amountRaw;
-        blockHeight = d.blockHeight;
-        confirmations = 0;
-        dedupKey = d.dedupKey;
-      });
+    switch (Map.get(deposits, Text.compare, d.dedupKey)) {
+      case (null) {
+        if (Map.get(confirmedKeys, Text.compare, d.dedupKey) == null) {
+          Map.add(deposits, Text.compare, d.dedupKey, {
+            signature = d.signature;
+            slot = d.slot;
+            asset = d.asset;
+            token = d.token;
+            from = d.from;
+            to = d.to;
+            amountRaw = d.amountRaw;
+            blockHeight = d.blockHeight;
+            confirmations = 0;
+            dedupKey = d.dedupKey;
+          });
+        };
+      };
+      case (?existing) {
+        // a UTXO's height transitions 0 (mempool) → real block height once mined
+        if (d.blockHeight > existing.blockHeight) {
+          Map.add(deposits, Text.compare, d.dedupKey, { existing with blockHeight = d.blockHeight });
+        };
+      };
     };
   };
 

@@ -332,22 +332,33 @@ persistent actor SolDepositDetector {
     List.toArray(out);
   };
 
+  // upsert: insert when unseen; refresh the stored block height / slot when it
+  // advances, so confirmation counting stays correct. `amount`/`to`/`asset`
+  // never change for a fixed dedup key, only the height does.
   func recordDeposit(d : Types.Deposit) {
     if (d.amountRaw == 0) { return };
-    if (Map.get(deposits, Text.compare, d.dedupKey) == null
-        and Map.get(confirmedKeys, Text.compare, d.dedupKey) == null) {
-      Map.add(deposits, Text.compare, d.dedupKey, {
-        signature = d.signature;
-        slot = d.slot;
-        asset = d.asset;
-        token = d.token;
-        from = d.from;
-        to = d.to;
-        amountRaw = d.amountRaw;
-        blockHeight = d.slot;
-        confirmations = 0;
-        dedupKey = d.dedupKey;
-      });
+    switch (Map.get(deposits, Text.compare, d.dedupKey)) {
+      case (null) {
+        if (Map.get(confirmedKeys, Text.compare, d.dedupKey) == null) {
+          Map.add(deposits, Text.compare, d.dedupKey, {
+            signature = d.signature;
+            slot = d.slot;
+            asset = d.asset;
+            token = d.token;
+            from = d.from;
+            to = d.to;
+            amountRaw = d.amountRaw;
+            blockHeight = d.slot;
+            confirmations = 0;
+            dedupKey = d.dedupKey;
+          });
+        };
+      };
+      case (?existing) {
+        if (d.blockHeight > existing.blockHeight) {
+          Map.add(deposits, Text.compare, d.dedupKey, { existing with blockHeight = d.blockHeight });
+        };
+      };
     };
   };
 
