@@ -37,6 +37,10 @@ args = [ "--default-persistent-actors", "--implicit-package=core" ]
 main = "src/solchain-deposit/main.mo"
 args = [ "--default-persistent-actors", "--implicit-package=core" ]
 
+[canisters.btcchain-deposit]
+main = "src/btcchain-deposit/main.mo"
+args = [ "--default-persistent-actors", "--implicit-package=core" ]
+
 [canisters.arb]
 main = "src/arb/main.mo"
 args = [ "--default-persistent-actors", "--implicit-package=core" ]

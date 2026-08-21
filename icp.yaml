@@ -79,6 +79,20 @@ canisters:
         __META_PROJECT: "MULTI/DEX"
         __META_NAME: "SOL Deposit Detector"
 
+  - name: btcchain-deposit
+    recipe:
+      type: "@dfinity/motoko@v5.0.0"
+      # Dedicated Bitcoin deposit-detection backend (src/btcchain-deposit/main.mo).
+      # Watches each user's deposit address, polls get_utxos on the dfinity
+      # bitcoin canister (mgi-tqaaaa-aaaar-qaqoa-cai), recognises inbound BTC
+      # UTXOs (native only), waits for block confirmations, then archives them
+      # for the DEX to read. canister config (main, args) lives in mops.toml
+      # [canisters.btcchain-deposit].
+    settings:
+      environment_variables:
+        __META_PROJECT: "MULTI/DEX"
+        __META_NAME: "BTC Deposit Detector"
+
   - name: arb
     recipe:
       type: "@dfinity/motoko@v5.0.0"
@@ -156,7 +170,7 @@ networks:
 environments:
   - name: engine    # OpenCloud cloud engine (frontend seapz-…)
     network: ic
-    canisters: [backend, bridge, eth-deposit-detector, solchain-deposit, frontend, arb]
+    canisters: [backend, bridge, eth-deposit-detector, solchain-deposit, btcchain-deposit, frontend, arb]
   - name: subnet    # dedicated subnet serving multidex.ai (frontend hcv4s-…)
     network: ic
-    canisters: [backend, bridge, eth-deposit-detector, solchain-deposit, frontend, arb]
+    canisters: [backend, bridge, eth-deposit-detector, solchain-deposit, btcchain-deposit,  frontend, arb]
