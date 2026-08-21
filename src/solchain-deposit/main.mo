@@ -406,7 +406,13 @@ persistent actor SolDepositDetector {
       let source = switch (Json.getAsText(ins, "parsed.info.source")) {
         case (#ok v) { v }; case (#err _) { "" };
       };
-      let amount = decToNat(switch (Json.getAsText(ins, "parsed.info.amount")) {
+      // Amount location differs by instruction type (per Solana docs):
+      //   transfer       (3): parsed.info.amount            -> flat string
+      //   transferChecked(12): parsed.info.tokenAmount.amount -> nested under tokenAmount
+      // Reading the wrong path yields "" -> decToNat("0") -> amount==0 -> early `return null`,
+      // which silently drops every parsed transferChecked deposit.
+      let amountPath = if (itype == "transferChecked") { "parsed.info.tokenAmount.amount" } else { "parsed.info.amount" };
+      let amount = decToNat(switch (Json.getAsText(ins, amountPath)) {
         case (#ok v) { v }; case (#err _) { "0" };
       });
       if (source != "" and destination != "" and amount > 0) {
