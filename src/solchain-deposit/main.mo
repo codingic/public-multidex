@@ -22,6 +22,7 @@ import Types "Types";
 import SolRpcTypes "SolRpcTypes";
 import Constants "Constants";
 import Base58 "Base58";
+import Array "mo:core/Array";
 
 persistent actor SolDepositDetector {
 
@@ -72,8 +73,9 @@ persistent actor SolDepositDetector {
   // transfers are detected; `owner` is the principal the address belongs to
   public shared (msg) func registerDepositAddress(owner : Principal, addr : Text) : async () {
     requireController(msg.caller);
-    // base58 is case-sensitive, so no lowercasing — just validate the alphabet
-    if (not Base58.isValidBase58(addr)) { Runtime.trap("Invalid base58 address") };
+    // base58 is case-sensitive, so no lowercasing. Require a genuine 32-byte
+    // pubkey so the exact-match lookup against watchedAddresses is meaningful.
+    if (not Base58.isValidSolanaAddress(addr)) { Runtime.trap("Invalid Solana address (must decode to a 32-byte pubkey)") };
     Map.add(watchedAddresses, Text.compare, addr, owner);
   };
   public shared (msg) func unregisterDepositAddress(addr : Text) : async () {
@@ -159,7 +161,7 @@ persistent actor SolDepositDetector {
   func getBlock(h : Nat) : async ?[Json.Json] {
     let payload = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getBlock\",\"params\":["
       # Nat.toText(h)
-      # ",{\"commitment\":\"finalized\",\"encoding\":\"jsonParsed\",\"transactionDetails\":\"jsonParsed\",\"maxSupportedTransactionVersion\":0,\"rewards\":false}]}";
+      # ",{\"commitment\":\"finalized\",\"encoding\":\"jsonParsed\",\"transactionDetails\":\"full\",\"maxSupportedTransactionVersion\":0,\"rewards\":false}]}";
     switch (await jsonRequest(payload)) {
       case null { null };
       case (?s) {
@@ -176,22 +178,14 @@ persistent actor SolDepositDetector {
     };
   };
 
-  // scan one slot: fetch the block and record every inbound transfer to a
-  // watched address. Returns false if the block fetch failed (so scanBlocks can
-  // stop advancing and retry next cycle — the dedup layer guarantees idempotency).
-  func scanBlockProd(h : Nat) : async Bool {
-    switch (await getBlock(h)) {
-      case null { false };
-      case (?txs) {
-        for (tx in txs.vals()) {
-          // skip failed txs (meta.err is a non-null object); such txs make no
-          // balance change, so crediting them would be wrong anyway
-          switch (Json.getAsObject(tx, "meta.err")) {
-            case (#err _) { for (t in extractTransfers(tx, h).vals()) { recordDeposit(transferToDeposit(t)) } };
-            case (#ok _) { /* failed tx — skip */ };
-          };
-        };
-        true;
+  // process one already-fetched block's transactions: record every inbound
+  // transfer to a watched address. Failed txs (meta.err is a non-null object)
+  // are skipped — they make no balance change, so crediting them would be wrong.
+  func processBlock(h : Nat, txs : [Json.Json]) {
+    for (tx in txs.vals()) {
+      switch (Json.getAsObject(tx, "meta.err")) {
+        case (#err _) { for (t in extractTransfers(tx, h).vals()) { recordDeposit(transferToDeposit(t)) } };
+        case (#ok _) { /* failed tx — skip */ };
       };
     };
   };
@@ -386,12 +380,39 @@ persistent actor SolDepositDetector {
     let safeTip = if (tip > Constants.DELAY_SLOTS) { tip - Constants.DELAY_SLOTS } else { 0 };
     let batchEnd = Nat.min(safeTip, slotHeight + Constants.MAX_SLOTS_PER_SCAN);
 
+    // Scan in batches: fire up to BLOCKS_PER_BATCH getBlock calls concurrently
+    // (Solana produces slots ~2.5/s, so sequential fetches can't keep up). Each
+    // batch is processed in slot order; a failed fetch halts the batch and
+    // leaves slotHeight at the failed slot so the next cycle retries it — the
+    // dedup layer makes replay idempotent.
     label scan loop {
       if (slotHeight > batchEnd) { break scan };
-      // a failed block fetch leaves slotHeight where it is; the next cycle retries
-      // from the same slot, and the dedup layer makes replay idempotent
-      if (not (await scanBlockProd(slotHeight))) { break scan };
-      slotHeight += 1;
+      // build this batch's slots (capped at BLOCKS_PER_BATCH and batchEnd)
+      var slots : [Nat] = [];
+      label build loop {
+        if (slots.size() >= Constants.BLOCKS_PER_BATCH) { break build };
+        let h = slotHeight + slots.size();
+        if (h > batchEnd) { break build };
+        slots := Array.append(slots, [h]);
+      };
+      // initiate all fetches now so they run concurrently
+      var futures : [async ?[Json.Json]] = [];
+      for (h in slots.vals()) { futures := Array.append(futures, [getBlock(h)]) };
+      // collect results in order
+      let results = Array.init<?[Json.Json]>(slots.size(), null);
+      var idx = 0;
+      for (f in futures.vals()) { results[idx] := await f; idx += 1 };
+      // process in slot order; stop at the first fetch failure
+      var halt = false;
+      var pidx = 0;
+      label proc for (h in slots.vals()) {
+        switch (results[pidx]) {
+          case null { halt := true; break proc };
+          case (?txs) { processBlock(h, txs); slotHeight := h + 1 };
+        };
+        pidx += 1;
+      };
+      if (halt) { break scan };
     };
 
     confirmDeposits(tip);

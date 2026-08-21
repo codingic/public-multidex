@@ -77,11 +77,21 @@ persistent actor BtcDepositDetector {
   // decoded to its scriptPubKey purely for validation (checksum + supported
   // type — a typo'd address is rejected on the spot); the address itself is
   // the match key: block scanning converts each output's scriptPubKey back
-  // into an address and looks it up in watchedAddresses. `owner` is the
+  // into an address and looks it up in watchedAddresses with EXACT string
+  // equality (no prefix / contains / fuzzy matching). `owner` is the
   // principal the address belongs to.
   public shared (msg) func registerDepositAddress(owner : Principal, addr : Text) : async () {
     requireController(msg.caller);
     if (not isValidBtcAddress(addr)) { Runtime.trap("Invalid Bitcoin address") };
+    // exact-match guarantee: the registered string must equal what the scan
+    // side re-encodes. A bech32 address whose HRP doesn't match the network
+    // we scan (e.g. tb1… on mainnet) would re-encode with a different prefix
+    // and silently never match — reject it loudly here. (Testnet base58 is
+    // already rejected inside BtcAddr: only mainnet versions 0x00/0x05.)
+    let isBech = Text.startsWith(addr, #text("bc1")) or Text.startsWith(addr, #text("tb1")) or Text.startsWith(addr, #text("bcrt1"));
+    if (isBech and not Text.startsWith(addr, #text(bech32Hrp # "1"))) {
+      Runtime.trap("Address network mismatch: expected " # bech32Hrp # "1…");
+    };
     switch (BtcAddr.addressToScript(addr)) {
       case null { Runtime.trap("Unsupported or malformed Bitcoin address") };
       case (?_) { Map.add(watchedAddresses, Text.compare, addr, owner) };

@@ -8,6 +8,7 @@
 
 import Text "mo:core/Text";
 import Iter "mo:core/Iter";
+import List "mo:core/List";
 
 // Bitcoin-style base58 alphabet (used by Solana).
 let ALPHABET : Text = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -41,4 +42,41 @@ func isValidBase58(s : Text) : Bool {
     if (charValue(c) == null) { return false };
   };
   true;
+};
+
+// Strict Solana address check: valid base58 AND decodes to exactly 32 bytes
+// (a genuine Ed25519 pubkey). A genuine address is 43–44 base58 chars, but the
+// only reliable way to accept all of them (including the rare short forms from
+// leading-zero bytes) while rejecting every malformed string is to actually
+// decode and check the byte length. This guarantees that anything stored in
+// `watchedAddresses` is a real address, so the exact-match lookup in the
+// detector is meaningful — a short/garbage string would pass the alphabet-only
+// check but can never match an on-chain address (silent missed deposits).
+func isValidSolanaAddress(s : Text) : Bool {
+  // leading '1' characters encode leading zero bytes
+  var leadingZeros = 0;
+  var started = false;
+  var num : Nat = 0;
+  for (c in s.chars()) {
+    if (not started and c == '1') { leadingZeros += 1; continue };
+    started := true;
+    switch (charValue(c)) {
+      case (?v) { num := num * 58 + v };
+      case null { return false };
+    };
+  };
+  var bytes = List.nil<Nat8>();
+  if (num > 0) {
+    var n = num;
+    while (n > 0) {
+      bytes := List.push<Nat8>(Nat8.fromNat(n % 256), bytes);
+      n := n / 256;
+    };
+  };
+  var i = 0;
+  while (i < leadingZeros) {
+    bytes := List.push<Nat8>(0, bytes);
+    i += 1;
+  };
+  List.size(bytes) == 32;
 };

@@ -24,10 +24,25 @@ persistent actor EthDepositDetector {
   };
   transient var _evmRpcCache : ?Principal = Constants.evmRpcEnv<system>();
 
-  // key = lowercased deposit address; value = owning principal
+  // key = canonical lowercased 0x-prefixed deposit address (see normalizeAddress);
+  // value = owning principal. A user-address check is an exact match against the
+  // inbound transfer's normalized `to` / recipient.
   let watchedAddresses = Map.empty<Text, Principal>();
-  // lowercased contract -> same address (membership set of watched ERC-20 tokens)
+  // lowercased 0x-prefixed contract -> same address (membership set of watched
+  // ERC-20 tokens). Both the key (watch / unwatch) and the log's `log.address`
+  // (match) go through normalizeAddress, so membership is an exact,
+  // case-insensitive check.
   let watchedTokens = Map.empty<Text, Text>();
+
+  // Canonical ETH address key: lowercase + 0x-prefixed. This is the single
+  // normalization point used by BOTH the watchedAddresses key (on register /
+  // unregister) AND the inbound transfer's `to` / recipient (on match), so a
+  // user-address check is an exact, case-insensitive match no matter whether a
+  // caller or the chain supplies a bare / checksummed address.
+  func normalizeAddress(addr : Text) : Text {
+    let a = Hex.lowerHex(addr);
+    if (Text.startsWith(a, #text "0x")) { a } else { "0x" # a };
+  };
 
   // last fully-read block height; advanced every scan
   var blockHeight : Nat = 0;
@@ -52,12 +67,12 @@ persistent actor EthDepositDetector {
 
   public shared (msg) func watchToken(contract : Text) : async () {
     requireController(msg.caller);
-    let c = Hex.lowerHex(contract);
+    let c = normalizeAddress(contract);
     Map.add(watchedTokens, Text.compare, c, c);
   };
   public shared (msg) func unwatchToken(contract : Text) : async () {
     requireController(msg.caller);
-    ignore Map.delete(watchedTokens, Text.compare, Hex.lowerHex(contract));
+    ignore Map.delete(watchedTokens, Text.compare, normalizeAddress(contract));
   };
   public query func getWatchedTokens() : async [Text] {
     Iter.toArray(Map.keys(watchedTokens));
@@ -67,15 +82,14 @@ persistent actor EthDepositDetector {
   // transfers are detected; `owner` is the principal the address belongs to
   public shared (msg) func registerDepositAddress(owner : Principal, addr : Text) : async () {
     requireController(msg.caller);
-    // normalize to lowercased 0x-prefixed form so it matches the key
-    // extractLogEntry derives from a 32-byte topic (always 0x-prefixed)
-    let a = Hex.lowerHex(addr);
-    let key = if (Text.startsWith(a, #text "0x")) { a } else { "0x" # a };
-    Map.add(watchedAddresses, Text.compare, key, owner);
+    // store under the canonical lowercased 0x-prefixed key (see normalizeAddress)
+    Map.add(watchedAddresses, Text.compare, normalizeAddress(addr), owner);
   };
   public shared (msg) func unregisterDepositAddress(addr : Text) : async () {
     requireController(msg.caller);
-    ignore Map.delete(watchedAddresses, Text.compare, Hex.lowerHex(addr));
+    // normalize the same way as register; a bare / checksummed input would
+    // otherwise miss the stored key and leave the address silently watched
+    ignore Map.delete(watchedAddresses, Text.compare, normalizeAddress(addr));
   };
   public query func getDepositAddresses() : async [Text] {
     Iter.toArray(Map.keys(watchedAddresses));
@@ -120,7 +134,7 @@ persistent actor EthDepositDetector {
           case (#err _) { null };
           case (#ok j) {
             let to = switch (Json.getAsText(j, "result.to")) {
-              case (#ok v) { Hex.lowerHex(v) }; case (#err _) { "" };
+              case (#ok v) { normalizeAddress(v) }; case (#err _) { "" };
             };
             if (to == "") { return null };
             let valueHex = switch (Json.getAsText(j, "result.value")) {
@@ -183,9 +197,9 @@ persistent actor EthDepositDetector {
     if (log.topics.size() < 3) { return };
     if (log.topics[0] != Constants.TRANSFER_SIG) { return };
     if (log.logIndex == null) { return };   // no log index → can't build a safe dedup key
-    let contract = Hex.lowerHex(log.address);
+    let contract = normalizeAddress(log.address);
     if (Map.get(watchedTokens, Text.compare, contract) == null) { return };
-    let recipient = Hex.lowerHex(Hex.topicToAddress(log.topics[2]));
+    let recipient = normalizeAddress(Hex.topicToAddress(log.topics[2]));
     if (recipient == "" or Map.get(watchedAddresses, Text.compare, recipient) == null) { return };
     let from = Hex.lowerHex(Hex.topicToAddress(log.topics[1]));
     let amountRaw = Hex.hexToNat(log.data);

@@ -36,6 +36,7 @@
 - `registerDepositAddress(owner, addr)` 调用 `BtcAddr.addressToScript(addr)` 做**注册时校验**（base58 双重 SHA256 / bech32(bech32m) polymod 校验和 + 支持类型），拼错即拒；通过后把 `addr` 登记进 `watchedAddresses`（addr↔owner）。**不再维护 `watchedScripts` 脚本表**。
 - 扫描热路径反向走：每个 output 的 scriptPubKey 经 `BtcAddr.scriptToAddress(script, hrp)` 转回规范地址，与 `watchedAddresses` 直接比对。
 - 支持类型（标准形状白名单）：P2PKH（base58 v0）、P2SH（base58 v5）、P2WPKH（bech32 v0-20）、P2WSH（bech32 v0-32）、P2TR / Taproot（bech32m v1-32）；其余一律 null。要求地址为小写规范形式（大写 bech32 会在注册校验时被拒）。base58 版本字节固定为主网（0x00 / 0x05）。
+- **匹配是完全匹配**：注册串与扫描侧重编码串**逐字符相等**才命中（`Map.get` 精确键查找，无前缀/包含/模糊）。注册时校验 bech32 HRP 与所扫网络一致——主网部署注册 `tb1…`/`bcrt1…` 直接 trap（否则扫描侧用 `bc` 重编码成不同字符串，静默永不匹配）；base58 测试网版本字节（0x6f/0xc4）由 `BtcAddr` 拒绝。
 - **锁定 / 不可花费的 output 永远不会入充值表**：匹配是与注册地址的脚本**逐字节相等**，所以任何「内嵌用户地址但带锁」的脚本（CLTV/CSV 时间锁、哈希锁 HTLC、多签包裹、OP_RETURN 携带地址数据）都不可能命中；非标准 witness 程序在注册与扫描**两侧同时被拒**——v0 非 20/32 字节是共识不可花费（永久锁定），v1 非 32 字节 / v2–v16 是 anyone-can-spend（语义未定义，任何人都可花走）。
 - bech32 HRP（`bc` / `tb` / `bcrt`）由 `Constants.BTC_NETWORK` 推导，与所扫网络一致，保证 script→address 与注册地址逐字符一致；校验和变体按 BIP350 严格配对（v0↔bech32、v1↔bech32m），错配地址直接拒绝。
 - 扫描活性保障：`scanBlocks` 用 try/catch 兜底释放 `scanning` 标志——即使 `Block.decodeBlock` 在畸形区块上 trap（已加截断保护，正常返回 null），也不会把扫描锁死到下次升级。

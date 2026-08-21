@@ -23,6 +23,7 @@ let SPL_TOKEN_2022_PROGRAM : Text = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb
 
 let DELAY_SLOTS : Nat = 32;           // stop this many slots behind the tip (reorg guard)
 let MAX_SLOTS_PER_SCAN : Nat = 150;   // cap per-cycle RPC cost (one address sweep each)
+let BLOCKS_PER_BATCH : Nat = 5;       // slots fetched concurrently per scan batch (Solana is fast)
 let CONFIRMED_SLOTS : Nat = 32;       // move to depositsConfirmed at this depth
 let SCAN_INTERVAL_SEC : Nat = 8;      // poll cadence (Solana slots ~400ms; sweep is per-address)
 let SOL_RPC_CYCLES : Nat = 10_000_000_000;
