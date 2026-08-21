@@ -22,7 +22,7 @@
 3. **取每个区块的 hash**：`get_block_headers(start=h, end=h)` 返回该高度的 `BlockHeader.block_hash`。
 4. **取原始区块**：`get_block(block_hash)` 返回整块序列化字节 `Blob`。
 5. **解码**：`Block.decodeBlock(raw)` 遍历块内每笔交易的每个 output，抽出 `{ script : Blob, value : Nat64, txIndex, vout }`（无需解析 txid / 输入脚本 / witness）。
-6. **脚本匹配**：把每个 output 的 `script` 转 hex，去 `watchedScripts` 里查（热路径只做 hex 比对，**不解析脚本语义**）。
+6. **地址匹配**：把每个 output 的 `script` 经 `BtcAddr.scriptToAddress` **反向转换成规范地址**，去 `watchedAddresses` 里查（不匹配的脚本形状——OP_RETURN / P2PK / 多签等——直接返回 null 跳过）。
 7. 命中 → `recordDeposit`（dedupKey = `blockHex # txIndex # vout`，upsert 幂等）。
 
 ### 2.2 游标推进与失败重试（对齐 SOL）
@@ -31,12 +31,13 @@
 - 某高度 `get_block` / `decodeBlock` 失败 → 停在当前高度，下轮重扫（dedup 幂等，重扫不会重复入库）。
 - 定时触发：`Timer.recurringTimer(#seconds(SCAN_INTERVAL_SEC=15), scanBlocks)`。
 
-### 2.3 地址注册与脚本匹配键
+### 2.3 地址注册与匹配
 
-- `registerDepositAddress(owner, addr)` 调用 `BtcAddr.addressToScript(addr)` 把地址**解码成精确的 scriptPubKey 字节**，再以 hex 作为 `watchedScripts` 的匹配键登记；同时保留 `watchedAddresses`（owner↔addr）。
-- 解码阶段即校验 base58 双重 SHA256 校验和 / bech32(bech32m) polymod 校验和，因此**地址拼错会在注册时直接被拒**，而不会「永远匹配不上」。
-- 支持类型：P2PKH（base58 v0）、P2SH（base58 v5）、P2WPKH（bech32 v0）、P2WSH（bech32 v0）、P2TR / Taproot（bech32m v1）。A-Z 大写地址按 BIP173 规范归一化为小写后处理。
-- 热路径不解析脚本：注册（低频）承担解码成本，扫描（高频）只做 hex 比对。
+- `registerDepositAddress(owner, addr)` 调用 `BtcAddr.addressToScript(addr)` 做**注册时校验**（base58 双重 SHA256 / bech32(bech32m) polymod 校验和 + 支持类型），拼错即拒；通过后把 `addr` 登记进 `watchedAddresses`（addr↔owner）。**不再维护 `watchedScripts` 脚本表**。
+- 扫描热路径反向走：每个 output 的 scriptPubKey 经 `BtcAddr.scriptToAddress(script, hrp)` 转回规范地址，与 `watchedAddresses` 直接比对。
+- 支持类型（标准形状白名单）：P2PKH（base58 v0）、P2SH（base58 v5）、P2WPKH（bech32 v0-20）、P2WSH（bech32 v0-32）、P2TR / Taproot（bech32m v1-32）；其余一律 null。要求地址为小写规范形式（大写 bech32 会在注册校验时被拒）。base58 版本字节固定为主网（0x00 / 0x05）。
+- **锁定 / 不可花费的 output 永远不会入充值表**：匹配是与注册地址的脚本**逐字节相等**，所以任何「内嵌用户地址但带锁」的脚本（CLTV/CSV 时间锁、哈希锁 HTLC、多签包裹、OP_RETURN 携带地址数据）都不可能命中；非标准 witness 程序在注册与扫描**两侧同时被拒**——v0 非 20/32 字节是共识不可花费（永久锁定），v1 非 32 字节 / v2–v16 是 anyone-can-spend（语义未定义，任何人都可花走）。
+- bech32 HRP（`bc` / `tb` / `bcrt`）由 `Constants.BTC_NETWORK` 推导，与所扫网络一致，保证 script→address 与注册地址逐字符一致。
 
 ### 2.4 入金判定与确认数 `confirmDeposits(tip)`
 
@@ -50,10 +51,10 @@
 
 | 关注点 | 做法 |
 | --- | --- |
-| 检测模型 | **逐区块扫描**：`get_current_block_height` → `get_block_headers`(取 hash) → `get_block`(原始块) → `Block.decodeBlock` → scriptPubKey hex 比对 `watchedScripts`。与 SOL 版逐块模型对称，替代旧的按地址 `get_utxos` 轮询 |
+| 检测模型 | **逐区块扫描**：`get_current_block_height` → `get_block_headers`(取 hash) → `get_block`(原始块) → `Block.decodeBlock` → scriptPubKey 反向转地址比对 `watchedAddresses`。与 SOL 版逐块模型对称，替代旧的按地址 `get_utxos` 轮询 |
 | 游标 / 重扫 | `blockHeight` 游标；首跑跳到 `tip − DELAY_BLOCKS − MAX_BLOCKS_PER_SCAN`；失败停当前高度下轮重扫；dedup 幂等 |
-| 地址规范 | `BtcAddr.addressToScript`：base58（P2PKH/P2SH）+ bech32/bech32m（P2WPKH/P2WSH/P2TR），注册时校验和校验，拼错即拒 |
-| 热路径 | 只 hex 比对原始 output script，不解析脚本语义 |
+| 地址规范 | `BtcAddr`：`addressToScript`（注册时校验）+ `scriptToAddress`（扫描时反向转换）：base58（P2PKH/P2SH）+ bech32/bech32m（P2WPKH/P2WSH/P2TR），拼错即拒 |
+| 热路径 | 每个 output 的 scriptPubKey 反向解码为规范地址后查 `watchedAddresses`；不支持的脚本形状直接 null 跳过。反向转换对块内全部 output 执行（含校验和计算），成本高于旧版 hex 比对，见 §6 |
 | 去重 | 去重键 = `blockHex # txIndex # vout`；`deposits` + `confirmedKeys` 双查防重复入库；`postupgrade` 从 `depositsConfirmed` 回填 `confirmedKeys` |
 | 幂等 / 防重组 | `CONFIRMED_CONFIRMATIONS=6` 阈值、`tip − height + 1` 深度判定、`recordDeposit` upsert |
 | 金额 | `value` 已是 satoshi（最小单位），直接作为 `amountRaw`，无 decimal 换算 |
@@ -63,8 +64,8 @@
 
 | 接口 | 类型 | 权限 | 说明 |
 | --- | --- | --- | --- |
-| `registerDepositAddress(owner, addr)` | shared | controller | 注册某用户的 BTC 充值地址；`addr` 经 `BtcAddr.addressToScript` 解码 + 校验和校验（拼错即拒），同时登记 `watchedAddresses` 与 `watchedScripts` |
-| `unregisterDepositAddress(addr)` | shared | controller | 注销某充值地址（同步删除 `watchedAddresses` 与 `watchedScripts`） |
+| `registerDepositAddress(owner, addr)` | shared | controller | 注册某用户的 BTC 充值地址；`addr` 经 `BtcAddr.addressToScript` 解码 + 校验和校验（拼错即拒），登记 `watchedAddresses`（addr↔owner） |
+| `unregisterDepositAddress(addr)` | shared | controller | 注销某充值地址（从 `watchedAddresses` 删除） |
 | `getDepositAddresses()` | query | 公开 | 返回当前所有被监控充值地址 |
 | `getConfirmedDeposits()` | query | 公开 | 返回已达确认阈值的永久存档（**当前为全量返回**，见 §6） |
 | `scanAll()` | shared | 公开 | 手动触发一次 `scanBlocks`（调试 / 补扫用） |
@@ -85,6 +86,7 @@
 2. **全量返回接口**：`getDepositAddresses()` / `getConfirmedDeposits()` 当前返回整个数组，百万级会撑爆 query 响应，**需加分页**。
 3. **逐个注册不可行**：`registerDepositAddress` 一次只注册一个地址，100 万地址需调用 100 万次，**需提供批量注册接口**。
 4. **`get_block` 带宽 / cycles 成本**：逐区块模型每轮最多读 `MAX_BLOCKS_PER_SCAN(10)` 个原始区块（单块可达 1–4 MB），cycles 与解码成本远高于旧版「按地址 `get_utxos`」。需关注：(a) 落后太多时游标会渐进追赶，首跑可能多轮才能追上链尖；(b) 超大区块（含大量非相关交易）解码有固定开销，必要时应引入只扫相关高度的窗口化 / 限制并发。相较旧模型，RPC 次数不再随「地址数」线性增长，而随「区块数」增长，更适合大规模用户。
+5. **扫描热路径反向转换成本**：`scriptToAddress` 对块内**每个** output 执行（含 base58 除法循环 / bech32 polymod 校验和计算），单块数千 output 时指令开销显著高于旧版「script hex 查表」。若实测逼近消息指令上限或 cycles 偏高，可加预筛优化：先比对 witness program / hash160 的 hex 是否命中（等价于恢复轻量脚本键），命中才做完整地址编码。
 
 ## 7. 代码结构
 
@@ -94,7 +96,7 @@ src/btcchain-deposit/
 ├── Types.mo         // Transfer / Deposit 类型定义
 ├── Constants.mo     // 链配置、扫描参数（DELAY_BLOCKS / MAX_BLOCKS_PER_SCAN / SCAN_INTERVAL_SEC / CONFIRMED_CONFIRMATIONS / BTC_RPC_CYCLES）、bitcoin canister 构造
 ├── BtcRpcTypes.mo   // bitcoin canister 的 Candid 类型子集（get_current_block_height / get_block_headers / get_block / get_utxos / get_balance）
-├── BtcAddr.mo       // 【新增】地址 → scriptPubKey 解码器（base58 + bech32/bech32m），无 Word32/位运算环境下用 + * / % 模拟 polymod 与 5→8 转换
+├── BtcAddr.mo       // 地址 ⇄ scriptPubKey 双向转换器：addressToScript（注册校验）+ scriptToAddress（扫描反向转换），base58 + bech32/bech32m；无 Word32/位运算环境下用 + * / % 模拟 polymod 与 5↔8 转换
 ├── Block.mo         // 【新增】原始比特币区块解码器（legacy + segwit/BIP141，含 witness 段处理防游标错位）
 └── README.md        // 本文件
 ```

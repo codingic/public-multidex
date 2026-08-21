@@ -5,7 +5,8 @@
 // transaction output: its scriptPubKey (Blob), value (satoshis, Nat64), plus
 // the tx index and output index (for a stable, replay-safe dedup key). We do
 // NOT need txids or input scripts — deposits are detected at output creation,
-// and the recipient is matched by the raw scriptPubKey against watchedScripts.
+// and the recipient is recovered by converting each output's scriptPubKey
+// back into an address (BtcAddr.scriptToAddress, called from main.mo).
 //
 // Handles both legacy and segwit (BIP141) transactions, including the witness
 // section, so we skip witnesses correctly and don't desync the cursor.

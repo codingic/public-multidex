@@ -6,8 +6,9 @@
 //
 // Model mirrors the ETH/SOL detectors' monitor→detect→confirm→archive flow, but
 // adapted to Bitcoin's UTXO model: instead of a per-address UTXO poll we scan
-// the chain block-by-block (get_block_headers → get_block → decode), matching
-// each output's scriptPubKey against the set registered at registerDepositAddress.
+// the chain block-by-block (get_block_headers → get_block → decode), turning
+// each output's scriptPubKey back into an address and matching it against the
+// addresses registered at registerDepositAddress.
 
 import Map "mo:core/Map";
 import Principal "mo:core/Principal";
@@ -18,6 +19,7 @@ import Iter "mo:core/Iter";
 import List "mo:core/List";
 import Text "mo:core/Text";
 import Nat "mo:core/Nat";
+import Nat8 "mo:core/Nat8";
 import Nat32 "mo:core/Nat32";
 import Nat64 "mo:core/Nat64";
 import Char "mo:core/Char";
@@ -35,12 +37,18 @@ persistent actor BtcDepositDetector {
   };
   transient var _btcCache : ?Principal = Constants.btcCanisterEnv<system>();
 
-  // key = deposit (base58 / bech32) address; value = owning principal
+  // key = deposit (base58 / bech32) address; value = owning principal.
+  // Block scanning converts each output's scriptPubKey back into its canonical
+  // address (BtcAddr.scriptToAddress) and looks it up here.
   let watchedAddresses = Map.empty<Text, Principal>();
-  // key = hex(scriptPubKey) of a watched address; value = that address.
-  // Built at registration from the address; matched against raw output scripts
-  // during block scanning. Lets the hot path avoid parsing scripts.
-  let watchedScripts = Map.empty<Text, Text>();
+
+  // bech32 human-readable prefix for script→address encoding; must match the
+  // network we scan (Constants.BTC_NETWORK)
+  let bech32Hrp : Text = switch (Constants.BTC_NETWORK) {
+    case (#mainnet) { "bc" };
+    case (#testnet) { "tb" };
+    case (#regtest) { "bcrt" };
+  };
 
   // latest known chain tip (block height) learned from get_current_block_height
   var btcTip : Nat = 0;
@@ -65,28 +73,23 @@ persistent actor BtcDepositDetector {
   public query func getDeployMode() : async Text { "production" };
   public query func cyclesBalance() : async Nat { Cycles.balance() };
 
-  // register a user's BTC deposit address (controller-only). We decode it to its
-  // scriptPubKey and store the script as the match key, so block scanning can
-  // find inbound outputs without re-parsing the address. `owner` is the
+  // register a user's BTC deposit address (controller-only). The address is
+  // decoded to its scriptPubKey purely for validation (checksum + supported
+  // type — a typo'd address is rejected on the spot); the address itself is
+  // the match key: block scanning converts each output's scriptPubKey back
+  // into an address and looks it up in watchedAddresses. `owner` is the
   // principal the address belongs to.
   public shared (msg) func registerDepositAddress(owner : Principal, addr : Text) : async () {
     requireController(msg.caller);
     if (not isValidBtcAddress(addr)) { Runtime.trap("Invalid Bitcoin address") };
     switch (BtcAddr.addressToScript(addr)) {
       case null { Runtime.trap("Unsupported or malformed Bitcoin address") };
-      case (?script) {
-        Map.add(watchedAddresses, Text.compare, addr, owner);
-        Map.add(watchedScripts, Text.compare, blobToHex(Blob.fromArray(script)), addr);
-      };
+      case (?_) { Map.add(watchedAddresses, Text.compare, addr, owner) };
     };
   };
   public shared (msg) func unregisterDepositAddress(addr : Text) : async () {
     requireController(msg.caller);
     ignore Map.delete(watchedAddresses, Text.compare, addr);
-    switch (BtcAddr.addressToScript(addr)) {
-      case (?script) { ignore Map.delete(watchedScripts, Text.compare, blobToHex(Blob.fromArray(script))) };
-      case null {};
-    };
   };
   public query func getDepositAddresses() : async [Text] {
     Iter.toArray(Map.keys(watchedAddresses));
@@ -153,7 +156,7 @@ persistent actor BtcDepositDetector {
   };
 
   // raw block bytes for a hash
-  func getBlock(hash : Blob) : async ?Blob {
+  func fetchRawBlock(hash : Blob) : async ?Blob {
     try {
       let r = await (with cycles = Constants.BTC_RPC_CYCLES) btc().get_block({
         network = Constants.BTC_NETWORK;
@@ -163,48 +166,67 @@ persistent actor BtcDepositDetector {
     } catch (_) { null };
   };
 
-  // scan one block: fetch it, decode it, record every output paying a watched
-  // script. Returns false if any fetch failed (so scanBlocks stops advancing
-  // and retries next cycle — the dedup layer guarantees idempotency).
-  func scanBlockProd(h : Nat) : async Bool {
+  // Fetch + decode a block at height h into its outputs — the BTC analogue of
+  // eth-deposit-detector's `getBlock(h)`, which returns the block's tx hashes.
+  // One call site (scanBlockProd) pulls the block; we then iterate its outputs
+  // locally (no per-output RPC, unlike ETH's per-tx getTransactionByHash) and
+  // convert each output's scriptPubKey back into an address for matching.
+  // Returns the block hash too, so callers can build a block-unique dedup key
+  // (txIndex+vout alone are only unique within a block). null on any
+  // fetch/decode failure.
+  func getBlock(h : Nat) : async ?(Blob, [Block.Output]) {
     switch (await getBlockHashAt(Nat32.fromNat(h))) {
-      case null { false };
+      case null { null };
       case (?hash) {
-        switch (await getBlock(hash)) {
-          case null { false };
+        switch (await fetchRawBlock(hash)) {
+          case null { null };
           case (?raw) {
             switch (Block.decodeBlock(raw)) {
-              case null { false };
-              case (?outs) {
-                let blockHex = blobToHex(hash);
-                for (o in outs.vals()) {
-                  let scriptHex = blobToHex(o.script);
-                  switch (Map.get(watchedScripts, Text.compare, scriptHex)) {
-                    case (?addr) {
-                      if (o.value > 0) {
-                        let outpoint = blockHex # "#" # Nat.toText(o.txIndex) # "#" # Nat.toText(o.vout);
-                        recordDeposit({
-                          signature = outpoint;
-                          slot = h;
-                          asset = Constants.ASSET;
-                          token = null;
-                          from = ""; // BTC outputs have no explicit sender in raw blocks
-                          to = addr;
-                          amountRaw = Nat64.toNat(o.value);
-                          blockHeight = h;
-                          confirmations = 0;
-                          dedupKey = outpoint;
-                        });
-                      };
-                    };
-                    case null {};
-                  };
-                };
-                true;
-              };
+              case null { null };
+              case (?outs) { ?(hash, outs) };
             };
           };
         };
+      };
+    };
+  };
+
+  // scan one block: pull it via getBlock(h), then record every output paying a
+  // watched address. Mirrors eth-deposit-detector's scanBlockProd (getBlock →
+  // iterate → match watchedAddresses); each output's scriptPubKey is converted
+  // back into its canonical address (BtcAddr.scriptToAddress) and looked up in
+  // watchedAddresses, and each output's block-unique dedup key needs the block
+  // hash. Returns false if the fetch failed (so scanBlocks stops advancing and
+  // retries next cycle — dedup guarantees idempotency).
+  func scanBlockProd(h : Nat) : async Bool {
+    switch (await getBlock(h)) {
+      case null { false };
+      case (? (hash, outs)) {
+        let blockHex = blobToHex(hash);
+        for (o in outs.vals()) {
+          // scriptPubKey → address, then compare against watchedAddresses
+          switch (BtcAddr.scriptToAddress(Blob.toArray(o.script), bech32Hrp)) {
+            case (?addr) {
+              if (o.value > 0 and Map.get(watchedAddresses, Text.compare, addr) != null) {
+                let outpoint = blockHex # "#" # Nat.toText(o.txIndex) # "#" # Nat.toText(o.vout);
+                recordDeposit({
+                  signature = outpoint;
+                  slot = h;
+                  asset = Constants.ASSET;
+                  token = null;
+                  from = ""; // BTC outputs have no explicit sender in raw blocks
+                  to = addr;
+                  amountRaw = Nat64.toNat(o.value);
+                  blockHeight = h;
+                  confirmations = 0;
+                  dedupKey = outpoint;
+                });
+              };
+            };
+            case null {};
+          };
+        };
+        true;
       };
     };
   };
@@ -254,14 +276,26 @@ persistent actor BtcDepositDetector {
     };
     let safeTip = if (tip > Constants.DELAY_BLOCKS) { tip - Constants.DELAY_BLOCKS } else { 0 };
     let batchEnd = Nat.min(safeTip, blockHeight + Constants.MAX_BLOCKS_PER_SCAN);
-
-    label scan loop {
-      if (blockHeight > batchEnd) { break scan };
-      // a failed block fetch leaves blockHeight where it is; the next cycle
-      // retries from the same block, and the dedup layer makes replay idempotent
-      if (not (await scanBlockProd(blockHeight))) { break scan };
-      blockHeight += 1;
+    // caught up (no new stable blocks this cycle) — nothing to scan
+    if (batchEnd <= blockHeight) {
+      confirmDeposits(btcTip);
+      ignore Map.delete(scanning, Text.compare, "scan");
+      return;
     };
+
+    // scan only the *unscanned* blocks (h = blockHeight+1 … batchEnd), matching
+    // eth-deposit-detector's scanBlocks; a failed block fetch leaves blockHeight
+    // where it is so the next cycle retries it (dedup makes replay idempotent).
+    var hh = blockHeight + 1;
+    while (hh <= batchEnd) {
+      if (not (await scanBlockProd(hh))) {
+        confirmDeposits(btcTip);
+        ignore Map.delete(scanning, Text.compare, "scan");
+        return;
+      };
+      hh += 1;
+    };
+    blockHeight := batchEnd;
 
     confirmDeposits(btcTip);
 

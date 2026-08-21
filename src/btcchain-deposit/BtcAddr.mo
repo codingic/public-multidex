@@ -1,17 +1,24 @@
-// Bitcoin address → scriptPubKey decoder for the BTC deposit detector.
+// Bitcoin address ⇄ scriptPubKey conversion for the BTC deposit detector.
 //
-// When an address is registered we turn it into the exact scriptPubKey bytes it
-// expects on-chain, then store the script (hex) as the match key. During block
-// scanning we hex the raw output script and look it up — so the hot path never
-// needs to parse scripts, and registration (rare) absorbs the decode cost.
+// Registration runs address→script purely as validation: an address that fails
+// base58 double-SHA256 or bech32/bech32m checksum verification is rejected on
+// the spot (a typo'd address can never silently never-match). Block scanning
+// runs the reverse direction: each output's raw scriptPubKey is converted back
+// into its canonical address (scriptToAddress) and looked up against the
+// addresses registered in watchedAddresses.
 //
-// Supported: P2PKH (base58, version 0x00), P2SH (base58, version 0x05),
-// P2WPKH (bech32, witness v0) and P2TR (bech32m, witness v1 / Taproot). Both
-// base58 and bech32/bech32m checksums are verified, so a typo'd address is
-// rejected at registration time rather than silently never matching.
+// Supported both ways: P2PKH (base58, version 0x00), P2SH (base58, version
+// 0x05), P2WPKH (bech32, witness v0), P2WSH (bech32, witness v0) and P2TR /
+// Taproot (bech32m, witness v1). Anything else yields null on BOTH sides:
+// scripts that merely embed the user's script inside a lock (CLTV/CSV
+// timelock, hashlock HTLC, multisig, OP_RETURN data — different byte shape),
+// and non-standard witness programs (v0 with a wrong length is
+// consensus-unspendable, i.e. coins locked forever; v1 wrong length and v2-16
+// are anyone-can-spend). So an output "containing the user's address" but
+// locked can neither register nor be detected as a deposit.
 //
 // NOTE: the core/base libraries available here have no Word32 / bitwise ops on
-// Nat, so all bit manipulation (BIP173 polymod, 5→8 convertBits) is done with
+// Nat, so all bit manipulation (BIP173 polymod, 5↔8 convertBits) is done with
 // plain + * / % via the pow2/xor32 helpers.
 
 import Sha256 "mo:sha2/Sha256";
@@ -178,31 +185,15 @@ module {
     (before, after);
   };
 
-  // BIP173/BIP350 polymod checksum. Returns the witness version (the first
-  // 5-bit group) if `data` is a valid bech32 (chk == 1) OR bech32m
-  // (chk == 0x2bc830a3) checksum for `hrp`; otherwise null. `data` already
-  // includes the 6 checksum groups, so we feed hrp_expand ++ data directly —
-  // appending extra zero groups (a common mistake) rejects every valid address.
+  // BIP173/BIP350 polymod over a sequence of 5-bit groups. Shared by the
+  // decode-side version check (bech32Version) and the encode-side checksum.
   // All bit ops emulated with + * / % (no Word32 / bitwise ops available).
-  func bech32Version(hrp : Text, data : [Nat8]) : ?Nat8 {
+  func bech32Polymod(values : [Nat8]) : Nat {
     let GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
-    let n = hrp.size() * 2 + 1 + data.size();
-    let vals : [var Nat8] = Array.toVarArray(Array.repeat(0 : Nat8, n));
-    var p = 0;
-    for (c in hrp.chars()) {
-      let o = Nat32.toNat(Char.toNat32(c));
-      vals[p] := Nat8.fromNat(o / 32); p += 1;  // high 3 bits
-    };
-    vals[p] := 0; p += 1; // separator
-    for (c in hrp.chars()) {
-      let o = Nat32.toNat(Char.toNat32(c));
-      vals[p] := Nat8.fromNat(o % 32); p += 1;  // low 5 bits
-    };
-    for (b in data.vals()) { vals[p] := b; p += 1 };
     var chk : Nat = 1;
     var idx = 0;
-    while (idx < n) {
-      let v = Nat8.toNat(vals[idx]);
+    while (idx < values.size()) {
+      let v = Nat8.toNat(values[idx]);
       let b = chk / 33554432;          // chk >> 25
       let low25 = chk % 33554432;      // chk & 0x1ffffff
       chk := low25 * 32 + v;           // (chk & 0x1ffffff) << 5 | v
@@ -213,7 +204,28 @@ module {
       if ((b / 16) % 2 == 1) { chk := xor32(chk, GEN[4]) };
       idx += 1;
     };
-    // bech32 (BIP173, segwit v0) vs bech32m (BIP350, segwit v1+ / Taproot)
+    chk;
+  };
+
+  // BIP173 hrp expansion: high 3 bits of each char, separator 0, low 5 bits.
+  func hrpExpand(hrp : Text) : [Nat8] {
+    var out : [Nat8] = [];
+    for (c in hrp.chars()) {
+      out := Array.concat(out, [Nat8.fromNat(Nat32.toNat(Char.toNat32(c)) / 32)]);
+    };
+    out := Array.concat(out, [0 : Nat8]);
+    for (c in hrp.chars()) {
+      out := Array.concat(out, [Nat8.fromNat(Nat32.toNat(Char.toNat32(c)) % 32)]);
+    };
+    out;
+  };
+
+  // BIP173/BIP350 checksum check. Returns the witness version (the first
+  // 5-bit group) if `data` is a valid bech32 (polymod == 1) OR bech32m
+  // (polymod == 0x2bc830a3) checksum for `hrp`; otherwise null. `data` already
+  // includes the 6 checksum groups, so we feed hrp_expand ++ data directly.
+  func bech32Version(hrp : Text, data : [Nat8]) : ?Nat8 {
+    let chk = bech32Polymod(Array.concat(hrpExpand(hrp), data));
     if (chk == 1) { return ?data[0] };
     if (chk == 0x2bc830a3) { return ?data[0] };
     null;
@@ -265,13 +277,133 @@ module {
     switch (versionOpt) {
       case null { return null };
       case (?version) {
-        if (version > 16) { return null };
+        // Standard witness programs only: v0-20 (P2WPKH), v0-32 (P2WSH),
+        // v1-32 (P2TR / Taproot). Everything else is non-standard on-chain:
+        // v0 with another length is consensus-UNSPENDABLE (coins locked
+        // forever), and v1 wrong-length / v2-16 have undefined semantics
+        // (anyone-can-spend). Registering such an address would later let a
+        // locked, unmovable output be detected as a deposit.
+        if (version > 1) { return null };
         let program = convertBits(slice(dataArr, 1, dpSize - 6), 5, 8, false);
-        if (program.size() < 2) { return null };
-        // OP_0 for v0; OP_1..OP_16 = 0x51..0x60 for v1..v16 (incl. Taproot v1)
-        let op : Nat8 = if (version == 0) { 0x00 } else { Nat8.fromNat(0x50 + Nat8.toNat(version)) };
-        ?concat([op, Nat8.fromNat(program.size())], program);
+        let pl = program.size();
+        if (not ((version == 0 and (pl == 20 or pl == 32)) or (version == 1 and pl == 32))) { return null };
+        // OP_0 for v0; OP_1 = 0x51 for v1 (Taproot)
+        let op : Nat8 = if (version == 0) { 0x00 } else { 0x51 };
+        ?concat([op, Nat8.fromNat(pl)], program);
       };
+    };
+  };
+
+  // ── scriptPubKey → address (encode side) ────────────────────
+  // Reconstructs the canonical address string from the raw script bytes —
+  // the inverse of addressToScript. Used in the scan hot path: every output's
+  // script is converted back into an address and matched against the
+  // registered addresses. bech32 output is always lowercase (BIP173 canonical
+  // form); base58 output is the unique canonical encoding.
+
+  // nth char of a charset string (index is always in range for our callers)
+  func nthChar(s : Text, n : Nat) : Char {
+    var i = 0;
+    for (c in s.chars()) {
+      if (i == n) { return c };
+      i += 1;
+    };
+    ' ';
+  };
+
+  // base58 encode: repeated division of the big-endian byte string by 58;
+  // leading 0x00 bytes become leading '1's
+  func base58Encode(bytes : [Nat8]) : Text {
+    var leadingZeros = 0;
+    label l for (b in bytes.vals()) { if (b == 0) { leadingZeros += 1 } else { break l } };
+    let work : [var Nat] = Array.toVarArray(Array.repeat(0 : Nat, bytes.size()));
+    var i = 0;
+    while (i < bytes.size()) { work[i] := Nat8.toNat(bytes[i]); i += 1 };
+    var out : [Nat8] = [];
+    func isZero() : Bool {
+      for (v in work.vals()) { if (v != 0) { return false } };
+      true;
+    };
+    while (not isZero()) {
+      var carry = 0 : Nat;
+      var j = 0;
+      while (j < work.size()) {
+        let cur = carry * 256 + work[j];
+        work[j] := cur / 58;
+        carry := cur % 58;
+        j += 1;
+      };
+      out := concat([Nat8.fromNat(carry)], out);
+    };
+    var s = "";
+    var z = 0;
+    while (z < leadingZeros) { s := s # "1"; z += 1 };
+    for (d in out.vals()) { s := s # Text.fromChar(nthChar(B58, Nat8.toNat(d))) };
+    s;
+  };
+
+  // base58 address = version ++ hash160 ++ double-SHA256 checksum
+  func hash160ToBase58Addr(hash160 : [Nat8], version : Nat8) : Text {
+    let payload = concat([version], hash160);
+    let h1 = Sha256.fromArray(payload);
+    let h2 = Sha256.fromArray(Blob.toArray(h1));
+    base58Encode(concat(payload, slice(Blob.toArray(h2), 0, 4)));
+  };
+
+  // BIP173/BIP350 checksum groups for hrp ++ data. `constant` is 1 (bech32)
+  // or 0x2bc830a3 (bech32m) — the mirror of bech32Version's accept check.
+  func bech32Checksum(hrp : Text, data : [Nat8], constant : Nat) : [Nat8] {
+    let values = concat(concat(hrpExpand(hrp), data), [0, 0, 0, 0, 0, 0]);
+    let cs = xor32(bech32Polymod(values), constant);
+    var out : [Nat8] = [];
+    var i = 0;
+    while (i < 6) {
+      out := concat(out, [Nat8.fromNat((cs / pow2(5 * (5 - i))) % 32)]);
+      i += 1;
+    };
+    out;
+  };
+
+  func bech32Encode(hrp : Text, data : [Nat8], bech32m : Bool) : Text {
+    let constant = if (bech32m) { 0x2bc830a3 } else { 1 };
+    var s = hrp # "1";
+    for (g in concat(data, bech32Checksum(hrp, data, constant)).vals()) {
+      s := s # Text.fromChar(nthChar(B32, Nat8.toNat(g)));
+    };
+    s;
+  };
+
+  // The raw scriptPubKey → canonical address conversion. `hrp` is the bech32
+  // human-readable prefix ("bc" mainnet / "tb" testnet / "bcrt" regtest);
+  // base58 version bytes are mainnet (P2PKH 0x00, P2SH 0x05). Only standard
+  // script shapes decode to an address — see the whitelist notes above; null
+  // for anything else (incl. all locked / non-standard variants).
+  public func scriptToAddress(script : [Nat8], hrp : Text) : ?Text {
+    let n = script.size();
+    if (n < 4) { return null };
+    if (n == 25 and script[0] == 0x76 and script[1] == 0xa9 and script[2] == 0x14
+        and script[23] == 0x88 and script[24] == 0xac) {
+      // P2PKH: OP_DUP OP_HASH160 <20> OP_EQUALVERIFY OP_CHECKSIG
+      ?hash160ToBase58Addr(slice(script, 3, 23), 0x00);
+    } else if (n == 23 and script[0] == 0xa9 and script[1] == 0x14 and script[22] == 0x87) {
+      // P2SH: OP_HASH160 <20> OP_EQUAL
+      ?hash160ToBase58Addr(slice(script, 2, 22), 0x05);
+    } else {
+      // witness program: OP_0 <len> <program> (v0) or OP_1 <len> <program> (v1)
+      let op = Nat8.toNat(script[0]);
+      let witVer = if (op == 0) { 0 } else if (op >= 0x51 and op <= 0x60) { op - 0x50 } else { 17 };
+      let progLen = n - 2;
+      // Standard shapes only — must mirror bech32ToScript: v0-20 (P2WPKH),
+      // v0-32 (P2WSH), v1-32 (P2TR). Non-standard programs are
+      // consensus-unspendable (v0 wrong length) or anyone-can-spend (v1 wrong
+      // length, v2-16): an output shaped like the user's address but locked
+      // must never be encoded — and thus never matched — as a deposit.
+      let standard = (witVer == 0 and (progLen == 20 or progLen == 32)) or (witVer == 1 and progLen == 32);
+      if (standard and Nat8.toNat(script[1]) == progLen) {
+        let groups = convertBits(slice(script, 2, n), 8, 5, true);
+        // BIP350: v0 → bech32, v1 → bech32m (Taproot)
+        ?bech32Encode(hrp, concat([Nat8.fromNat(witVer)], groups), witVer >= 1);
+      } else { null };
     };
   };
 
