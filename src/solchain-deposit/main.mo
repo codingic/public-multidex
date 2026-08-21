@@ -392,8 +392,10 @@ persistent actor SolDepositDetector {
   //    transferChecked) with `parsed.info.{source, destination, amount}`.
   //  - raw path: instruction was not parsed (typical for inner instructions in
   //    getTransaction jsonParsed); `data` is base58 — decode it and read the
-  //    discriminant (byte[0]: 3 = transfer, 12 = transferChecked) and the LE-u64
-  //    amount (bytes[1:9]); source / destination are `accounts[0]` / `accounts[1]`.
+  //    discriminant (byte[0]: 3 = transfer, 12 = transferChecked, per
+  //    solana-foundation/solana-go programs/token Instruction_Transfer /
+  //    Instruction_TransferChecked) and the LE-u64 amount (bytes[1:9]); source /
+  //    destination are `accounts[0]` / `accounts[1 or 2]`.
   func splTransferOf(tx : Json.Json, ins : Json.Json) : ?(Text, Text, Nat) {
     // --- parsed path ---
     let itype = switch (Json.getAsText(ins, "parsed.type")) {
@@ -445,10 +447,13 @@ persistent actor SolDepositDetector {
         if (disc != 3 and disc != 12) { return null };
         switch (Json.getAsArray(ins, "accounts")) {
           case (#ok accs) {
-            // Account layout differs by instruction (matches the Go reference):
+            // Account layout mirrors solana-foundation/solana-go
+            // programs/token (Transfer / TransferChecked):
             //   transfer (3)        : [source, destination, authority]        -> dest = accounts[1], need >= 3
             //   transferChecked (12): [source, mint, destination, authority]   -> dest = accounts[2], need >= 4
-            // (source is always accounts[0].)
+            // (source is always accounts[0]. amount = LE-u64 at bytes[1:9];
+            //  transferChecked has an extra decimals u8 at bytes[9], which we
+            //  do not need for deposit crediting.)
             let dstPos = if (disc == 12) { 2 } else { 1 };
             let need = if (disc == 12) { 4 } else { 3 };
             if (accs.size() < need) { return null };
