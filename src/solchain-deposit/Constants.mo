@@ -27,8 +27,7 @@ let CONFIRMED_SLOTS : Nat = 32;       // move to depositsConfirmed at this depth
 let SCAN_INTERVAL_SEC : Nat = 8;      // poll cadence (Solana slots ~400ms; sweep is per-address)
 let SOL_RPC_CYCLES : Nat = 10_000_000_000;
 
-// max signatures pulled per address sweep (getSignaturesForAddress limit, 1..1000)
-let SIG_LIMIT : Nat = 50;
+// per-block scanning — no per-address signature limit
 
 // consensus on aggregated sol-rpc responses — Equality matches all providers
 func parseCanisterEnv<system>(name : Text) : ?Principal {

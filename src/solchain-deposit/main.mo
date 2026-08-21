@@ -4,10 +4,9 @@
 // deeply-confirmed ones into `depositsConfirmed`. No crediting — the DEX reads
 // the archive.
 //
-// Model mirrors the ETH detector's monitor→detect→confirm→archive flow, but
-// adapted to Solana: there is no global Transfer log, so we index per watched
-// address with getSignaturesForAddress + getTransaction (the standard Solana
-// indexer pattern).
+// Model mirrors the ETH detector's monitor→detect→confirm→archive flow: it
+// walks finalized slots via getBlock and inspects every transaction in each
+// block, matching recipient addresses against watchedAddresses / watchedTokens.
 
 import Map "mo:core/Map";
 import Principal "mo:core/Principal";
@@ -48,11 +47,6 @@ persistent actor SolDepositDetector {
   // keys already archived, so a re-scanned transfer isn't archived twice
   let confirmedKeys = Map.empty<Text, ()>();
 
-  // per-address cursor: the newest signature already processed. New sweeps
-  // stop when they hit this signature (everything older was seen before).
-  // Absent = first sweep for that address (only seed the cursor, don't credit).
-  let lastSignature = Map.empty<Text, Text>();
-
   let scanning = Map.empty<Text, Bool>();
 
   func requireController(caller : Principal) {
@@ -85,7 +79,6 @@ persistent actor SolDepositDetector {
   public shared (msg) func unregisterDepositAddress(addr : Text) : async () {
     requireController(msg.caller);
     ignore Map.delete(watchedAddresses, Text.compare, addr);
-    ignore Map.delete(lastSignature, Text.compare, addr);
   };
   public query func getDepositAddresses() : async [Text] {
     Iter.toArray(Map.keys(watchedAddresses));
@@ -162,18 +155,18 @@ persistent actor SolDepositDetector {
     };
   };
 
-  // signatures for an address, newest first; null on error
-  func getSignatures(addr : Text) : async ?[Json.Json] {
-    let payload = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getSignaturesForAddress\",\"params\":["
-      # "{\"pubkey\":\"" # addr # "\",\"limit\":" # Nat.toText(Constants.SIG_LIMIT)
-      # ",\"commitment\":\"finalized\"}]}";
+  // one finalized slot's transactions (jsonParsed); null on error
+  func getBlock(h : Nat) : async ?[Json.Json] {
+    let payload = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getBlock\",\"params\":["
+      # Nat.toText(h)
+      # ",{\"commitment\":\"finalized\",\"encoding\":\"jsonParsed\",\"transactionDetails\":\"jsonParsed\",\"maxSupportedTransactionVersion\":0,\"rewards\":false}]}";
     switch (await jsonRequest(payload)) {
       case null { null };
       case (?s) {
         switch (resultOf(s)) {
           case null { null };
           case (?r) {
-            switch (Json.getAsArray(r, "")) {
+            switch (Json.getAsArray(r, "transactions")) {
               case (#ok arr) { ?arr };
               case (#err _) { null };
             };
@@ -183,31 +176,33 @@ persistent actor SolDepositDetector {
     };
   };
 
-  // one transaction, jsonParsed; null on error
-  func getTx(sig : Text) : async ?Json.Json {
-    let payload = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getTransaction\",\"params\":["
-      # "{\"signature\":\"" # sig # "\",\"encoding\":\"jsonParsed\",\"commitment\":\"finalized\","
-      # "\"maxSupportedTransactionVersion\":0}]}";
-    switch (await jsonRequest(payload)) {
-      case null { null };
-      case (?s) {
-        switch (resultOf(s)) {
-          case null { null };
-          case (?r) { ?r }; // result may be null if the tx was trimmed from ledger
+  // scan one slot: fetch the block and record every inbound transfer to a
+  // watched address. Returns false if the block fetch failed (so scanBlocks can
+  // stop advancing and retry next cycle — the dedup layer guarantees idempotency).
+  func scanBlockProd(h : Nat) : async Bool {
+    switch (await getBlock(h)) {
+      case null { false };
+      case (?txs) {
+        for (tx in txs.vals()) {
+          // skip failed txs (meta.err is a non-null object); such txs make no
+          // balance change, so crediting them would be wrong anyway
+          switch (Json.getAsObject(tx, "meta.err")) {
+            case (#err _) { for (t in extractTransfers(tx, h).vals()) { recordDeposit(transferToDeposit(t)) } };
+            case (#ok _) { /* failed tx — skip */ };
+          };
         };
+        true;
       };
     };
   };
 
   // extract all inbound transfers to watched addresses from one parsed tx.
-  // Returns the list of normalized Transfers (native SOL + SPL) — may be empty.
-  func extractTransfers(tx : Json.Json) : [Types.Transfer] {
+  // `slot` is supplied by the caller (the block we scanned, since getBlock's
+  // per-tx objects don't carry the slot).
+  func extractTransfers(tx : Json.Json, slot : Nat) : [Types.Transfer] {
     let out = List.empty<Types.Transfer>();
     let signature = switch (Json.getAsText(tx, "transaction.signatures[0]")) {
       case (#ok v) { v }; case (#err _) { "" };
-    };
-    let slot = switch (Json.getAsNat(tx, "slot")) {
-      case (#ok n) { n }; case (#err _) { 0 };
     };
     if (signature == "") { return List.toArray(out) };
 
@@ -276,7 +271,7 @@ persistent actor SolDepositDetector {
     };
     if (post.size() == 0) { return [] };
     // index pre-balances by (accountIndex -> amount)
-    var preMap = Map.empty<Nat, Nat>();
+    let preMap = Map.empty<Nat, Nat>();
     for (b in pre.vals()) {
       let ai = switch (Json.getAsNat(b, "accountIndex")) { case (#ok n) { n }; case (#err _) { 0 } };
       let amt = switch (Json.getAsText(b, "uiTokenAmount.amount")) {
@@ -362,61 +357,6 @@ persistent actor SolDepositDetector {
     };
   };
 
-  // one address sweep: resolve new signatures since the cursor and record
-  // inbound transfers. Returns false if an RPC necessary to make progress
-  // failed (so scanBlocks can stop advancing the cursor).
-  func scanAddress(addr : Text) : async Bool {
-    var ok = true;
-    switch (await getSignatures(addr)) {
-      case null { ok := false };
-      case (?sigs) {
-        // first sweep for this address: seed the cursor, don't credit history
-        let cursor = Map.get(lastSignature, Text.compare, addr);
-        switch (cursor) {
-          case null {
-            if (sigs.size() > 0) {
-              // newest signature is first in the (descending) list
-              switch (Json.getAsText(sigs[0], "signature")) {
-                case (#ok s) { Map.add(lastSignature, Text.compare, addr, s) };
-                case (#err _) {};
-              };
-            };
-          };
-          case (?cur) {
-            var stop = false;
-            for (sig in sigs.vals()) {
-              let s = switch (Json.getAsText(sig, "signature")) {
-                case (#ok v) { v }; case (#err _) { "" };
-              };
-              if (s == "") { continue };
-              if (s == cur) { stop := true; break };
-              // skip failed txs (err != null)
-              switch (Json.get(sig, "err")) {
-                case (?(_)) { /* failed tx, skip */ };
-                case null {
-                  switch (await getTx(s)) {
-                    case (?tx) {
-                      for (t in extractTransfers(tx).vals()) { recordDeposit(transferToDeposit(t)) };
-                    };
-                    case null { ok := false };
-                  };
-                };
-              };
-            };
-            // advance cursor to the newest signature seen this sweep
-            if (sigs.size() > 0) {
-              switch (Json.getAsText(sigs[0], "signature")) {
-                case (#ok newest) { Map.add(lastSignature, Text.compare, addr, newest) };
-                case (#err _) {};
-              };
-            };
-          };
-        };
-      };
-    };
-    ok;
-  };
-
   func transferToDeposit(t : Types.Transfer) : Types.Deposit {
     {
       signature = t.signature;
@@ -437,12 +377,21 @@ persistent actor SolDepositDetector {
     Map.add(scanning, Text.compare, "scan", true);
 
     let tip = await latestSlot();
-    slotHeight := if (tip > 0) { tip } else { slotHeight };
+    // first sweep: jump to a safe starting slot so we don't replay full history
+    if (slotHeight == 0 and tip > 0) {
+      slotHeight := if (tip > Constants.DELAY_SLOTS + Constants.MAX_SLOTS_PER_SCAN) {
+        tip - Constants.DELAY_SLOTS - Constants.MAX_SLOTS_PER_SCAN;
+      } else { 0 };
+    };
+    let safeTip = if (tip > Constants.DELAY_SLOTS) { tip - Constants.DELAY_SLOTS } else { 0 };
+    let batchEnd = Nat.min(safeTip, slotHeight + Constants.MAX_SLOTS_PER_SCAN);
 
-    // sweep every watched address; if any sweep failed, still refresh
-    // confirmations for what we have but don't lose the cursor work already done
-    for (addr in Map.keys(watchedAddresses)) {
-      ignore await scanAddress(addr);
+    label scan loop {
+      if (slotHeight > batchEnd) { break scan };
+      // a failed block fetch leaves slotHeight where it is; the next cycle retries
+      // from the same slot, and the dedup layer makes replay idempotent
+      if (not (await scanBlockProd(slotHeight))) { break scan };
+      slotHeight += 1;
     };
 
     confirmDeposits(tip);
@@ -457,7 +406,7 @@ persistent actor SolDepositDetector {
     let movedKeys = List.empty<Text>();
     let toRefresh = List.empty<(Text, Types.Deposit)>();
     for ((dk, d) in Map.entries(deposits)) {
-      let confirmations = if (tip > d.blockHeight) { tip - d.blockHeight } else { 0 };
+      let confirmations = if (tip > d.blockHeight) { tip - d.blockHeight + 1 } else { 0 };
       if (confirmations >= Constants.CONFIRMED_SLOTS) {
         moved.add({ d with confirmations = confirmations });
         movedKeys.add(dk);
