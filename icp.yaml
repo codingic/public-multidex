@@ -93,6 +93,21 @@ canisters:
         __META_PROJECT: "MULTI/DEX"
         __META_NAME: "BTC Deposit Detector"
 
+  - name: nearchain-deposit
+    recipe:
+      type: "@dfinity/motoko@v5.0.0"
+      # Dedicated NEAR (NEP-141) deposit-detection backend (src/nearchain-deposit/main.mo).
+      # Watches each user's NEAR deposit account, scans blocks via IC HTTPS
+      # outcalls to the NEAR RPC, parses each tx's receipt outcomes for NEP-141
+      # ft_transfer events whose recipient is a watched account, waits for block
+      # confirmations, then archives them for the DEX to read. Token deposits
+      # only (native NEAR transfers are intentionally excluded). canister config
+      # (main, args) lives in mops.toml [canisters.nearchain-deposit].
+    settings:
+      environment_variables:
+        __META_PROJECT: "MULTI/DEX"
+        __META_NAME: "NEAR Deposit Detector"
+
   - name: arb
     recipe:
       type: "@dfinity/motoko@v5.0.0"
@@ -170,7 +185,7 @@ networks:
 environments:
   - name: engine    # OpenCloud cloud engine (frontend seapz-…)
     network: ic
-    canisters: [backend, bridge, eth-deposit-detector, solchain-deposit, btcchain-deposit, frontend, arb]
+    canisters: [backend, bridge, eth-deposit-detector, solchain-deposit, btcchain-deposit, nearchain-deposit, frontend, arb]
   - name: subnet    # dedicated subnet serving multidex.ai (frontend hcv4s-…)
     network: ic
-    canisters: [backend, bridge, eth-deposit-detector, solchain-deposit, btcchain-deposit,  frontend, arb]
+    canisters: [backend, bridge, eth-deposit-detector, solchain-deposit, btcchain-deposit, nearchain-deposit, frontend, arb]

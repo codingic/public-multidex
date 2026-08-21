@@ -4975,6 +4975,7 @@ persistent actor Uplands {
   // each scans its chain and credits confirmed deposits via creditAndRegister.
   var _solDetectorPrincipal : ?Principal = null;
   var _btcDetectorPrincipal : ?Principal = null;
+  var _nearDetectorPrincipal : ?Principal = null;
 
   // ── Sibling-canister discovery (icp-cli pitfall 22) ──────────────
   // `icp deploy` injects every project canister's id into every canister's
@@ -5007,6 +5008,7 @@ persistent actor Uplands {
   transient var _envEthDetectorCache : ?Principal = envPrincipal<system>("PUBLIC_CANISTER_ID:eth-deposit-detector");
   transient var _envSolDetectorCache : ?Principal = envPrincipal<system>("PUBLIC_CANISTER_ID:solchain-deposit");
   transient var _envBtcDetectorCache : ?Principal = envPrincipal<system>("PUBLIC_CANISTER_ID:btcchain-deposit");
+  transient var _envNearDetectorCache : ?Principal = envPrincipal<system>("PUBLIC_CANISTER_ID:nearchain-deposit");
 
   func effectiveBridge<system>() : ?Principal {
     switch (_bridgePrincipal) {
@@ -5038,6 +5040,12 @@ persistent actor Uplands {
       case null { _envBtcDetectorCache := envPrincipal<system>("PUBLIC_CANISTER_ID:btcchain-deposit"); _envBtcDetectorCache };
     };
   };
+  func effectiveNearDetector<system>() : ?Principal {
+    switch (_nearDetectorPrincipal) {
+      case (?p) { ?p };
+      case null { _envNearDetectorCache := envPrincipal<system>("PUBLIC_CANISTER_ID:nearchain-deposit"); _envNearDetectorCache };
+    };
+  };
   // Capability-free views for queries and sync helpers.
   func cachedBridge() : ?Principal {
     switch (_bridgePrincipal) { case (?p) { ?p }; case null { _envBridgeCache } };
@@ -5053,6 +5061,9 @@ persistent actor Uplands {
   };
   func cachedBtcDetector() : ?Principal {
     switch (_btcDetectorPrincipal) { case (?p) { ?p }; case null { _envBtcDetectorCache } };
+  };
+  func cachedNearDetector() : ?Principal {
+    switch (_nearDetectorPrincipal) { case (?p) { ?p }; case null { _envNearDetectorCache } };
   };
 
   public shared (msg) func setBridge(p : Principal) : async () {
@@ -5082,6 +5093,13 @@ persistent actor Uplands {
     _btcDetectorPrincipal := ?p;
   };
   public query func getBtcDetector() : async ?Principal { cachedBtcDetector() };
+
+  // NEAR (NEP-141) custody canister wiring (mirror of setEthDetector/getEthDetector).
+  public shared (msg) func setNearDetector(p : Principal) : async () {
+    requireController(msg.caller);
+    _nearDetectorPrincipal := ?p;
+  };
+  public query func getNearDetector() : async ?Principal { cachedNearDetector() };
 
   // ── Arbitrage canister: simulated external market ─────────────────
   // docs/amm-vault-design.md §"The missing arbitrageur". Synthetic play assets
@@ -5540,7 +5558,8 @@ persistent actor Uplands {
     let isEthDetector = switch (effectiveEthDetector<system>()) { case (?d) { Principal.equal(msg.caller, d) }; case null { false } };
     let isSolDetector = switch (effectiveSolDetector<system>()) { case (?d) { Principal.equal(msg.caller, d) }; case null { false } };
     let isBtcDetector = switch (effectiveBtcDetector<system>()) { case (?d) { Principal.equal(msg.caller, d) }; case null { false } };
-    if (not (isBridge or isEthDetector or isSolDetector or isBtcDetector or Principal.isController(msg.caller))) { return #err("Only the Bridge canister or a deposit detector (ETH/SOL/BTC) may credit deposits") };
+    let isNearDetector = switch (effectiveNearDetector<system>()) { case (?d) { Principal.equal(msg.caller, d) }; case null { false } };
+    if (not (isBridge or isEthDetector or isSolDetector or isBtcDetector or isNearDetector or Principal.isController(msg.caller))) { return #err("Only the Bridge canister or a deposit detector (ETH/SOL/BTC/NEAR) may credit deposits") };
     if (amount == 0) { return #err("Amount must be positive") };
     ensureInit<system>();
     // Idempotency gate: a seq we've already applied (or passed) is a replay —
