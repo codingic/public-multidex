@@ -149,7 +149,10 @@ persistent actor SolDepositDetector {
     };
   };
 
-  // base10 text -> Nat (jsonParsed returns amounts as base10 strings)
+  // base10 text -> Nat (jsonParsed returns amounts as base10 strings).
+  // Any non-digit character makes the whole input invalid -> 0, so a stray
+  // char can never silently corrupt the number (e.g. "12x34" must not decode
+  // to a plausible-but-wrong value).
   func decToNat(s : Text) : Nat {
     var acc : Nat = 0;
     for (c in s.chars()) {
@@ -157,7 +160,7 @@ persistent actor SolDepositDetector {
         case ('0') { 0 }; case ('1') { 1 }; case ('2') { 2 }; case ('3') { 3 };
         case ('4') { 4 }; case ('5') { 5 }; case ('6') { 6 }; case ('7') { 7 };
         case ('8') { 8 }; case ('9') { 9 };
-        case (_) { 0 }; // ignore stray chars
+        case (_) { return 0 }; // invalid input -> whole string is 0
       };
       acc := acc * 10 + d;
     };
@@ -273,40 +276,104 @@ persistent actor SolDepositDetector {
     List.toArray(out);
   };
 
-  // system-program transfer instructions crediting a watched address
+  // system-program transfer instructions crediting a watched address.
+  // Two paths, because jsonParsed shapes top-level and inner instructions
+  // differently:
+  //  - parsed path: top-level instructions carry `program` + `parsed` (so
+  //    `parsed.type` == "transfer" | "transferWithSeed" with flat
+  //    `parsed.info.{source, destination, lamports}`).
+  //  - raw path: inner / CPI instructions have NO `program` and NO `parsed`;
+  //    only `data` (base58) + `accounts` (indices into message.accountKeys) +
+  //    `programIdIndex`. We decode the System Program bytes ourselves:
+  //      discriminant = u32-LE at data[0:4]
+  //        (per solana-foundation/solana-go programs/system
+  //         Instruction_Transfer = 2, Instruction_TransferWithSeed = 11)
+  //      lamports     = u64-LE at data[4:12]
+  //      Transfer        : accounts[0]=from, accounts[1]=to
+  //      TransferWithSeed: accounts[0]=from, accounts[2]=to
+  //    This catches SOL payouts routed through a CPI (DEX settle, staking
+  //    reward, …) that a `program == "system"` gate alone would silently drop.
   func findSolTransfers(tx : Json.Json, signature : Text, slot : Nat) : [Types.Transfer] {
     let out = List.empty<Types.Transfer>();
     let instructions = allInstructions(tx);
     var idx = 0;
+    let SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
     for (ins in instructions.vals()) {
       let program = switch (Json.getAsText(ins, "program")) {
         case (#ok v) { v }; case (#err _) { "" };
       };
-      let itype = switch (Json.getAsText(ins, "parsed.type")) {
-        case (#ok v) { v }; case (#err _) { "" };
-      };
-      if (program == "system" and itype == "transfer") {
-        let dest = switch (Json.getAsText(ins, "parsed.info.destination")) {
+      if (program == "system") {
+        // --- parsed path (top-level) ---
+        let itype = switch (Json.getAsText(ins, "parsed.type")) {
           case (#ok v) { v }; case (#err _) { "" };
         };
-        let lamports = switch (Json.getAsText(ins, "parsed.info.lamports")) {
-          case (#ok v) { v }; case (#err _) { "0" };
-        };
-        let amount = decToNat(lamports);
-        if (amount > 0 and Map.get(watchedAddresses, Text.compare, dest) != null) {
-          let from = switch (Json.getAsText(ins, "parsed.info.source")) {
+        if (itype == "transfer" or itype == "transferWithSeed") {
+          let dest = switch (Json.getAsText(ins, "parsed.info.destination")) {
             case (#ok v) { v }; case (#err _) { "" };
           };
-          out.add({
-            signature = signature;
-            slot = slot;
-            asset = Constants.ASSET;
-            token = null;
-            from = from;
-            to = dest;
-            amountRaw = amount;
-            dedupKey = signature # "#sol#" # Nat.toText(idx);
-          });
+          let lamports = switch (Json.getAsText(ins, "parsed.info.lamports")) {
+            case (#ok v) { v }; case (#err _) { "0" };
+          };
+          let amount = decToNat(lamports);
+          if (amount > 0 and Map.get(watchedAddresses, Text.compare, dest) != null) {
+            let from = switch (Json.getAsText(ins, "parsed.info.source")) {
+              case (#ok v) { v }; case (#err _) { "" };
+            };
+            out.add({
+              signature = signature;
+              slot = slot;
+              asset = Constants.ASSET;
+              token = null;
+              from = from;
+              to = dest;
+              amountRaw = amount;
+              dedupKey = signature # "#sol#" # Nat.toText(idx);
+            });
+          };
+        };
+      } else if (program == "") {
+        // --- raw path (inner / CPI; no `program`, no `parsed`) ---
+        let programId = switch (Json.getAsNat(ins, "programIdIndex")) {
+          case (#ok i) { accountPubkey(tx, i) };
+          case (#err _) { "" };
+        };
+        if (programId == SYSTEM_PROGRAM_ID) {
+          let data = switch (Json.getAsText(ins, "data")) {
+            case (#ok v) { v }; case (#err _) { "" };
+          };
+          switch (Base58.decodeBase58(data)) {
+            case (?bytes) {
+              if (bytes.size() >= 12) {
+                let disc = leU32(bytes, 0);
+                if (disc == 2 or disc == 11) {
+                  let toPos = if (disc == 11) { 2 } else { 1 }; // Transfer=1, TransferWithSeed=2
+                  switch (Json.getAsArray(ins, "accounts")) {
+                    case (#ok accs) {
+                      if (accs.size() > toPos) {
+                        let from = resolveAccountPubkey(tx, accs[0]);
+                        let to = resolveAccountPubkey(tx, accs[toPos]);
+                        let lamports = leU64(bytes, 4);
+                        if (lamports > 0 and to != "" and Map.get(watchedAddresses, Text.compare, to) != null) {
+                          out.add({
+                            signature = signature;
+                            slot = slot;
+                            asset = Constants.ASSET;
+                            token = null;
+                            from = from;
+                            to = to;
+                            amountRaw = lamports;
+                            dedupKey = signature # "#sol#" # Nat.toText(idx);
+                          });
+                        };
+                      };
+                    };
+                    case (#err _) {};
+                  };
+                };
+              };
+            };
+            case null {};
+          };
         };
       };
       idx += 1;
@@ -352,28 +419,29 @@ persistent actor SolDepositDetector {
     for (ins in instructions.vals()) {
       switch (splTransferOf(tx, ins)) {
         case (?(source, destination, amount)) {
+          // Only the DESTINATION (watched owner + mint) is a hard requirement.
+          // The source ATA may have been closed in the same tx, so its owner is
+          // absent from postTokenBalances; fall back to the source token-account
+          // pubkey (returned by splTransferOf) rather than dropping a legitimate
+          // deposit. `from` is the sender wallet.
           switch (Map.get(acctInfo, Text.compare, destination)) {
             case (?(owner, mint)) {
-              // require BOTH from and to token accounts to appear in
-              // postTokenBalances (mirrors the Go reference's dual
-              // getPostTokenBalance guard); `from` is the sender wallet.
-              switch (Map.get(acctInfo, Text.compare, source)) {
-                case (?(srcOwner, _)) {
-                  if (amount > 0 and Map.get(watchedTokens, Text.compare, mint) != null
-                      and Map.get(watchedAddresses, Text.compare, owner) != null) {
-                    out.add({
-                      signature = signature;
-                      slot = slot;
-                      asset = mint;
-                      token = ?mint;
-                      from = srcOwner;
-                      to = owner;
-                      amountRaw = amount;
-                      dedupKey = signature # "#spl#" # Nat.toText(idx);
-                    });
-                  };
-                };
-                case null {};
+              let from = switch (Map.get(acctInfo, Text.compare, source)) {
+                case (?(srcOwner, _)) { srcOwner };
+                case null { source }; // closed/unknown source ATA -> use its pubkey
+              };
+              if (amount > 0 and Map.get(watchedTokens, Text.compare, mint) != null
+                  and Map.get(watchedAddresses, Text.compare, owner) != null) {
+                out.add({
+                  signature = signature;
+                  slot = slot;
+                  asset = mint;
+                  token = ?mint;
+                  from = from;
+                  to = owner;
+                  amountRaw = amount;
+                  dedupKey = signature # "#spl#" # Nat.toText(idx);
+                });
               };
             };
             case null {};
@@ -474,6 +542,18 @@ persistent actor SolDepositDetector {
   func leU64(bytes : [Nat8], start : Nat) : Nat {
     var v : Nat = 0;
     var i = 7;
+    while (i >= 0) {
+      v := v * 256 + Nat8.toNat(bytes[start + i]);
+      i := i - 1;
+    };
+    v;
+  };
+
+  // little-endian u32 starting at byte offset `start` (4 bytes).
+  // Used for the System Program instruction discriminant (Uint32TypeIDEncoding).
+  func leU32(bytes : [Nat8], start : Nat) : Nat {
+    var v : Nat = 0;
+    var i = 3;
     while (i >= 0) {
       v := v * 256 + Nat8.toNat(bytes[start + i]);
       i := i - 1;
