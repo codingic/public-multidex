@@ -1,12 +1,13 @@
-// Bitcoin (BTC) deposit detector: poll each watched deposit address via the
-// dfinity bitcoin canister, resolve inbound UTXOs, store them in `deposits`,
-// and archive confirmed ones into `depositsConfirmed`. No crediting — the DEX
-// reads the archive.
+// Bitcoin (BTC) deposit detector: walk finalized blocks via the dfinity
+// bitcoin canister, decode each raw block, and record every output that pays a
+// watched deposit address. Detected deposits live in `deposits` until they
+// reach CONFIRMED_CONFIRMATIONS, then get archived into `depositsConfirmed`.
+// No crediting — the DEX reads the archive.
 //
 // Model mirrors the ETH/SOL detectors' monitor→detect→confirm→archive flow, but
-// adapted to Bitcoin's UTXO model: there is no global Transfer log and no
-// per-transaction account abstraction, so we index per watched address with
-// get_utxos and treat each new (txid, vout) as a potential inbound deposit.
+// adapted to Bitcoin's UTXO model: instead of a per-address UTXO poll we scan
+// the chain block-by-block (get_block_headers → get_block → decode), matching
+// each output's scriptPubKey against the set registered at registerDepositAddress.
 
 import Map "mo:core/Map";
 import Principal "mo:core/Principal";
@@ -20,9 +21,12 @@ import Nat "mo:core/Nat";
 import Nat32 "mo:core/Nat32";
 import Nat64 "mo:core/Nat64";
 import Char "mo:core/Char";
+import Blob "mo:core/Blob";
 import Types "Types";
 import BtcRpcTypes "BtcRpcTypes";
 import Constants "Constants";
+import BtcAddr "BtcAddr";
+import Block "Block";
 
 persistent actor BtcDepositDetector {
 
@@ -33,17 +37,23 @@ persistent actor BtcDepositDetector {
 
   // key = deposit (base58 / bech32) address; value = owning principal
   let watchedAddresses = Map.empty<Text, Principal>();
+  // key = hex(scriptPubKey) of a watched address; value = that address.
+  // Built at registration from the address; matched against raw output scripts
+  // during block scanning. Lets the hot path avoid parsing scripts.
+  let watchedScripts = Map.empty<Text, Text>();
 
-  // latest known chain tip (block height) learned from get_utxos responses
+  // latest known chain tip (block height) learned from get_current_block_height
   var btcTip : Nat = 0;
+  // last fully-read block height; advanced every scan
+  var blockHeight : Nat = 0;
 
-  // pending deposits, deduped by dedupKey (outpoint = txid#vout)
+  // pending deposits, deduped by dedupKey (blockHash#txIndex#vout)
   let deposits = Map.empty<Text, Types.Deposit>();
   // permanent archive of deposits that reached CONFIRMED_CONFIRMATIONS
   // TODO: unbounded growth — at millions of users this array grows forever and
   // inflates canister memory; needs bucketing / backend-consumption-then-prune.
   var depositsConfirmed : [Types.Deposit] = [];
-  // keys already archived, so a re-scanned UTXO isn't archived twice
+  // keys already archived, so a re-scanned output isn't archived twice
   let confirmedKeys = Map.empty<Text, ()>();
 
   let scanning = Map.empty<Text, Bool>();
@@ -55,16 +65,28 @@ persistent actor BtcDepositDetector {
   public query func getDeployMode() : async Text { "production" };
   public query func cyclesBalance() : async Nat { Cycles.balance() };
 
-  // register a user's BTC deposit address (controller-only) so its inbound
-  // UTXOs are detected; `owner` is the principal the address belongs to
+  // register a user's BTC deposit address (controller-only). We decode it to its
+  // scriptPubKey and store the script as the match key, so block scanning can
+  // find inbound outputs without re-parsing the address. `owner` is the
+  // principal the address belongs to.
   public shared (msg) func registerDepositAddress(owner : Principal, addr : Text) : async () {
     requireController(msg.caller);
     if (not isValidBtcAddress(addr)) { Runtime.trap("Invalid Bitcoin address") };
-    Map.add(watchedAddresses, Text.compare, addr, owner);
+    switch (BtcAddr.addressToScript(addr)) {
+      case null { Runtime.trap("Unsupported or malformed Bitcoin address") };
+      case (?script) {
+        Map.add(watchedAddresses, Text.compare, addr, owner);
+        Map.add(watchedScripts, Text.compare, blobToHex(Blob.fromArray(script)), addr);
+      };
+    };
   };
   public shared (msg) func unregisterDepositAddress(addr : Text) : async () {
     requireController(msg.caller);
     ignore Map.delete(watchedAddresses, Text.compare, addr);
+    switch (BtcAddr.addressToScript(addr)) {
+      case (?script) { ignore Map.delete(watchedScripts, Text.compare, blobToHex(Blob.fromArray(script))) };
+      case null {};
+    };
   };
   public query func getDepositAddresses() : async [Text] {
     Iter.toArray(Map.keys(watchedAddresses));
@@ -77,8 +99,8 @@ persistent actor BtcDepositDetector {
   // ── address validation ─────────────────────────────────────
   // Bitcoin base58 alphabet (= the Solana alphabet). Legacy (1…) and P2SH (3…)
   // addresses are base58; native segwit (bc1…) / testnet (tb1…) / regtest
-  // (bcrt1…) are bech32. We don't verify the checksum here — get_utxos will
-  // reject malformed addresses on-chain.
+  // (bcrt1…) are bech32. We don't verify the checksum here (BtcAddr does that
+  // at registration) — this only gates the alphabet / prefix.
   func isBase58Char(c : Char) : Bool {
     for (a in "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz".chars()) {
       if (a == c) { return true };
@@ -93,7 +115,7 @@ persistent actor BtcDepositDetector {
     true;
   };
 
-  // blob (txid) → lowercase hex Text, for forming a stable outpoint key
+  // blob → lowercase hex Text, for stable keys (outpoint, script, block hash)
   func nibbleToHex(n : Nat8) : Char {
     if (n < 10) { Char.fromNat32(Nat32.fromNat(Nat8.toNat(n)) + 48) }
     else { Char.fromNat32(Nat32.fromNat(Nat8.toNat(n)) + 87) };
@@ -106,44 +128,90 @@ persistent actor BtcDepositDetector {
     acc;
   };
 
-  // one address sweep: list its UTXOs and record any not-yet-seen inbound BTC.
-  // Returns false if the RPC failed (so the caller can mark the sweep as failed).
-  func scanAddress(addr : Text) : async Bool {
-    let req : BtcRpcTypes.GetUtxosRequest = {
-      address = addr;
-      network = Constants.BTC_NETWORK;
-      filter = ?(#max_number_of_utxos(Constants.UTXO_LIMIT));
-    };
-    let btc : BtcRpcTypes.BitcoinApi = actor (Principal.toText(btcCanister()));
+  // ── bitcoin canister calls ─────────────────────────────────
+  func btc() : BtcRpcTypes.BitcoinApi { actor (Principal.toText(btcCanister())) };
+
+  // current chain height
+  func getCurrentHeight() : async Nat {
     try {
-      let resp = await btc.get_utxos(req);
-      btcTip := Nat32.toNat(resp.tip_height);
-      for (u in resp.utxos.vals()) {
-        let outpoint = blobToHex(u.outpoint.txid) # "#" # Nat32.toText(u.outpoint.vout);
-        let amount = Nat64.toNat(u.value);
-        if (amount > 0) {
-          recordDeposit({
-            signature = outpoint;
-            slot = Nat32.toNat(u.height);
-            asset = Constants.ASSET;
-            token = null;
-            from = ""; // UTXO has no explicit sender in get_utxos
-            to = addr;
-            amountRaw = amount;
-            blockHeight = Nat32.toNat(u.height);
-            confirmations = 0;
-            dedupKey = outpoint;
-          });
-        };
-      };
-      true;
-    } catch (_) { false };
+      let r = await (with cycles = Constants.BTC_RPC_CYCLES) btc().get_current_block_height({ network = Constants.BTC_NETWORK });
+      Nat32.toNat(r.height);
+    } catch (_) { 0 };
   };
 
-  // upsert: insert when unseen; refresh the stored block height when a UTXO
-  // transitions from mempool (height 0) to a mined block (height > 0), so the
-  // confirmation count in confirmDeposits can accrue. `amount`/`to`/`asset`
-  // never change for a fixed outpoint, only the height does.
+  // block hash at a given height (via a 1-height header window)
+  func getBlockHashAt(h : Nat32) : async ?Blob {
+    try {
+      let r = await (with cycles = Constants.BTC_RPC_CYCLES) btc().get_block_headers({
+        network = Constants.BTC_NETWORK;
+        start_height = h;
+        end_height = ?h;
+      });
+      if (r.headers.size() == 0) { return null };
+      ?r.headers[0].block_hash;
+    } catch (_) { null };
+  };
+
+  // raw block bytes for a hash
+  func getBlock(hash : Blob) : async ?Blob {
+    try {
+      let r = await (with cycles = Constants.BTC_RPC_CYCLES) btc().get_block({
+        network = Constants.BTC_NETWORK;
+        block_hash = hash;
+      });
+      ?r.block;
+    } catch (_) { null };
+  };
+
+  // scan one block: fetch it, decode it, record every output paying a watched
+  // script. Returns false if any fetch failed (so scanBlocks stops advancing
+  // and retries next cycle — the dedup layer guarantees idempotency).
+  func scanBlockProd(h : Nat) : async Bool {
+    switch (await getBlockHashAt(Nat32.fromNat(h))) {
+      case null { false };
+      case (?hash) {
+        switch (await getBlock(hash)) {
+          case null { false };
+          case (?raw) {
+            switch (Block.decodeBlock(raw)) {
+              case null { false };
+              case (?outs) {
+                let blockHex = blobToHex(hash);
+                for (o in outs.vals()) {
+                  let scriptHex = blobToHex(o.script);
+                  switch (Map.get(watchedScripts, Text.compare, scriptHex)) {
+                    case (?addr) {
+                      if (o.value > 0) {
+                        let outpoint = blockHex # "#" # Nat.toText(o.txIndex) # "#" # Nat.toText(o.vout);
+                        recordDeposit({
+                          signature = outpoint;
+                          slot = h;
+                          asset = Constants.ASSET;
+                          token = null;
+                          from = ""; // BTC outputs have no explicit sender in raw blocks
+                          to = addr;
+                          amountRaw = Nat64.toNat(o.value);
+                          blockHeight = h;
+                          confirmations = 0;
+                          dedupKey = outpoint;
+                        });
+                      };
+                    };
+                    case null {};
+                  };
+                };
+                true;
+              };
+            };
+          };
+        };
+      };
+    };
+  };
+
+  // upsert: insert when unseen; refresh the stored block height when it advances
+  // (a reorg could surface a different block at the same height — height only
+  // moves forward here). `amount`/`to`/`asset` never change for a fixed key.
   func recordDeposit(d : Types.Deposit) {
     if (d.amountRaw == 0) { return };
     switch (Map.get(deposits, Text.compare, d.dedupKey)) {
@@ -164,7 +232,6 @@ persistent actor BtcDepositDetector {
         };
       };
       case (?existing) {
-        // a UTXO's height transitions 0 (mempool) → real block height once mined
         if (d.blockHeight > existing.blockHeight) {
           Map.add(deposits, Text.compare, d.dedupKey, { existing with blockHeight = d.blockHeight });
         };
@@ -176,9 +243,24 @@ persistent actor BtcDepositDetector {
     if (Map.get(scanning, Text.compare, "scan") != null) { return };
     Map.add(scanning, Text.compare, "scan", true);
 
-    // sweep every watched address; each sweep refreshes btcTip from its response
-    for (addr in Map.keys(watchedAddresses)) {
-      ignore await scanAddress(addr);
+    let tip = await getCurrentHeight();
+    btcTip := tip;
+
+    // first sweep: jump to a safe starting height so we don't replay full history
+    if (blockHeight == 0 and tip > 0) {
+      blockHeight := if (tip > Constants.DELAY_BLOCKS + Constants.MAX_BLOCKS_PER_SCAN) {
+        tip - Constants.DELAY_BLOCKS - Constants.MAX_BLOCKS_PER_SCAN;
+      } else { 0 };
+    };
+    let safeTip = if (tip > Constants.DELAY_BLOCKS) { tip - Constants.DELAY_BLOCKS } else { 0 };
+    let batchEnd = Nat.min(safeTip, blockHeight + Constants.MAX_BLOCKS_PER_SCAN);
+
+    label scan loop {
+      if (blockHeight > batchEnd) { break scan };
+      // a failed block fetch leaves blockHeight where it is; the next cycle
+      // retries from the same block, and the dedup layer makes replay idempotent
+      if (not (await scanBlockProd(blockHeight))) { break scan };
+      blockHeight += 1;
     };
 
     confirmDeposits(btcTip);
@@ -193,13 +275,8 @@ persistent actor BtcDepositDetector {
     let movedKeys = List.empty<Text>();
     let toRefresh = List.empty<(Text, Types.Deposit)>();
     for ((dk, d) in Map.entries(deposits)) {
-      // height 0 == unconfirmed (mempool); a mined UTXO has tip − height + 1
-      // height 0 == unconfirmed (mempool); a mined UTXO has tip − height + 1
-      let confirmations = if (d.blockHeight == 0) {
-        0;
-      } else if (tip >= d.blockHeight) {
-        tip - d.blockHeight + 1;
-      } else { 0 };
+      // a mined output at height h has tip − h + 1 confirmations
+      let confirmations = if (tip >= d.blockHeight) { tip - d.blockHeight + 1 } else { 0 };
       if (confirmations >= Constants.CONFIRMED_CONFIRMATIONS) {
         moved.add({ d with confirmations = confirmations });
         movedKeys.add(dk);
@@ -232,7 +309,7 @@ persistent actor BtcDepositDetector {
   system func postupgrade() {
     Map.clear(scanning);
     // backfill the archive-key set from existing confirmed deposits so a
-    // re-scanned UTXO isn't archived twice right after an upgrade
+    // re-scanned output isn't archived twice right after an upgrade
     for (d in depositsConfirmed.vals()) {
       Map.add(confirmedKeys, Text.compare, d.dedupKey, ());
     };

@@ -6,27 +6,43 @@
 
 > **只做一件事：扫链 → 解析入金 → 存进地图（deposits）。不负责入账。**
 
-- 检测到一笔确认的 BTC 入金（UTXO）后，存入 `deposits`，并在达到确认数（区块深度）后移入 `depositsConfirmed` 永久存档。
+- 检测到一笔确认的 BTC 入金（交易的某个 output 支付给被监控地址）后，存入 `deposits`，并在达到确认数（区块深度）后移入 `depositsConfirmed` 永久存档。
 - **入账（给用户加余额）不在本模块内**：由 backend 读取 `depositsConfirmed` 后完成（BTC→本 detector，ETH→eth-deposit-detector，SOL→solchain-deposit，每资产单点入账）。
 
 ## 2. 整体工作流程
 
-### 2.1 定时扫描
-- 启动时通过 `Timer.recurringTimer(#seconds(SCAN_INTERVAL_SEC), scanBlocks)` 注册每 `SCAN_INTERVAL_SEC(15)` 秒一次的周期性扫描。
-- Bitcoin 没有「全局 Transfer 日志」，也没有账户抽象，检测模型是**按被监控地址轮询 UTXO**（这也与 SOL 版的「按地址轮询」对称）：每轮对 `watchedAddresses` 中的每个地址各做一次 `get_utxos`。
+### 2.1 检测模型：逐区块扫描（block-by-block）
 
-### 2.2 按地址轮询 `get_utxos`
-- 每个被监控地址发一次 `get_utxos`（`network=#mainnet`，`filter=#max_number_of_utxos(UTXO_LIMIT=100)`）。
-- 响应里每一项 `Utxo` 携带：`outpoint { txid, vout }`、`value`（satoshi，即 `amountRaw`）、`height`（区块高度，0=未确认/mempool），以及全局 `tip_height`（当前链尖）。
-- 以 `txid#vout` 作为**稳定的去重键**（dedupKey）：每轮重新列出该地址的全部 UTXO，靠 dedup 双查（`deposits` + `confirmedKeys`）防止重复入库，**无需 Solana 版那样的增量游标**。
+> 与 SOL 版的 `getBlock` 逐区块模型完全对齐。**不再按地址轮询 `get_utxos`**——BTC 主网 `get_utxos` 只能按地址查、且看不到「谁付给我」，无法做无状态的全链扫描；因此改为像 SOL 那样**逐区块读原始区块、解码、比对 scriptPubKey**。
 
-### 2.3 入金判定
-- BTC 原生模型：UTXO 出现在被监控地址即视为入金。`from` 在 `get_utxos` 中不可见（UTXO 无显式 sender），统一留空。
-- `amountRaw` = `value`（satoshi，已为最小单位，无需再换算）。
+每轮扫描流程：
 
-### 2.4 确认数与存档 `confirmDeposits(tip)`
-- `tip` 来自本轮 `get_utxos` 的 `tip_height`。
-- 确认数计算：`height == 0`（未确认）→ 0；否则 `tip − height + 1`。
+1. **取链尖高度** `get_current_block_height` → `tip`。
+2. **确定扫描窗口**：`safeTip = tip − DELAY_BLOCKS(1)`（保守地只扫已稳定的区块），本轮回填到 `min(safeTip, blockHeight + MAX_BLOCKS_PER_SCAN(10))`。
+3. **取每个区块的 hash**：`get_block_headers(start=h, end=h)` 返回该高度的 `BlockHeader.block_hash`。
+4. **取原始区块**：`get_block(block_hash)` 返回整块序列化字节 `Blob`。
+5. **解码**：`Block.decodeBlock(raw)` 遍历块内每笔交易的每个 output，抽出 `{ script : Blob, value : Nat64, txIndex, vout }`（无需解析 txid / 输入脚本 / witness）。
+6. **脚本匹配**：把每个 output 的 `script` 转 hex，去 `watchedScripts` 里查（热路径只做 hex 比对，**不解析脚本语义**）。
+7. 命中 → `recordDeposit`（dedupKey = `blockHex # txIndex # vout`，upsert 幂等）。
+
+### 2.2 游标推进与失败重试（对齐 SOL）
+
+- `blockHeight` 是扫描游标。首次运行跳到 `tip − DELAY_BLOCKS − MAX_BLOCKS_PER_SCAN`，之后每轮向前推进。
+- 某高度 `get_block` / `decodeBlock` 失败 → 停在当前高度，下轮重扫（dedup 幂等，重扫不会重复入库）。
+- 定时触发：`Timer.recurringTimer(#seconds(SCAN_INTERVAL_SEC=15), scanBlocks)`。
+
+### 2.3 地址注册与脚本匹配键
+
+- `registerDepositAddress(owner, addr)` 调用 `BtcAddr.addressToScript(addr)` 把地址**解码成精确的 scriptPubKey 字节**，再以 hex 作为 `watchedScripts` 的匹配键登记；同时保留 `watchedAddresses`（owner↔addr）。
+- 解码阶段即校验 base58 双重 SHA256 校验和 / bech32(bech32m) polymod 校验和，因此**地址拼错会在注册时直接被拒**，而不会「永远匹配不上」。
+- 支持类型：P2PKH（base58 v0）、P2SH（base58 v5）、P2WPKH（bech32 v0）、P2WSH（bech32 v0）、P2TR / Taproot（bech32m v1）。A-Z 大写地址按 BIP173 规范归一化为小写后处理。
+- 热路径不解析脚本：注册（低频）承担解码成本，扫描（高频）只做 hex 比对。
+
+### 2.4 入金判定与确认数 `confirmDeposits(tip)`
+
+- BTC 原生模型：output 出现在被监控 scriptPubKey 即视为入金。`from` 不可见（UTXO 无显式 sender），统一留空。
+- `amountRaw` = `value`（satoshi，已是最小单位，无需换算）。
+- 确认数（已 mined 的 output）：`confirmations = if (tip >= height) { tip − height + 1 } else { 0 }`（移除了旧的 `height == 0` 特判，统一用链尖深度）。
 - `confirmations >= CONFIRMED_CONFIRMATIONS(6)`：移出 `deposits`，追加进永久存档 `depositsConfirmed`，并登记 `confirmedKeys`（防重复入库）；迭代结束后再统一删除。
 - 未达阈值：仅刷新 `confirmations`。
 
@@ -34,19 +50,21 @@
 
 | 关注点 | 做法 |
 | --- | --- |
-| 检测模型 | BTC 无全局 Transfer 日志 → **按 `watchedAddresses` 逐地址 `get_utxos` 轮询**（与 SOL 版「按地址轮询」对称），与 ETH 版「整块扫」对称但以 UTXO 为中心 |
-| 去重 | 去重键 = `txid#vout`；靠 `deposits` + `confirmedKeys` 双查防重复入库；`postupgrade` 从 `depositsConfirmed` 回填 `confirmedKeys` |
-| 地址规范 | `isValidBtcAddress`：bech32（`bc1`/`tb1`/`bcrt1` 前缀）直接放行；其余按 Bitcoin base58 字母表校验；校验和交由链上 `get_utxos` 兜底 |
-| 幂等 / 防重组 | `CONFIRMED_CONFIRMATIONS=6` 阈值、`height` 深度判定、dedup 键 |
+| 检测模型 | **逐区块扫描**：`get_current_block_height` → `get_block_headers`(取 hash) → `get_block`(原始块) → `Block.decodeBlock` → scriptPubKey hex 比对 `watchedScripts`。与 SOL 版逐块模型对称，替代旧的按地址 `get_utxos` 轮询 |
+| 游标 / 重扫 | `blockHeight` 游标；首跑跳到 `tip − DELAY_BLOCKS − MAX_BLOCKS_PER_SCAN`；失败停当前高度下轮重扫；dedup 幂等 |
+| 地址规范 | `BtcAddr.addressToScript`：base58（P2PKH/P2SH）+ bech32/bech32m（P2WPKH/P2WSH/P2TR），注册时校验和校验，拼错即拒 |
+| 热路径 | 只 hex 比对原始 output script，不解析脚本语义 |
+| 去重 | 去重键 = `blockHex # txIndex # vout`；`deposits` + `confirmedKeys` 双查防重复入库；`postupgrade` 从 `depositsConfirmed` 回填 `confirmedKeys` |
+| 幂等 / 防重组 | `CONFIRMED_CONFIRMATIONS=6` 阈值、`tip − height + 1` 深度判定、`recordDeposit` upsert |
 | 金额 | `value` 已是 satoshi（最小单位），直接作为 `amountRaw`，无 decimal 换算 |
-| RPC 接入 | 经 dfinity bitcoin canister `mgi-tqaaaa-aaaar-qaqoa-cai` 的 **typed** 接口 `get_utxos`（Candid 直接解码，无需 JSON-RPC 文本解析），主网 `#mainnet` |
+| RPC 接入 | 经 dfinity bitcoin canister `mgi-tqaaaa-aaaar-qaqoa-cai` 的 typed 接口：`get_current_block_height` / `get_block_headers` / `get_block`（原始 Blob，Candid 直接解码，无需 JSON-RPC 文本解析）；主网 `#mainnet`。`get_utxos` / `get_balance` 仍保留在类型中但扫描不再使用 |
 
 ## 4. 公共接口
 
-| 接口 | 类型 | 权限 |  uchar 说明 |
+| 接口 | 类型 | 权限 | 说明 |
 | --- | --- | --- | --- |
-| `registerDepositAddress(owner, addr)` | shared | controller | 注册某用户的 BTC 充值地址（`addr` 经 `isValidBtcAddress` 校验） |
-| `unregisterDepositAddress(addr)` | shared | controller | 注销某充值地址 |
+| `registerDepositAddress(owner, addr)` | shared | controller | 注册某用户的 BTC 充值地址；`addr` 经 `BtcAddr.addressToScript` 解码 + 校验和校验（拼错即拒），同时登记 `watchedAddresses` 与 `watchedScripts` |
+| `unregisterDepositAddress(addr)` | shared | controller | 注销某充值地址（同步删除 `watchedAddresses` 与 `watchedScripts`） |
 | `getDepositAddresses()` | query | 公开 | 返回当前所有被监控充值地址 |
 | `getConfirmedDeposits()` | query | 公开 | 返回已达确认阈值的永久存档（**当前为全量返回**，见 §6） |
 | `scanAll()` | shared | 公开 | 手动触发一次 `scanBlocks`（调试 / 补扫用） |
@@ -57,7 +75,7 @@
 
 ## 5. 部署与接线
 
-- **构建配置**：`icp.yaml`（新增 `btcchain-deposit` canister + 加入 `engine`/`subnet` 环境）与 `mops.toml`（新增 `[canisters.btcchain-deposit]` 指向 `src/btcchain-deposit/main.mo`）已接入。
+- **构建配置**：`icp.yaml` 与 `mops.toml`（新增 `[canisters.btcchain-deposit]` 指向 `src/btcchain-deposit/main.mo`）已接入。
 - **backend 接线**：backend 新增 `setBtcDetector(principal)` / `getBtcDetector()`，并把 `creditAndRegister` 等记账入口的调用方白名单扩展为「bridge **或** eth-deposit-detector **或** solchain-deposit **或** btcchain-deposit **或** controller」。
 - **bitcoin canister**：通过 `Constants.btcCanisterMainnet()`（主网）访问 `mgi-tqaaaa-aaaar-qaqoa-cai`，`#mainnet`。
 
@@ -66,15 +84,17 @@
 1. **`depositsConfirmed` 无限增长**：永久存档数组会随用户量长期膨胀，撑高 canister 内存。已在该变量处标 `TODO`——需分桶存储 / backend 消费后清理。
 2. **全量返回接口**：`getDepositAddresses()` / `getConfirmedDeposits()` 当前返回整个数组，百万级会撑爆 query 响应，**需加分页**。
 3. **逐个注册不可行**：`registerDepositAddress` 一次只注册一个地址，100 万地址需调用 100 万次，**需提供批量注册接口**。
-4. **按地址轮询的 RPC 成本**：每轮对所有 `watchedAddresses` 各发一次 `get_utxos`。地址数大时 RPC 次数线性增长（百万地址不可接受），需引入分片 / 队列化 / 限制并发；单地址单轮最多 `UTXO_LIMIT(100)` 个 UTXO，超出的需分页（当前未实现，已在 `filter` 处可扩展 `min_confirmations` 替代）。
+4. **`get_block` 带宽 / cycles 成本**：逐区块模型每轮最多读 `MAX_BLOCKS_PER_SCAN(10)` 个原始区块（单块可达 1–4 MB），cycles 与解码成本远高于旧版「按地址 `get_utxos`」。需关注：(a) 落后太多时游标会渐进追赶，首跑可能多轮才能追上链尖；(b) 超大区块（含大量非相关交易）解码有固定开销，必要时应引入只扫相关高度的窗口化 / 限制并发。相较旧模型，RPC 次数不再随「地址数」线性增长，而随「区块数」增长，更适合大规模用户。
 
 ## 7. 代码结构
 
 ```
 src/btcchain-deposit/
 ├── main.mo          // detector actor：扫描调度、链上读取、解析、存储、公开接口
-├── Types.mo         // Transfer / Deposit 类型定义（竖排）
-├── Constants.mo     // 链配置、扫描参数、bitcoin canister 构造
-├── BtcRpcTypes.mo   // bitcoin canister 的 Candid 类型子集（get_utxos 等）
+├── Types.mo         // Transfer / Deposit 类型定义
+├── Constants.mo     // 链配置、扫描参数（DELAY_BLOCKS / MAX_BLOCKS_PER_SCAN / SCAN_INTERVAL_SEC / CONFIRMED_CONFIRMATIONS / BTC_RPC_CYCLES）、bitcoin canister 构造
+├── BtcRpcTypes.mo   // bitcoin canister 的 Candid 类型子集（get_current_block_height / get_block_headers / get_block / get_utxos / get_balance）
+├── BtcAddr.mo       // 【新增】地址 → scriptPubKey 解码器（base58 + bech32/bech32m），无 Word32/位运算环境下用 + * / % 模拟 polymod 与 5→8 转换
+├── Block.mo         // 【新增】原始比特币区块解码器（legacy + segwit/BIP141，含 witness 段处理防游标错位）
 └── README.md        // 本文件
 ```
