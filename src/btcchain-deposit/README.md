@@ -46,7 +46,7 @@
 - BTC 原生模型：output 出现在被监控 scriptPubKey 即视为入金。`from` 不可见（UTXO 无显式 sender），统一留空。
 - `amountRaw` = `value`（satoshi，已是最小单位，无需换算）。
 - 确认数（已 mined 的 output）：`confirmations = if (tip >= height) { tip − height + 1 } else { 0 }`（移除了旧的 `height == 0` 特判，统一用链尖深度）。
-- `confirmations >= CONFIRMED_CONFIRMATIONS(6)`：移出 `deposits`，追加进永久存档 `depositsConfirmed`，并登记 `confirmedKeys`（防重复入库）；迭代结束后再统一删除。
+- `confirmations >= CONFIRMED_CONFIRMATIONS(6)`：移出 `deposits`，写入永久存档 `depositsConfirmed`（按 dedupKey 索引的 `Map`）；迭代结束后再统一删除待归档条目。
 - 未达阈值：仅刷新 `confirmations`。
 
 ## 3. 关键设计要点
@@ -57,7 +57,7 @@
 | 游标 / 重扫 | `blockHeight` 游标；首跑跳到 `tip − DELAY_BLOCKS − MAX_BLOCKS_PER_SCAN`；失败停当前高度下轮重扫；dedup 幂等 |
 | 地址规范 | `BtcAddr`：`addressToScript`（注册时校验）+ `scriptToAddress`（扫描时反向转换）：base58（仅 P2PKH v0）+ bech32/bech32m（P2WPKH v0-20 / P2TR v1-32）；**P2SH/P2WSH 故意不支持**（隐藏 redeem/witness 脚本 → 假充值/锁定风险），拼错即拒 |
 | 热路径 | 每个 output 的 scriptPubKey 反向解码为规范地址后查 `watchedAddresses`；不支持的脚本形状直接 null 跳过。反向转换对块内全部 output 执行（含校验和计算），成本高于旧版 hex 比对，见 §6 |
-| 去重 | 去重键 = `blockHex # txIndex # vout`；`deposits` + `confirmedKeys` 双查防重复入库；`postupgrade` 从 `depositsConfirmed` 回填 `confirmedKeys` |
+| 去重 | 去重键 = `blockHex # txIndex # vout`；`recordDeposit` 查 `deposits` 与 `depositsConfirmed`（已归档即跳过）双查防重复入库；`depositsConfirmed` 的 key 同时充当「已归档」标记 |
 | 幂等 / 防重组 | `CONFIRMED_CONFIRMATIONS=6` 阈值、`tip − height + 1` 深度判定、`recordDeposit` upsert |
 | 金额 | `value` 已是 satoshi（最小单位），直接作为 `amountRaw`，无 decimal 换算 |
 | RPC 接入 | 经 dfinity bitcoin canister `mgi-tqaaaa-aaaar-qaqoa-cai` 的 typed 接口：`get_current_block_height` / `get_block_headers` / `get_block`（原始 Blob，Candid 直接解码，无需 JSON-RPC 文本解析）；主网 `#mainnet`。`get_utxos` / `get_balance` 仍保留在类型中但扫描不再使用 |

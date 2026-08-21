@@ -57,12 +57,13 @@ persistent actor BtcDepositDetector {
 
   // pending deposits, deduped by dedupKey (blockHash#txIndex#vout)
   let deposits = Map.empty<Text, Types.Deposit>();
-  // permanent archive of deposits that reached CONFIRMED_CONFIRMATIONS
-  // TODO: unbounded growth — at millions of users this array grows forever and
+  // permanent archive of deposits that reached CONFIRMED_CONFIRMATIONS.
+  // Keyed by dedupKey (blockHash#txIndex#vout); the presence of a key also
+  // marks the output as "already archived", so recordDeposit can skip a
+  // re-scanned output without a second map.
+  // TODO: unbounded growth — at millions of users this map grows forever and
   // inflates canister memory; needs bucketing / backend-consumption-then-prune.
-  var depositsConfirmed : [Types.Deposit] = [];
-  // keys already archived, so a re-scanned output isn't archived twice
-  let confirmedKeys = Map.empty<Text, ()>();
+  let depositsConfirmed = Map.empty<Text, Types.Deposit>();
 
   let scanning = Map.empty<Text, Bool>();
 
@@ -118,7 +119,7 @@ persistent actor BtcDepositDetector {
   };
 
   public query func getConfirmedDeposits() : async [Types.Deposit] {
-    depositsConfirmed;
+    Iter.toArray(Map.values(depositsConfirmed));
   };
 
   // ── address validation ─────────────────────────────────────
@@ -260,7 +261,7 @@ persistent actor BtcDepositDetector {
     if (d.amountRaw == 0) { return };
     switch (Map.get(deposits, Text.compare, d.dedupKey)) {
       case (null) {
-        if (Map.get(confirmedKeys, Text.compare, d.dedupKey) == null) {
+        if (Map.get(depositsConfirmed, Text.compare, d.dedupKey) == null) {
           Map.add(deposits, Text.compare, d.dedupKey, {
             signature = d.signature;
             slot = d.slot;
@@ -349,16 +350,14 @@ persistent actor BtcDepositDetector {
     // delete archived entries AFTER the iteration — mutating the map mid-iteration is unsafe
     for (dk in List.toArray(movedKeys).vals()) {
       ignore Map.delete(deposits, Text.compare, dk);
-      Map.add(confirmedKeys, Text.compare, dk, ());
     };
     for ((dk, d) in List.toArray(toRefresh).vals()) {
       Map.add(deposits, Text.compare, dk, d);
     };
-    let movedArr = List.toArray(moved);
-    if (movedArr.size() > 0) {
-      let combined = List.fromArray<Types.Deposit>(depositsConfirmed);
-      List.append(combined, moved);
-      depositsConfirmed := List.toArray(combined);
+    // archive the moved deposits into the Map (keyed by dedupKey; the key
+    // presence also dedups re-scanned outputs, replacing the old confirmedKeys)
+    for (d in List.toArray(moved).vals()) {
+      Map.add(depositsConfirmed, Text.compare, d.dedupKey, d);
     };
   };
 
@@ -370,11 +369,9 @@ persistent actor BtcDepositDetector {
 
   system func postupgrade() {
     Map.clear(scanning);
-    // backfill the archive-key set from existing confirmed deposits so a
-    // re-scanned output isn't archived twice right after an upgrade
-    for (d in depositsConfirmed.vals()) {
-      Map.add(confirmedKeys, Text.compare, d.dedupKey, ());
-    };
+    // depositsConfirmed is the single source of truth for archived deposits
+    // (and their dedup keys); it persists across upgrades, so no backfill is
+    // needed here.
   };
 
   system func inspect({ caller : Principal }) : Bool {
