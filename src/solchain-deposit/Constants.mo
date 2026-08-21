@@ -13,22 +13,16 @@ let SOL_CHAIN : SolRpcTypes.RpcSources = #Default (#Mainnet);
 
 let ASSET : Text = "SOL";
 
-// SOL native transfer program (System Program). A native SOL transfer shows up
-// as a SystemProgram instruction (programId == this) crediting the recipient.
-let SYSTEM_PROGRAM : Text = "11111111111111111111111111111111";
 // SPL Token program (legacy). Token transfers are SplToken instructions.
-let SPL_TOKEN_PROGRAM : Text = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-// SPL Token-2022 program (newer mints).
-let SPL_TOKEN_2022_PROGRAM : Text = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+let TOKEN_PROGRAM_ID : Text = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+// SPL Token-2022 program (newer mints — uses a DIFFERENT ATA; pick per mint).
+let TOKEN_2022_PROGRAM_ID : Text = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 
-let DELAY_SLOTS : Nat = 32;           // stop this many slots behind the tip (reorg guard)
-let MAX_SLOTS_PER_SCAN : Nat = 150;   // cap per-cycle RPC cost (one address sweep each)
-let BLOCKS_PER_BATCH : Nat = 5;       // slots fetched concurrently per scan batch (Solana is fast)
-let CONFIRMED_SLOTS : Nat = 32;       // move to depositsConfirmed at this depth
-let SCAN_INTERVAL_SEC : Nat = 8;      // poll cadence (Solana slots ~400ms; sweep is per-address)
+// per-address signature fetching (getSignaturesForAddress / getTransaction)
+let SIG_LIMIT : Nat = 25;        // signatures pulled per getSignaturesForAddress page
+let MAX_SIG_PAGES : Nat = 4;     // page cap per refresh — bounds RPC cost (~100 sigs/refresh)
+let CONFIRMED_SLOTS : Nat = 32;  // move to depositsConfirmed at this slot depth
 let SOL_RPC_CYCLES : Nat = 10_000_000_000;
-
-// per-block scanning — no per-address signature limit
 
 // consensus on aggregated sol-rpc responses — Equality matches all providers
 func parseCanisterEnv<system>(name : Text) : ?Principal {
