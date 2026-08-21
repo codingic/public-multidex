@@ -61,11 +61,14 @@ module {
   };
 
   // Decode a raw block. Returns null only on a structural/truncation error
-  // (so the caller can mark the scan as failed and retry next cycle).
+  // (so the caller can mark the scan as failed and retry next cycle). All
+  // reads are bounds-checked so malformed bytes yield null, never a trap
+  // (scanBlocks' catch would contain a trap, but null keeps the failure
+  // explicit and retry-safe).
   public func decodeBlock(raw : Blob) : ?[Output] {
     let b = Blob.toArray(raw);
     let n = b.size();
-    if (n < 80) { return null };     // need at least the 80-byte header
+    if (n < 81) { return null };    // header + at least a 1-byte tx count
     var i = 80;                     // skip header
     let (txCount, ni) = readVarint(b, i);
     i := ni;
@@ -80,6 +83,7 @@ module {
         i += 2; // marker + flag
       };
       // inputs
+      if (i >= n) { return null };
       let (inCount, ii) = readVarint(b, i);
       i := ii;
       var k = 0;
@@ -117,10 +121,12 @@ module {
       if (segwit) {
         var w = 0;
         while (w < inCount) {
+          if (i >= n) { return null };
           let (wcount, wi) = readVarint(b, i);
           i := wi;
           var j = 0;
           while (j < wcount) {
+            if (i >= n) { return null };
             let (wlen, wj) = readVarint(b, i);
             i := wj;
             if (i + wlen > n) { return null };

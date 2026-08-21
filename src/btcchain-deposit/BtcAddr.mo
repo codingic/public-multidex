@@ -221,13 +221,18 @@ module {
   };
 
   // BIP173/BIP350 checksum check. Returns the witness version (the first
-  // 5-bit group) if `data` is a valid bech32 (polymod == 1) OR bech32m
-  // (polymod == 0x2bc830a3) checksum for `hrp`; otherwise null. `data` already
-  // includes the 6 checksum groups, so we feed hrp_expand ++ data directly.
+  // 5-bit group) if `data` carries a VALID checksum for `hrp`; otherwise null.
+  // Per BIP350 the checksum variant must match the version: v0 → bech32
+  // (polymod == 1), v1+ → bech32m (polymod == 0x2bc830a3). Enforcing the
+  // pairing keeps decode↔encode round-trips exact — a v1 address carrying a
+  // bech32 checksum would register but never re-encode to the same string,
+  // silently never matching. `data` already includes the 6 checksum groups,
+  // so we feed hrp_expand ++ data directly.
   func bech32Version(hrp : Text, data : [Nat8]) : ?Nat8 {
     let chk = bech32Polymod(Array.concat(hrpExpand(hrp), data));
-    if (chk == 1) { return ?data[0] };
-    if (chk == 0x2bc830a3) { return ?data[0] };
+    let version = data[0];
+    if (chk == 1 and version == 0) { return ?version };
+    if (chk == 0x2bc830a3 and version >= 1) { return ?version };
     null;
   };
 

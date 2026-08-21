@@ -261,10 +261,8 @@ persistent actor BtcDepositDetector {
     };
   };
 
-  func scanBlocks() : async () {
-    if (Map.get(scanning, Text.compare, "scan") != null) { return };
-    Map.add(scanning, Text.compare, "scan", true);
-
+  // one scan cycle; caller (scanBlocks) holds the "scan" flag
+  func scanCycle() : async () {
     let tip = await getCurrentHeight();
     btcTip := tip;
 
@@ -279,7 +277,6 @@ persistent actor BtcDepositDetector {
     // caught up (no new stable blocks this cycle) — nothing to scan
     if (batchEnd <= blockHeight) {
       confirmDeposits(btcTip);
-      ignore Map.delete(scanning, Text.compare, "scan");
       return;
     };
 
@@ -290,7 +287,6 @@ persistent actor BtcDepositDetector {
     while (hh <= batchEnd) {
       if (not (await scanBlockProd(hh))) {
         confirmDeposits(btcTip);
-        ignore Map.delete(scanning, Text.compare, "scan");
         return;
       };
       hh += 1;
@@ -298,7 +294,17 @@ persistent actor BtcDepositDetector {
     blockHeight := batchEnd;
 
     confirmDeposits(btcTip);
+  };
 
+  func scanBlocks() : async () {
+    if (Map.get(scanning, Text.compare, "scan") != null) { return };
+    Map.add(scanning, Text.compare, "scan", true);
+    // ALWAYS release the flag, even on trap: a malformed block can make
+    // Block.decodeBlock trap on an out-of-bounds read, which rejects this
+    // call mid-flight — leaving "scan" set would deadlock every later tick
+    // (each returns at the guard) and silently stop detection until the next
+    // canister upgrade. Trapped cycles simply retry from the same height.
+    try { await scanCycle(); } catch (_) {};
     ignore Map.delete(scanning, Text.compare, "scan");
   };
 
