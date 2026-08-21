@@ -87,10 +87,22 @@ persistent actor BtcDepositDetector {
     // side re-encodes. A bech32 address whose HRP doesn't match the network
     // we scan (e.g. tb1… on mainnet) would re-encode with a different prefix
     // and silently never match — reject it loudly here. (Testnet base58 is
-    // already rejected inside BtcAddr: only mainnet versions 0x00/0x05.)
+    // already rejected inside BtcAddr: only the mainnet P2PKH version 0x00 is
+    // accepted; 0x05 (P2SH) is dropped there.)
     let isBech = Text.startsWith(addr, #text("bc1")) or Text.startsWith(addr, #text("tb1")) or Text.startsWith(addr, #text("bcrt1"));
     if (isBech and not Text.startsWith(addr, #text(bech32Hrp # "1"))) {
       Runtime.trap("Address network mismatch: expected " # bech32Hrp # "1…");
+    };
+    // BIP173 canonical form is lowercase. A mixed/uppercase bech32 passes
+    // checksum validation (bech32 decodes case-insensitively) but the scan
+    // side always re-encodes to lowercase, so it would silently never match a
+    // registered key. Reject it so the stored key is always canonical — this
+    // is what README §2.3 promises ("大写 bech32 会在注册校验时被拒").
+    if (isBech) {
+      for (c in addr.chars()) {
+        let code = Char.toNat32(c);
+        if (code >= 65 and code <= 90) { Runtime.trap("Bech32 address must be lowercase") };
+      };
     };
     switch (BtcAddr.addressToScript(addr)) {
       case null { Runtime.trap("Unsupported or malformed Bitcoin address") };
@@ -110,7 +122,7 @@ persistent actor BtcDepositDetector {
   };
 
   // ── address validation ─────────────────────────────────────
-  // Bitcoin base58 alphabet (= the Solana alphabet). Legacy (1…) and P2SH (3…)
+  // Bitcoin base58 alphabet (= the Solana alphabet). Legacy P2PKH (1…)
   // addresses are base58; native segwit (bc1…) / testnet (tb1…) / regtest
   // (bcrt1…) are bech32. We don't verify the checksum here (BtcAddr does that
   // at registration) — this only gates the alphabet / prefix.

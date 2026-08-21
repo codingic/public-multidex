@@ -35,9 +35,9 @@
 
 - `registerDepositAddress(owner, addr)` 调用 `BtcAddr.addressToScript(addr)` 做**注册时校验**（base58 双重 SHA256 / bech32(bech32m) polymod 校验和 + 支持类型），拼错即拒；通过后把 `addr` 登记进 `watchedAddresses`（addr↔owner）。**不再维护 `watchedScripts` 脚本表**。
 - 扫描热路径反向走：每个 output 的 scriptPubKey 经 `BtcAddr.scriptToAddress(script, hrp)` 转回规范地址，与 `watchedAddresses` 直接比对。
-- 支持类型（标准形状白名单）：P2PKH（base58 v0）、P2SH（base58 v5）、P2WPKH（bech32 v0-20）、P2WSH（bech32 v0-32）、P2TR / Taproot（bech32m v1-32）；其余一律 null。要求地址为小写规范形式（大写 bech32 会在注册校验时被拒）。base58 版本字节固定为主网（0x00 / 0x05）。
+- 支持类型（标准形状白名单，仅 3 种**可证明可花费**的）：**P2PKH**（base58 v0）、**P2WPKH**（bech32 v0-20）、**P2TR / Taproot**（bech32m v1-32）；其余一律 null。要求地址为小写规范形式（大写 bech32 会在注册校验时被拒）。base58 版本字节固定为主网（仅 0x00）。**P2SH（base58 v5）与 P2WSH（bech32 v0-32 故意排除）**：二者地址只承诺 redeem/witness 脚本的哈希，其可花费性在「入金扫描」时点是**不可验证**的——一个锁死/不可花费的 redeem 脚本会让该 output 被记为充值却永远提不走，即「假充值」。这 3 种保留类型的地址直接编码花费密钥（P2PKH/P2WPKH=HASH160(pubkey)、P2TR=x-only pubkey 且 key path 永远可用），匹配即代表密钥持有者可花费，无法在不改变脚本的前提下「锁定」。
 - **匹配是完全匹配**：注册串与扫描侧重编码串**逐字符相等**才命中（`Map.get` 精确键查找，无前缀/包含/模糊）。注册时校验 bech32 HRP 与所扫网络一致——主网部署注册 `tb1…`/`bcrt1…` 直接 trap（否则扫描侧用 `bc` 重编码成不同字符串，静默永不匹配）；base58 测试网版本字节（0x6f/0xc4）由 `BtcAddr` 拒绝。
-- **锁定 / 不可花费的 output 永远不会入充值表**：匹配是与注册地址的脚本**逐字节相等**，所以任何「内嵌用户地址但带锁」的脚本（CLTV/CSV 时间锁、哈希锁 HTLC、多签包裹、OP_RETURN 携带地址数据）都不可能命中；非标准 witness 程序在注册与扫描**两侧同时被拒**——v0 非 20/32 字节是共识不可花费（永久锁定），v1 非 32 字节 / v2–v16 是 anyone-can-spend（语义未定义，任何人都可花走）。
+- **锁定 / 不可花费的 output 永远不会入充值表（假充值防护）**：匹配是与注册地址的脚本**逐字节相等**，所以任何「内嵌用户地址但带锁」的脚本（CLTV/CSV 时间锁、哈希锁 HTLC、多签包裹、OP_RETURN 携带地址数据）都不可能命中；非标准 witness 程序在注册与扫描**两侧同时被拒**——v0 非 20/32 字节是共识不可花费（永久锁定），v1 非 32 字节 / v2–v16 是 anyone-can-spend（语义未定义，任何人都可花走）。此外，**P2SH / P2WSH 已从支持类型中移除**：它们的地址只承诺 redeem/witness 脚本哈希，扫描时看不到脚本本身，无法判定是否可花费；保留的 P2PKH/P2WPKH/P2TR 三类型地址直接编码花费密钥，「锁定」必然改变脚本形状从而破坏地址匹配——故「长得像用户地址但被锁死」的 output 既不能注册、也不会被扫描判为充值。
 - bech32 HRP（`bc` / `tb` / `bcrt`）由 `Constants.BTC_NETWORK` 推导，与所扫网络一致，保证 script→address 与注册地址逐字符一致；校验和变体按 BIP350 严格配对（v0↔bech32、v1↔bech32m），错配地址直接拒绝。
 - 扫描活性保障：`scanBlocks` 用 try/catch 兜底释放 `scanning` 标志——即使 `Block.decodeBlock` 在畸形区块上 trap（已加截断保护，正常返回 null），也不会把扫描锁死到下次升级。
 
@@ -55,7 +55,7 @@
 | --- | --- |
 | 检测模型 | **逐区块扫描**：`get_current_block_height` → `get_block_headers`(取 hash) → `get_block`(原始块) → `Block.decodeBlock` → scriptPubKey 反向转地址比对 `watchedAddresses`。与 SOL 版逐块模型对称，替代旧的按地址 `get_utxos` 轮询 |
 | 游标 / 重扫 | `blockHeight` 游标；首跑跳到 `tip − DELAY_BLOCKS − MAX_BLOCKS_PER_SCAN`；失败停当前高度下轮重扫；dedup 幂等 |
-| 地址规范 | `BtcAddr`：`addressToScript`（注册时校验）+ `scriptToAddress`（扫描时反向转换）：base58（P2PKH/P2SH）+ bech32/bech32m（P2WPKH/P2WSH/P2TR），拼错即拒 |
+| 地址规范 | `BtcAddr`：`addressToScript`（注册时校验）+ `scriptToAddress`（扫描时反向转换）：base58（仅 P2PKH v0）+ bech32/bech32m（P2WPKH v0-20 / P2TR v1-32）；**P2SH/P2WSH 故意不支持**（隐藏 redeem/witness 脚本 → 假充值/锁定风险），拼错即拒 |
 | 热路径 | 每个 output 的 scriptPubKey 反向解码为规范地址后查 `watchedAddresses`；不支持的脚本形状直接 null 跳过。反向转换对块内全部 output 执行（含校验和计算），成本高于旧版 hex 比对，见 §6 |
 | 去重 | 去重键 = `blockHex # txIndex # vout`；`deposits` + `confirmedKeys` 双查防重复入库；`postupgrade` 从 `depositsConfirmed` 回填 `confirmedKeys` |
 | 幂等 / 防重组 | `CONFIRMED_CONFIRMATIONS=6` 阈值、`tip − height + 1` 深度判定、`recordDeposit` upsert |

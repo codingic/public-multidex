@@ -7,15 +7,24 @@
 // into its canonical address (scriptToAddress) and looked up against the
 // addresses registered in watchedAddresses.
 //
-// Supported both ways: P2PKH (base58, version 0x00), P2SH (base58, version
-// 0x05), P2WPKH (bech32, witness v0), P2WSH (bech32, witness v0) and P2TR /
-// Taproot (bech32m, witness v1). Anything else yields null on BOTH sides:
-// scripts that merely embed the user's script inside a lock (CLTV/CSV
-// timelock, hashlock HTLC, multisig, OP_RETURN data — different byte shape),
-// and non-standard witness programs (v0 with a wrong length is
-// consensus-unspendable, i.e. coins locked forever; v1 wrong length and v2-16
-// are anyone-can-spend). So an output "containing the user's address" but
-// locked can neither register nor be detected as a deposit.
+// Supported both ways: P2PKH (base58, version 0x00), P2WPKH (bech32, witness
+// v0) and P2TR / Taproot (bech32m, witness v1). These three are the ONLY
+// address types accepted as deposits. They are chosen precisely because the
+// address encodes the spending key directly (P2PKH/P2WPKH: HASH160(pubkey);
+// P2TR: x-only pubkey with an always-available key path) — so an output that
+// matches a registered address is provably spendable by the key holder, with
+// NO way to "lock" it without changing the script (which would break the
+// address match). P2SH and P2WSH are deliberately NOT supported: their address
+// commits only to HASH160(redeemScript) / SHA256(witnessScript), whose
+// spendability cannot be verified at deposit-scan time. A locked or
+// unspendable redeem/witness script would let such an output be credited as a
+// deposit but never moved — a fake deposit. Anything else yields null on BOTH
+// sides: scripts that embed the user's key inside a lock (CLTV/CSV timelock,
+// hashlock HTLC, multisig, OP_RETURN data — different byte shape), and
+// non-standard witness programs (v0 with a wrong length is consensus-
+// unspendable, i.e. coins locked forever; v1 wrong length and v2-16 are
+// anyone-can-spend). So an output "containing the user's address" but locked
+// can neither register nor be detected as a deposit.
 //
 // NOTE: the core/base libraries available here have no Word32 / bitwise ops on
 // Nat, so all bit manipulation (BIP173 polymod, 5↔8 convertBits) is done with
@@ -83,7 +92,7 @@ module {
     true;
   };
 
-  // ── base58 (P2PKH / P2SH) ───────────────────────────────────
+  // ── base58 (P2PKH) ──────────────────────────────────────────
   let B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
   func charVal(c : Char) : Nat {
@@ -144,11 +153,12 @@ module {
     let version = d[0];
     let hash160 = slice(d, 1, 21);
     if (version == 0) {
-      // OP_DUP OP_HASH160 <20> OP_EQUALVERIFY OP_CHECKSIG
+      // OP_DUP OP_HASH160 <20> OP_EQUALVERIFY OP_CHECKSIG — P2PKH.
+      // (P2SH / version 0x05 is intentionally NOT supported: a P2SH address
+      // commits only to HASH160(redeemScript), whose spendability cannot be
+      // verified at deposit-scan time. A locked/unspendable redeem script
+      // would let a "deposit" be credited but never moved — a fake deposit.)
       ?concat([0x76, 0xa9, 0x14], concat(hash160, [0x88, 0xac]));
-    } else if (version == 5) {
-      // OP_HASH160 <20> OP_EQUAL
-      ?concat([0xa9, 0x14], concat(hash160, [0x87]));
     } else { null };
   };
 
@@ -282,16 +292,16 @@ module {
     switch (versionOpt) {
       case null { return null };
       case (?version) {
-        // Standard witness programs only: v0-20 (P2WPKH), v0-32 (P2WSH),
-        // v1-32 (P2TR / Taproot). Everything else is non-standard on-chain:
-        // v0 with another length is consensus-UNSPENDABLE (coins locked
-        // forever), and v1 wrong-length / v2-16 have undefined semantics
-        // (anyone-can-spend). Registering such an address would later let a
-        // locked, unmovable output be detected as a deposit.
+        // Standard, provably-spendable witness programs only: v0-20 (P2WPKH)
+        // and v1-32 (P2TR / Taproot). v0-32 (P2WSH) is deliberately excluded:
+        // like P2SH it commits to a hidden witness script whose spendability
+        // is unknowable at deposit time, so a locked P2WSH output could be
+        // credited as a deposit but never spent. Everything else (v0 wrong
+        // length, v2-16) is non-standard / anyone-can-spend.
         if (version > 1) { return null };
         let program = convertBits(slice(dataArr, 1, dpSize - 6), 5, 8, false);
         let pl = program.size();
-        if (not ((version == 0 and (pl == 20 or pl == 32)) or (version == 1 and pl == 32))) { return null };
+        if (not ((version == 0 and pl == 20) or (version == 1 and pl == 32))) { return null };
         // OP_0 for v0; OP_1 = 0x51 for v1 (Taproot)
         let op : Nat8 = if (version == 0) { 0x00 } else { 0x51 };
         ?concat([op, Nat8.fromNat(pl)], program);
@@ -378,11 +388,13 @@ module {
     s;
   };
 
-  // The raw scriptPubKey → canonical address conversion. `hrp` is the bech32
-  // human-readable prefix ("bc" mainnet / "tb" testnet / "bcrt" regtest);
-  // base58 version bytes are mainnet (P2PKH 0x00, P2SH 0x05). Only standard
-  // script shapes decode to an address — see the whitelist notes above; null
-  // for anything else (incl. all locked / non-standard variants).
+  // The raw scriptPubKey → canonical address conversion, used in the scan hot
+  // path. `hrp` is the bech32 HRP ("bc"/"tb"/"bcrt"); base58 version byte is
+  // mainnet P2PKH 0x00. Only provably-spendable standard shapes decode to an
+  // address: P2PKH, P2WPKH (v0-20) and P2TR (v1-32). P2SH and P2WSH are
+  // deliberately rejected (hidden redeem/witness script → fake-deposit/locked
+  // risk), and any wrapped/locked script (CLTV/CSV/HTLC/multisig/OP_RETURN, or
+  // a non-standard witness program) yields null and is therefore never matched.
   public func scriptToAddress(script : [Nat8], hrp : Text) : ?Text {
     let n = script.size();
     if (n < 4) { return null };
@@ -390,20 +402,18 @@ module {
         and script[23] == 0x88 and script[24] == 0xac) {
       // P2PKH: OP_DUP OP_HASH160 <20> OP_EQUALVERIFY OP_CHECKSIG
       ?hash160ToBase58Addr(slice(script, 3, 23), 0x00);
-    } else if (n == 23 and script[0] == 0xa9 and script[1] == 0x14 and script[22] == 0x87) {
-      // P2SH: OP_HASH160 <20> OP_EQUAL
-      ?hash160ToBase58Addr(slice(script, 2, 22), 0x05);
     } else {
       // witness program: OP_0 <len> <program> (v0) or OP_1 <len> <program> (v1)
       let op = Nat8.toNat(script[0]);
       let witVer = if (op == 0) { 0 } else if (op >= 0x51 and op <= 0x60) { op - 0x50 } else { 17 };
       let progLen = n - 2;
-      // Standard shapes only — must mirror bech32ToScript: v0-20 (P2WPKH),
-      // v0-32 (P2WSH), v1-32 (P2TR). Non-standard programs are
-      // consensus-unspendable (v0 wrong length) or anyone-can-spend (v1 wrong
-      // length, v2-16): an output shaped like the user's address but locked
-      // must never be encoded — and thus never matched — as a deposit.
-      let standard = (witVer == 0 and (progLen == 20 or progLen == 32)) or (witVer == 1 and progLen == 32);
+      // Standard, provably-spendable shapes only — must mirror bech32ToScript:
+      // v0-20 (P2WPKH) and v1-32 (P2TR). P2WSH (v0-32) is excluded on purpose;
+      // non-standard programs are consensus-unspendable (v0 wrong length) or
+      // anyone-can-spend (v1 wrong length, v2-16). An output shaped like the
+      // user's address but locked must never be encoded — and thus never
+      // matched — as a deposit.
+      let standard = (witVer == 0 and progLen == 20) or (witVer == 1 and progLen == 32);
       if (standard and Nat8.toNat(script[1]) == progLen) {
         let groups = convertBits(slice(script, 2, n), 8, 5, true);
         // BIP350: v0 → bech32, v1 → bech32m (Taproot)
