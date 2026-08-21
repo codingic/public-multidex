@@ -47,7 +47,9 @@ persistent actor EthDepositDetector {
   // last fully-read block height; advanced every scan
   var blockHeight : Nat = 0;
 
-  // pending deposits, deduped by (txHash, kind): native "#native", ERC-20 "#logIndex"
+  // pending deposits, deduped by (txHash, kind). Native ETH has kind "native";
+  // internal ETH has kind "internal-<traceIdx>" (so two internal CALLs to the
+  // same watched address in one tx don't collide); ERC-20 uses txHash#logIndex.
   let deposits = Map.empty<Text, Types.Deposit>();
   // permanent archive of deposits that reached CONFIRMED_BLOCKS
   // TODO: unbounded growth — at millions of users this array grows forever and
@@ -100,10 +102,10 @@ persistent actor EthDepositDetector {
   };
 
   // raw JSON-RPC via multi_request (multi-provider consensus); null on error
-  func multiRequestText(json : Text) : async ?Text {
+  func multiRequestText(json : Text, cfg : ?EvmRpcTypes.RpcConfig) : async ?Text {
     let rpc : EvmRpcTypes.EvmRpc = actor (Principal.toText(evmRpc()));
     try {
-      let r = await (with cycles = Constants.EVM_RPC_CYCLES) rpc.multi_request(Constants.ETH_CHAIN, null, json);
+      let r = await (with cycles = Constants.EVM_RPC_CYCLES) rpc.multi_request(Constants.ETH_CHAIN, cfg, json);
       switch r {
         case (#Consistent x) { switch x { case (#Ok t) { ?t }; case (#Err _) { null } } };
         case (#Inconsistent _) { null };
@@ -126,7 +128,7 @@ persistent actor EthDepositDetector {
   func evmGetTx(hash : Text) : async ?Types.Transfer {
     let json = "{\"jsonrpc\":\"2.0\",\"method\":\"eth_getTransactionByHash\",\"params\":[\""
       # hash # "\"],\"id\":1}";
-    let t = await multiRequestText(json);
+    let t = await multiRequestText(json, null);
     switch t {
       case null { null };
       case (?s) {
@@ -146,6 +148,7 @@ persistent actor EthDepositDetector {
             ?{
               txHash = hash;
               logIndex = 0;
+              kind = "native";
               asset = Constants.ASSET;
               token = null;
               from = from;
@@ -208,6 +211,7 @@ persistent actor EthDepositDetector {
     recordDeposit(h, {
       txHash = txHash;
       logIndex = logIndex;
+      kind = "log";
       asset = contract;
       token = ?contract;
       from = from;
@@ -216,14 +220,90 @@ persistent actor EthDepositDetector {
     });
   };
 
+  // fetch a block's internal ETH transfers via trace_block (raw JSON-RPC, since
+  // the EVM-RPC SDK exposes no typed trace method). trace_block additionally
+  // reports the top-level external call as a trace with an EMPTY traceAddress —
+  // we skip those (they're already recorded via the native `to` path in
+  // scanBlockProd) and keep only NON-empty traceAddress entries, i.e. ETH moved
+  // by a contract CALL during execution (internal transactions). null on error.
+  //
+  // Correctness guards:
+  //  - skip traces with an `error` field (reverted CALL — value never moved)
+  //  - only `type == "call"` AND `action.callType == "CALL"`: CALLCODE/DELEGATECALL
+  //    keep the caller's context, STATICCALL cannot carry value
+  //  - `kind = "internal-" # traceIndex` so two internal CALLs to the SAME watched
+  //    address in one tx get distinct dedup keys (otherwise the 2nd is dropped)
+  func getInternalTransfers(h : Nat) : async ?[Types.Transfer] {
+    let json = "{\"jsonrpc\":\"2.0\",\"method\":\"trace_block\",\"params\":[\""
+      # Hex.natToHex(h) # "\"],\"id\":1}";
+    let raw = await multiRequestText(json, ?{ responseSizeEstimate = ?20_000_000; responseConsensus = null });
+    switch raw {
+      case null { null };
+      case (?s) {
+        switch (Json.parse(s)) {
+          case (#err _) { null };
+          case (#ok j) {
+            switch (Json.getAsArray(j, "result")) {
+              case (#err _) { null };
+              case (#ok traces) {
+                let out = List.empty<Types.Transfer>();
+                var ti = 0; // stable per-trace index within the block
+                for (t in traces.vals()) {
+                  ti += 1;
+                  // reverted internal call — value never actually moved
+                  switch (Json.getAsText(t, "error")) {
+                    case (#ok _) { continue };
+                    case (#err _) {};
+                  };
+                  // only internal calls: a real internal transfer has a non-empty
+                  // traceAddress; an empty one is the outer external call (dup of
+                  // the native transfer) and is skipped to avoid double-counting
+                  switch (Json.getAsArray(t, "traceAddress")) {
+                    case (#ok ta) { if (ta.size() == 0) { continue } };
+                    case (#err _) { continue };
+                  };
+                  // only a plain CALL moves ETH to `action.to`
+                  let typ = switch (Json.getAsText(t, "type")) { case (#ok v) { v }; case (#err _) { "" } };
+                  if (typ != "call") { continue };
+                  let op = switch (Json.getAsText(t, "action.callType")) { case (#ok v) { v }; case (#err _) { "" } };
+                  if (op != "CALL") { continue };
+                  let to = switch (Json.getAsText(t, "action.to")) { case (#ok v) { normalizeAddress(v) }; case (#err _) { "" } };
+                  if (to == "") { continue };
+                  let valueHex = switch (Json.getAsText(t, "action.value")) { case (#ok v) { v }; case (#err _) { "0x0" } };
+                  let from = switch (Json.getAsText(t, "action.from")) { case (#ok v) { Hex.lowerHex(v) }; case (#err _) { "" } };
+                  let amountRaw = Hex.hexToNat(valueHex);
+                  let txHash = switch (Json.getAsText(t, "transactionHash")) { case (#ok v) { v }; case (#err _) { "" } };
+                  out.add({
+                    txHash = txHash;
+                    logIndex = 0;
+                    kind = "internal-" # Nat.toText(ti);
+                    asset = Constants.ASSET;
+                    token = null;
+                    from = from;
+                    to = to;
+                    amountRaw = amountRaw;
+                  });
+                };
+                ?List.toArray(out);
+              };
+            };
+          };
+        };
+      };
+    };
+  };
+
   func recordDeposit(h : Nat, t : Types.Transfer) {
     if (t.amountRaw == 0) { return }; // skip zero-value transfers
-    let dk = if (t.token == null) { t.txHash # "#native" }
+    // dedup key includes kind so a tx can carry a native AND an internal ETH
+    // deposit to the same watched address without clobbering each other
+    let dk = if (t.token == null) { t.txHash # "#" # t.kind }
              else { t.txHash # "#" # Nat.toText(t.logIndex) };
     if (Map.get(deposits, Text.compare, dk) == null and Map.get(confirmedKeys, Text.compare, dk) == null) {
       Map.add(deposits, Text.compare, dk, {
         txHash = t.txHash;
         logIndex = t.logIndex;
+        kind = t.kind;
         asset = t.asset;
         token = t.token;
         from = t.from;
@@ -262,6 +342,23 @@ persistent actor EthDepositDetector {
       switch (await ethGetLogs(h)) {
         case null { ok := false };
         case (?logs) { for (log in logs.vals()) { extractLogEntry(h, log) } };
+      };
+    };
+    // internal ETH transfers (contract CALLs moving ETH to a watched address).
+    // Best-effort: trace_block may be unsupported by a provider; on failure or
+    // empty result we do NOT set ok:=false — a trace outage must not block
+    // native/ERC-20 detection nor rewind the scan cursor. Gated on watched
+    // addresses to avoid the per-block trace_block cost when nothing is watched.
+    if (Map.size(watchedAddresses) > 0) {
+      switch (await getInternalTransfers(h)) {
+        case (?traces) {
+          for (tx in traces.vals()) {
+            if (tx.amountRaw > 0 and Map.get(watchedAddresses, Text.compare, tx.to) != null) {
+              recordDeposit(h, tx);
+            };
+          };
+        };
+        case null { /* trace unsupported / failed — skip silently */ };
       };
     };
     ok;
@@ -355,7 +452,7 @@ persistent actor EthDepositDetector {
     // backfill the archive-key set from existing confirmed deposits so a
     // re-scanned transfer isn't archived twice right after an upgrade
     for (d in depositsConfirmed.vals()) {
-      let dk = if (d.token == null) { d.txHash # "#native" } else { d.txHash # "#" # Nat.toText(d.logIndex) };
+      let dk = if (d.token == null) { d.txHash # "#" # d.kind } else { d.txHash # "#" # Nat.toText(d.logIndex) };
       Map.add(confirmedKeys, Text.compare, dk, ());
     };
   };

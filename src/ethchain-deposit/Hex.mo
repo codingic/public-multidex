@@ -53,3 +53,23 @@ func hexToNat(s : Text) : Nat {
   };
   acc;
 };
+
+// Nat -> 0x-prefixed lowercase hex (used for trace_block's hex block height).
+func natToHex(n : Nat) : Text {
+  if (n == 0) { return "0x0" };
+  var digits = "";
+  var x = n;
+  loop {
+    let c = switch (x % 16) {
+      case (0) { '0' }; case (1) { '1' }; case (2) { '2' }; case (3) { '3' };
+      case (4) { '4' }; case (5) { '5' }; case (6) { '6' }; case (7) { '7' };
+      case (8) { '8' }; case (9) { '9' }; case (10) { 'a' }; case (11) { 'b' };
+      case (12) { 'c' }; case (13) { 'd' }; case (14) { 'e' }; case (15) { 'f' };
+      case (_) { '0' };
+    };
+    digits := Char.toText(c) # digits;
+    x := x / 16;
+    if (x == 0) { break };
+  };
+  "0x" # digits;
+};

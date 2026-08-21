@@ -46,7 +46,7 @@
 | ETH 检测成本 | `eth_getBlockByNumber`（`getBlock`）拿区块哈希列表，再逐笔 `eth_getTransactionByHash`（`evmGetTx`）解析 to/value |
 | 地址规范化 | `registerDepositAddress` 强制归一成 `0x` + 小写，与日志 topic 派生的 key 一致，否则会**静默漏检全部 ERC-20 充值** |
 | 重复入库防护 | 去重双查 `deposits` + `confirmedKeys`；`postupgrade` 从已有 `depositsConfirmed` 回填 `confirmedKeys` |
-| 幂等 / 防重组 | `DELAY_BLOCKS` 延迟、`CONFIRMED_BLOCKS` 阈值、dedup key（`txHash#native` / `txHash#logIndex`） |
+| 幂等 / 防重组 | `DELAY_BLOCKS` 延迟、`CONFIRMED_BLOCKS` 阈值、dedup key（`txHash#native` / `txHash#internal` / `txHash#logIndex`） |
 
 ## 4. 公共接口
 
