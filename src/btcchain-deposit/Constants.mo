@@ -24,6 +24,9 @@ let DELAY_BLOCKS : Nat = 1;
 // steady state each ~15s scan adds ~0–1 new block; this only matters after a
 // long downtime catch-up.
 let MAX_BLOCKS_PER_SCAN : Nat = 10;
+// after this many consecutive failed scans of the SAME block (~90s at the 15s
+// cadence), skip it instead of wedging the cursor forever (see scanCycle)
+let MAX_SCAN_FAILS : Nat = 6;
 
 // Cycles attached to each bitcoin canister call. get_block returns a full block
 // (up to several MB) and is the expensive one; the fee is refunded for any

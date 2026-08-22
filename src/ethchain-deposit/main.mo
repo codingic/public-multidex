@@ -46,6 +46,11 @@ persistent actor EthDepositDetector {
 
   // last fully-read block height; advanced every scan
   var blockHeight : Nat = 0;
+  // consecutive failed scans of the current block, accumulated ACROSS cycles
+  // (not reset per cycle) so a permanently-failing block (provider keeps
+  // erroring, oversized log batch) is eventually skipped instead of wedging
+  // the cursor forever.
+  var scanFailStreak : Nat = 0;
 
   // pending deposits, deduped by (txHash, kind). Native ETH has kind "native";
   // internal ETH has kind "internal-<traceIdx>" (so two internal CALLs to the
@@ -118,7 +123,7 @@ persistent actor EthDepositDetector {
   func latestHeight() : async Nat {
     let rpc : EvmRpcTypes.EvmRpc = actor (Principal.toText(evmRpc()));
     try {
-      let r = await (with cycles = Constants.EVM_RPC_CYCLES) rpc.eth_getBlockByNumber(Constants.ETH_CHAIN, null, #Latest);
+      let r = await (with cycles = Constants.EVM_RPC_CYCLES) rpc.eth_getBlockByNumber(Constants.ETH_CHAIN, null, #Finalized);
       switch r {
         case (#Consistent x) { switch x { case (#Ok b) { b.number }; case (#Err _) { 0 } } };
         case (#Inconsistent _) { 0 };
@@ -199,6 +204,8 @@ persistent actor EthDepositDetector {
 
   // record only Transfer logs from a watched token to a watched deposit address
   func extractLogEntry(h : Nat, log : EvmRpcTypes.LogEntry) {
+    // a log reverted by a chain reorg carries removed=true — never a real deposit
+    if (log.removed) { return };
     if (log.topics.size() < 3) { return };
     if (log.topics[0] != Constants.TRANSFER_SIG) { return };
     if (log.logIndex == null) { return };   // no log index → can't build a safe dedup key
@@ -209,7 +216,14 @@ persistent actor EthDepositDetector {
     let from = Hex.lowerHex(Hex.topicToAddress(log.topics[1]));
     let amountRaw = Hex.hexToNat(log.data);
     let logIndex = switch (log.logIndex) { case (?n) { n }; case null { 0 } };
-    let txHash = switch (log.transactionHash) { case (?t) { t }; case null { "" } };
+    // The dedup key for ERC-20 is `hash#logIndex` (see recordDeposit). `hash` is
+    // the tx hash; if a provider omits transactionHash, fall back to blockHash
+    // so the key stays a well-formed `hash#logIndex` (non-empty hash) instead of
+    // degenerating to "#<logIndex>", which would collide across blocks.
+    let txHash = switch (log.transactionHash) {
+      case (?t) { t };
+      case null { switch (log.blockHash) { case (?b) { b }; case null { "" } } };
+    };
     recordDeposit(h, {
       txHash = txHash;
       logIndex = logIndex;
@@ -299,6 +313,9 @@ persistent actor EthDepositDetector {
     if (t.amountRaw == 0) { return }; // skip zero-value transfers
     // dedup key includes kind so a tx can carry a native AND an internal ETH
     // deposit to the same watched address without clobbering each other
+    // ERC-20 (token != null): dedup key = `hash#logIndex` (hash = txHash, falling
+    // back to blockHash in extractLogEntry). Native/internal (token == null): key
+    // = `hash#kind` since those have no log index.
     let dk = if (t.token == null) { t.txHash # "#" # t.kind }
              else { t.txHash # "#" # Nat.toText(t.logIndex) };
     if (Map.get(deposits, Text.compare, dk) == null and Map.get(depositsConfirmed, Text.compare, dk) == null) {
@@ -388,17 +405,29 @@ persistent actor EthDepositDetector {
     while (h <= batchEnd) {
       let ok = await scanBlockProd(h);
       if (not ok) {
-        // a block RPC failed → leave blockHeight where it is so the next cycle
-        // retries this block; already-recorded deposits are idempotent (dedup)
-        confirmDeposits(tip);
-        ignore Map.delete(scanning, Text.compare, "scan");
-        return;
+        scanFailStreak += 1;
+        if (scanFailStreak >= Constants.MAX_SCAN_FAILS) {
+          // permanent failure → skip the block after MAX_SCAN_FAILS retries so
+          // the cursor isn't wedged forever; already-recorded deposits are
+          // idempotent (dedup)
+          blockHeight := h;
+          scanFailStreak := 0;
+          h += 1;
+        } else {
+          // transient failure → leave blockHeight where it is so the next cycle
+          // retries this block
+          confirmDeposits(safeTip);
+          ignore Map.delete(scanning, Text.compare, "scan");
+          return;
+        };
+      } else {
+        scanFailStreak := 0;
+        h += 1;
       };
-      h += 1;
     };
     blockHeight := batchEnd;
 
-    confirmDeposits(tip);
+    confirmDeposits(safeTip);
 
     ignore Map.delete(scanning, Text.compare, "scan");
   };
@@ -432,7 +461,12 @@ persistent actor EthDepositDetector {
     await scanBlocks();
   };
 
-  let _scanTimer = Timer.recurringTimer(#seconds(Constants.SCAN_INTERVAL_SEC), scanBlocks);
+  // `transient` is load-bearing: in a `persistent actor` a plain `let` is
+  // implicitly STABLE, so after an upgrade the old TimerId would be restored
+  // while the underlying timer runtime was cleared — the scan would silently
+  // stop. Transient re-runs this initializer on install AND upgrade, re-arming
+  // the timer every time.
+  transient let _scanTimer = Timer.recurringTimer(#seconds(Constants.SCAN_INTERVAL_SEC), scanBlocks);
 
   system func postupgrade() {
     Map.clear(scanning);

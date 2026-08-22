@@ -16,6 +16,9 @@ let TRANSFER_SIG : Text = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f
 
 let DELAY_BLOCKS : Nat = 2;            // stop this many blocks behind the tip (reorg guard)
 let MAX_BLOCKS_PER_SCAN : Nat = 5;     // cap per-cycle RPC cost
+// after this many consecutive failed scans of the SAME block (~60s at the 5s
+// cadence), skip it instead of wedging the cursor forever (see scanBlocks)
+let MAX_SCAN_FAILS : Nat = 12;
 let CONFIRMED_BLOCKS : Nat = 35;       // move to depositsConfirmed at this depth
 let SCAN_INTERVAL_SEC : Nat = 5;       // poll cadence
 let EVM_RPC_CYCLES : Nat = 10_000_000_000;

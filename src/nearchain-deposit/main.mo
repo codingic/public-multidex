@@ -61,15 +61,19 @@ persistent actor NearDepositDetector {
 
   // last fully-read block height; advanced every scan
   var blockHeight : Nat = 0;
+  // consecutive failed scans of the current block, accumulated ACROSS cycles
+  // (not reset per cycle) so a permanently-failing block (provider keeps
+  // erroring) is eventually skipped instead of wedging the cursor forever.
+  var scanFailStreak : Nat = 0;
 
   // pending deposits, deduped by (txHash, logIndex)
   let deposits = Map.empty<Text, Types.Deposit>();
-  // permanent archive of deposits that reached CONFIRMED_BLOCKS
-  // TODO: unbounded growth — at millions of users this array grows forever and
+  // permanent archive of deposits that reached CONFIRMED_BLOCKS. Keyed by
+  // dedupKey, so the key's presence IS the "already settled" membership test
+  // (replaces the old `confirmedKeys` set).
+  // TODO: unbounded growth — at millions of users this map grows forever and
   // inflates canister memory; needs bucketing / backend-consumption-then-prune.
-  var depositsConfirmed : [Types.Deposit] = [];
-  // keys already archived, so a re-scanned event isn't archived twice
-  let confirmedKeys = Map.empty<Text, ()>();
+  var depositsConfirmed : Map.Map<Text, Types.Deposit> = Map.empty();
 
   let scanning = Map.empty<Text, Bool>();
 
@@ -110,7 +114,7 @@ persistent actor NearDepositDetector {
   };
 
   public query func getConfirmedDeposits() : async [Types.Deposit] {
-    depositsConfirmed;
+    Iter.toArray(Map.values(depositsConfirmed));
   };
 
   // ── NEAR RPC over IC HTTPS outcall ──
@@ -338,7 +342,7 @@ persistent actor NearDepositDetector {
     // the same watched account don't clobber each other
     let dk = if (t.token == null) { t.txHash # "#" # t.kind }
              else { t.txHash # "#" # Nat.toText(t.logIndex) };
-    if (Map.get(deposits, Text.compare, dk) == null and Map.get(confirmedKeys, Text.compare, dk) == null) {
+    if (Map.get(deposits, Text.compare, dk) == null and Map.get(depositsConfirmed, Text.compare, dk) == null) {
       Map.add(deposits, Text.compare, dk, {
         txHash = t.txHash;
         logIndex = t.logIndex;
@@ -400,17 +404,29 @@ persistent actor NearDepositDetector {
     while (h <= batchEnd) {
       let ok = await scanBlockProd(h);
       if (not ok) {
-        // a block RPC failed → leave blockHeight where it is so the next cycle
-        // retries this block; already-recorded deposits are idempotent (dedup)
-        confirmDeposits(tip);
-        ignore Map.delete(scanning, Text.compare, "scan");
-        return;
+        scanFailStreak += 1;
+        if (scanFailStreak >= Constants.MAX_SCAN_FAILS) {
+          // permanent failure → skip the block after MAX_SCAN_FAILS retries so
+          // the cursor isn't wedged forever; already-recorded deposits are
+          // idempotent (dedup)
+          blockHeight := h;
+          scanFailStreak := 0;
+          h += 1;
+        } else {
+          // transient failure → leave blockHeight where it is so the next cycle
+          // retries this block
+          confirmDeposits(safeTip);
+          ignore Map.delete(scanning, Text.compare, "scan");
+          return;
+        };
+      } else {
+        scanFailStreak := 0;
+        h += 1;
       };
-      h += 1;
     };
     blockHeight := batchEnd;
 
-    confirmDeposits(tip);
+    confirmDeposits(safeTip);
 
     ignore Map.delete(scanning, Text.compare, "scan");
   };
@@ -433,16 +449,15 @@ persistent actor NearDepositDetector {
     // delete archived entries AFTER the iteration — mutating the map mid-iteration is unsafe
     for (dk in List.toArray(movedKeys).vals()) {
       ignore Map.delete(deposits, Text.compare, dk);
-      Map.add(confirmedKeys, Text.compare, dk, ());
     };
     for ((dk, d) in List.toArray(toRefresh).vals()) {
       Map.add(deposits, Text.compare, dk, d);
     };
-    let movedArr = List.toArray(moved);
-    if (movedArr.size() > 0) {
-      let combined = List.fromArray<Types.Deposit>(depositsConfirmed);
-      List.append(combined, moved);
-      depositsConfirmed := List.toArray(combined);
+    // append the newly-archived deposits to the confirmed map (keyed by dedupKey;
+    // idempotent because a deposit is removed from `deposits` first)
+    for (d in List.toArray(moved).vals()) {
+      let dk = d.txHash # "#" # Nat.toText(d.logIndex);
+      Map.add(depositsConfirmed, Text.compare, dk, d);
     };
   };
 
@@ -450,16 +465,17 @@ persistent actor NearDepositDetector {
     await scanBlocks();
   };
 
-  let _scanTimer = Timer.recurringTimer(#seconds(Constants.SCAN_INTERVAL_SEC), scanBlocks);
+  // `transient` is load-bearing: in a `persistent actor` a plain `let` is
+  // implicitly STABLE, so after an upgrade the old TimerId would be restored
+  // while the underlying timer runtime was cleared — the scan would silently
+  // stop. Transient re-runs this initializer on install AND upgrade, re-arming
+  // the timer every time.
+  transient let _scanTimer = Timer.recurringTimer(#seconds(Constants.SCAN_INTERVAL_SEC), scanBlocks);
 
   system func postupgrade() {
     Map.clear(scanning);
-    // backfill the archive-key set from existing confirmed deposits so a
-    // re-scanned event isn't archived twice right after an upgrade
-    for (d in depositsConfirmed.vals()) {
-      let dk = d.txHash # "#" # Nat.toText(d.logIndex);
-      Map.add(confirmedKeys, Text.compare, dk, ());
-    };
+    // no backfill needed: the confirmed map's key already serves as the
+    // "already settled" membership test (replaces the old confirmedKeys set)
   };
 
   system func inspect({ caller : Principal }) : Bool {

@@ -35,7 +35,7 @@
 ### 2.4 确认数与存档 `confirmDeposits(tip)`
 每次扫描推进后调用：
 - 遍历 `deposits`，刷新 `confirmations = tip - blockHeight`（不足则记 0）。
-- `confirmations >= CONFIRMED_BLOCKS(35)`：移出 `deposits`，追加进永久存档 `depositsConfirmed`，并登记 `confirmedKeys`（防重复入库）；迭代结束后再统一删除，避免在 map 迭代中删当前键。
+- `confirmations >= CONFIRMED_BLOCKS(35)`：移出 `deposits`，追加进永久存档 `depositsConfirmed`（以去重键为 key 的 Map，键的存在本身就防重复入库）；迭代结束后再统一删除，避免在 map 迭代中删当前键。
 - 未达阈值：仅刷新 `confirmations` 字段。
 
 ## 3. 关键设计要点
@@ -45,7 +45,7 @@
 | 百万充值地址 | ERC-20 先整块拉 Transfer 日志，本地用 `Map.get` 做「合约 + 收款地址」两级 O(log n) 匹配（百万地址 ≈20 次比较无压力）；ETH 走标准 `eth_getBlockByNumber` + 逐笔 `eth_getTransactionByHash` |
 | ETH 检测成本 | `eth_getBlockByNumber`（`getBlock`）拿区块哈希列表，再逐笔 `eth_getTransactionByHash`（`evmGetTx`）解析 to/value |
 | 地址规范化 | `registerDepositAddress` 强制归一成 `0x` + 小写，与日志 topic 派生的 key 一致，否则会**静默漏检全部 ERC-20 充值** |
-| 重复入库防护 | 去重双查 `deposits` + `confirmedKeys`；`postupgrade` 从已有 `depositsConfirmed` 回填 `confirmedKeys` |
+| 重复入库防护 | 去重双查 `deposits` + `depositsConfirmed`（以去重键为 key，存档本身即"已结算"成员判断）；`postupgrade` 无需回填 |
 | 幂等 / 防重组 | `DELAY_BLOCKS` 延迟、`CONFIRMED_BLOCKS` 阈值、dedup key（`txHash#native` / `txHash#internal` / `txHash#logIndex`） |
 
 ## 4. 公共接口

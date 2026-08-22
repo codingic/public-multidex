@@ -57,12 +57,12 @@ persistent actor SolDepositDetector {
 
   // pending deposits, deduped by dedupKey (tx signature + direction + index)
   let deposits = Map.empty<Text, Types.Deposit>();
-  // permanent archive of finalized deposits
-  // TODO: unbounded growth — at millions of users this array grows forever and
+  // permanent archive of finalized deposits. Keyed by dedupKey, so the key's
+  // presence IS the "already settled" membership test (replaces the old
+  // `confirmedKeys` set).
+  // TODO: unbounded growth — at millions of users this map grows forever and
   // inflates canister memory; needs bucketing / backend-consumption-then-prune.
-  var depositsConfirmed : [Types.Deposit] = [];
-  // keys already archived, so a re-fetched transfer isn't archived twice
-  let confirmedKeys = Map.empty<Text, ()>();
+  var depositsConfirmed : Map.Map<Text, Types.Deposit> = Map.empty();
 
   func requireController(caller : Principal) {
     if (not Principal.isController(caller)) { Runtime.trap("Caller is not a canister controller") };
@@ -114,7 +114,7 @@ persistent actor SolDepositDetector {
   // registration needed. See refreshAddressTx.
 
   public query func getConfirmedDeposits() : async [Types.Deposit] {
-    depositsConfirmed;
+    Iter.toArray(Map.values(depositsConfirmed));
   };
 
   // raw JSON-RPC via sol-rpc's jsonRequest (multi-provider consensus); null on error
@@ -628,7 +628,7 @@ persistent actor SolDepositDetector {
     if (d.amountRaw == 0) { return };
     switch (Map.get(deposits, Text.compare, d.dedupKey)) {
       case (null) {
-        if (Map.get(confirmedKeys, Text.compare, d.dedupKey) == null) {
+        if (Map.get(depositsConfirmed, Text.compare, d.dedupKey) == null) {
           Map.add(deposits, Text.compare, d.dedupKey, {
             signature = d.signature;
             slot = d.slot;
@@ -684,16 +684,14 @@ persistent actor SolDepositDetector {
     // delete archived entries AFTER the iteration — mutating the map mid-iteration is unsafe
     for (dk in List.toArray(movedKeys).vals()) {
       ignore Map.delete(deposits, Text.compare, dk);
-      Map.add(confirmedKeys, Text.compare, dk, ());
     };
     for ((dk, d) in List.toArray(toRefresh).vals()) {
       Map.add(deposits, Text.compare, dk, d);
     };
-    let movedArr = List.toArray(moved);
-    if (movedArr.size() > 0) {
-      let combined = List.fromArray<Types.Deposit>(depositsConfirmed);
-      List.append(combined, moved);
-      depositsConfirmed := List.toArray(combined);
+    // append the newly-archived deposits to the confirmed map (keyed dedupKey;
+    // idempotent because a deposit is removed from `deposits` first)
+    for (d in List.toArray(moved).vals()) {
+      Map.add(depositsConfirmed, Text.compare, d.dedupKey, d);
     };
   };
 
@@ -787,11 +785,8 @@ persistent actor SolDepositDetector {
 
   system func postupgrade() {
     Map.clear(refreshing);
-    // backfill the archive-key set from existing confirmed deposits so a
-    // re-fetched transfer isn't archived twice right after an upgrade
-    for (d in depositsConfirmed.vals()) {
-      Map.add(confirmedKeys, Text.compare, d.dedupKey, ());
-    };
+    // no backfill needed: the confirmed map's key already serves as the
+    // "already settled" membership test (replaces the old confirmedKeys set)
   };
 
   system func inspect({ caller : Principal }) : Bool {
