@@ -54,17 +54,13 @@ persistent actor BtcDepositDetector {
   var btcTip : Nat = 0;
   // last fully-read block height; advanced every scan
   var blockHeight : Nat = 0;
-  // consecutive failed scans of the current block, accumulated ACROSS cycles
-  // (not reset per cycle) so a permanently-failing block is eventually skipped
-  // instead of wedging the cursor forever.
+  // consecutive failed scans of the current block; skip it once it hits MAX_SCAN_FAILS
   var scanFailStreak : Nat = 0;
 
   // pending deposits, deduped by dedupKey (blockHash#txIndex#vout)
   let deposits = Map.empty<Text, Types.Deposit>();
-  // permanent archive of deposits that reached CONFIRMED_CONFIRMATIONS.
-  // Keyed by dedupKey (blockHash#txIndex#vout); the presence of a key also
-  // marks the output as "already archived", so recordDeposit can skip a
-  // re-scanned output without a second map.
+  // permanent archive of deposits that reached CONFIRMED_CONFIRMATIONS, keyed by
+  // dedupKey (blockHash#txIndex#vout); the key's presence marks "already archived".
   // TODO: unbounded growth — at millions of users this map grows forever and
   // inflates canister memory; needs bucketing / backend-consumption-then-prune.
   let depositsConfirmed = Map.empty<Text, Types.Deposit>();
@@ -315,15 +311,12 @@ persistent actor BtcDepositDetector {
       if (not (await scanBlockProd(hh))) {
         scanFailStreak += 1;
         if (scanFailStreak >= Constants.MAX_SCAN_FAILS) {
-          // permanent failure → skip the block after MAX_SCAN_FAILS retries so
-          // the cursor isn't wedged forever; already-recorded outputs are
-          // idempotent (dedup)
+          // skip a permanently-broken block so the cursor doesn't wedge
           blockHeight := hh;
           scanFailStreak := 0;
           hh += 1;
         } else {
-          // transient failure → leave blockHeight where it is so the next cycle
-          // retries this block
+          // transient failure → retry this block next cycle
           confirmDeposits(safeTip);
           return;
         };
@@ -340,11 +333,8 @@ persistent actor BtcDepositDetector {
   func scanBlocks() : async () {
     if (Map.get(scanning, Text.compare, "scan") != null) { return };
     Map.add(scanning, Text.compare, "scan", true);
-    // ALWAYS release the flag, even on trap: a malformed block can make
-    // Block.decodeBlock trap on an out-of-bounds read, which rejects this
-    // call mid-flight — leaving "scan" set would deadlock every later tick
-    // (each returns at the guard) and silently stop detection until the next
-    // canister upgrade. Trapped cycles simply retry from the same height.
+    // always release the flag even if scanCycle traps (e.g. a malformed block
+    // makes Block.decodeBlock trap) — otherwise detection deadlocks until upgrade
     try { await scanCycle(); } catch (_) {};
     ignore Map.delete(scanning, Text.compare, "scan");
   };
@@ -383,18 +373,13 @@ persistent actor BtcDepositDetector {
     await scanBlocks();
   };
 
-  // `transient` is load-bearing: in a `persistent actor` a plain `let` is
-  // implicitly STABLE, so after an upgrade the old TimerId would be restored
-  // while the underlying timer runtime was cleared — the scan would silently
-  // stop. Transient re-runs this initializer on install AND upgrade, re-arming
-  // the timer every time.
+  // transient so the timer re-arms on upgrade (a plain `let` would be STABLE
+  // and silently stop scanning after an upgrade)
   transient let _scanTimer = Timer.recurringTimer(#seconds(Constants.SCAN_INTERVAL_SEC), scanBlocks);
 
   system func postupgrade() {
     Map.clear(scanning);
-    // depositsConfirmed is the single source of truth for archived deposits
-    // (and their dedup keys); it persists across upgrades, so no backfill is
-    // needed here.
+    // depositsConfirmed persists across upgrades — no backfill needed
   };
 
   system func inspect({ caller : Principal }) : Bool {

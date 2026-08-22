@@ -54,7 +54,7 @@ func hexToNat(s : Text) : Nat {
   acc;
 };
 
-// Nat -> 0x-prefixed lowercase hex (used for trace_block's hex block height).
+// Nat -> 0x-prefixed lowercase hex.
 func natToHex(n : Nat) : Text {
   if (n == 0) { return "0x0" };
   var digits = "";

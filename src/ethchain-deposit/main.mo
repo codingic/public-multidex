@@ -46,15 +46,12 @@ persistent actor EthDepositDetector {
 
   // last fully-read block height; advanced every scan
   var blockHeight : Nat = 0;
-  // consecutive failed scans of the current block, accumulated ACROSS cycles
-  // (not reset per cycle) so a permanently-failing block (provider keeps
-  // erroring, oversized log batch) is eventually skipped instead of wedging
-  // the cursor forever.
+  // consecutive failed scans of the current block; once it hits MAX_SCAN_FAILS
+  // the block is skipped so a permanently-broken block can't wedge the cursor
   var scanFailStreak : Nat = 0;
 
   // pending deposits, deduped by (txHash, kind). Native ETH has kind "native";
-  // internal ETH has kind "internal-<traceIdx>" (so two internal CALLs to the
-  // same watched address in one tx don't collide); ERC-20 uses txHash#logIndex.
+  // ERC-20 uses txHash#logIndex.
   let deposits = Map.empty<Text, Types.Deposit>();
   // permanent archive of deposits that reached CONFIRMED_BLOCKS, keyed by the
   // same dedup key (txHash#kind / txHash#logIndex) used in `deposits`. Because
@@ -216,10 +213,7 @@ persistent actor EthDepositDetector {
     let from = Hex.lowerHex(Hex.topicToAddress(log.topics[1]));
     let amountRaw = Hex.hexToNat(log.data);
     let logIndex = switch (log.logIndex) { case (?n) { n }; case null { 0 } };
-    // The dedup key for ERC-20 is `hash#logIndex` (see recordDeposit). `hash` is
-    // the tx hash; if a provider omits transactionHash, fall back to blockHash
-    // so the key stays a well-formed `hash#logIndex` (non-empty hash) instead of
-    // degenerating to "#<logIndex>", which would collide across blocks.
+    // hash for the dedup key: tx hash, falling back to block hash if the RPC omits it
     let txHash = switch (log.transactionHash) {
       case (?t) { t };
       case null { switch (log.blockHash) { case (?b) { b }; case null { "" } } };
@@ -236,86 +230,9 @@ persistent actor EthDepositDetector {
     });
   };
 
-  // fetch a block's internal ETH transfers via trace_block (raw JSON-RPC, since
-  // the EVM-RPC SDK exposes no typed trace method). trace_block additionally
-  // reports the top-level external call as a trace with an EMPTY traceAddress —
-  // we skip those (they're already recorded via the native `to` path in
-  // scanBlockProd) and keep only NON-empty traceAddress entries, i.e. ETH moved
-  // by a contract CALL during execution (internal transactions). null on error.
-  //
-  // Correctness guards:
-  //  - skip traces with an `error` field (reverted CALL — value never moved)
-  //  - only `type == "call"` AND `action.callType == "CALL"`: CALLCODE/DELEGATECALL
-  //    keep the caller's context, STATICCALL cannot carry value
-  //  - `kind = "internal-" # traceIndex` so two internal CALLs to the SAME watched
-  //    address in one tx get distinct dedup keys (otherwise the 2nd is dropped)
-  func getInternalTransfers(h : Nat) : async ?[Types.Transfer] {
-    let json = "{\"jsonrpc\":\"2.0\",\"method\":\"trace_block\",\"params\":[\""
-      # Hex.natToHex(h) # "\"],\"id\":1}";
-    let raw = await multiRequestText(json, ?{ responseSizeEstimate = ?20_000_000; responseConsensus = null });
-    switch raw {
-      case null { null };
-      case (?s) {
-        switch (Json.parse(s)) {
-          case (#err _) { null };
-          case (#ok j) {
-            switch (Json.getAsArray(j, "result")) {
-              case (#err _) { null };
-              case (#ok traces) {
-                let out = List.empty<Types.Transfer>();
-                var ti = 0; // stable per-trace index within the block
-                for (t in traces.vals()) {
-                  ti += 1;
-                  // reverted internal call — value never actually moved
-                  switch (Json.getAsText(t, "error")) {
-                    case (#ok _) { continue };
-                    case (#err _) {};
-                  };
-                  // only internal calls: a real internal transfer has a non-empty
-                  // traceAddress; an empty one is the outer external call (dup of
-                  // the native transfer) and is skipped to avoid double-counting
-                  switch (Json.getAsArray(t, "traceAddress")) {
-                    case (#ok ta) { if (ta.size() == 0) { continue } };
-                    case (#err _) { continue };
-                  };
-                  // only a plain CALL moves ETH to `action.to`
-                  let typ = switch (Json.getAsText(t, "type")) { case (#ok v) { v }; case (#err _) { "" } };
-                  if (typ != "call") { continue };
-                  let op = switch (Json.getAsText(t, "action.callType")) { case (#ok v) { v }; case (#err _) { "" } };
-                  if (op != "CALL") { continue };
-                  let to = switch (Json.getAsText(t, "action.to")) { case (#ok v) { normalizeAddress(v) }; case (#err _) { "" } };
-                  if (to == "") { continue };
-                  let valueHex = switch (Json.getAsText(t, "action.value")) { case (#ok v) { v }; case (#err _) { "0x0" } };
-                  let from = switch (Json.getAsText(t, "action.from")) { case (#ok v) { Hex.lowerHex(v) }; case (#err _) { "" } };
-                  let amountRaw = Hex.hexToNat(valueHex);
-                  let txHash = switch (Json.getAsText(t, "transactionHash")) { case (#ok v) { v }; case (#err _) { "" } };
-                  out.add({
-                    txHash = txHash;
-                    logIndex = 0;
-                    kind = "internal-" # Nat.toText(ti);
-                    asset = Constants.ASSET;
-                    token = null;
-                    from = from;
-                    to = to;
-                    amountRaw = amountRaw;
-                  });
-                };
-                ?List.toArray(out);
-              };
-            };
-          };
-        };
-      };
-    };
-  };
-
   func recordDeposit(h : Nat, t : Types.Transfer) {
     if (t.amountRaw == 0) { return }; // skip zero-value transfers
-    // dedup key includes kind so a tx can carry a native AND an internal ETH
-    // deposit to the same watched address without clobbering each other
-    // ERC-20 (token != null): dedup key = `hash#logIndex` (hash = txHash, falling
-    // back to blockHash in extractLogEntry). Native/internal (token == null): key
-    // = `hash#kind` since those have no log index.
+    // ERC-20 key = `hash#logIndex`; native ETH key = `hash#kind` (no log index)
     let dk = if (t.token == null) { t.txHash # "#" # t.kind }
              else { t.txHash # "#" # Nat.toText(t.logIndex) };
     if (Map.get(deposits, Text.compare, dk) == null and Map.get(depositsConfirmed, Text.compare, dk) == null) {
@@ -363,23 +280,6 @@ persistent actor EthDepositDetector {
         case (?logs) { for (log in logs.vals()) { extractLogEntry(h, log) } };
       };
     };
-    // internal ETH transfers (contract CALLs moving ETH to a watched address).
-    // Best-effort: trace_block may be unsupported by a provider; on failure or
-    // empty result we do NOT set ok:=false — a trace outage must not block
-    // native/ERC-20 detection nor rewind the scan cursor. Gated on watched
-    // addresses to avoid the per-block trace_block cost when nothing is watched.
-    if (Map.size(watchedAddresses) > 0) {
-      switch (await getInternalTransfers(h)) {
-        case (?traces) {
-          for (tx in traces.vals()) {
-            if (tx.amountRaw > 0 and Map.get(watchedAddresses, Text.compare, tx.to) != null) {
-              recordDeposit(h, tx);
-            };
-          };
-        };
-        case null { /* trace unsupported / failed — skip silently */ };
-      };
-    };
     ok;
   };
 
@@ -407,15 +307,12 @@ persistent actor EthDepositDetector {
       if (not ok) {
         scanFailStreak += 1;
         if (scanFailStreak >= Constants.MAX_SCAN_FAILS) {
-          // permanent failure → skip the block after MAX_SCAN_FAILS retries so
-          // the cursor isn't wedged forever; already-recorded deposits are
-          // idempotent (dedup)
+          // skip a permanently-broken block so the cursor doesn't wedge
           blockHeight := h;
           scanFailStreak := 0;
           h += 1;
         } else {
-          // transient failure → leave blockHeight where it is so the next cycle
-          // retries this block
+          // transient failure → retry this block next cycle
           confirmDeposits(safeTip);
           ignore Map.delete(scanning, Text.compare, "scan");
           return;
@@ -432,11 +329,9 @@ persistent actor EthDepositDetector {
     ignore Map.delete(scanning, Text.compare, "scan");
   };
 
-  // Move deposits that reached CONFIRMED_BLOCKS out of the pending `deposits`
-  // Map into the `depositsConfirmed` Map (keyed by dk, so re-archiving is a
-  // no-op and the archive itself is the "already settled" check). Refresh
-  // confirmations for the rest. Mutating `deposits` during its own iteration is
-  // unsafe, so the deletes/additions happen in a second pass.
+  // Archive deposits that reached CONFIRMED_BLOCKS into depositsConfirmed
+  // (keyed by dk, so re-archiving is a no-op). Refresh confirmations for the rest;
+  // the deletes/additions happen in a second pass (mutating `deposits` mid-iteration is unsafe).
   func confirmDeposits(tip : Nat) {
     let moved = List.empty<(Text, Types.Deposit)>();
     let toRefresh = List.empty<(Text, Types.Deposit)>();
@@ -461,11 +356,8 @@ persistent actor EthDepositDetector {
     await scanBlocks();
   };
 
-  // `transient` is load-bearing: in a `persistent actor` a plain `let` is
-  // implicitly STABLE, so after an upgrade the old TimerId would be restored
-  // while the underlying timer runtime was cleared — the scan would silently
-  // stop. Transient re-runs this initializer on install AND upgrade, re-arming
-  // the timer every time.
+  // transient so the timer re-arms on upgrade (a plain `let` would be STABLE
+  // and silently stop scanning after an upgrade)
   transient let _scanTimer = Timer.recurringTimer(#seconds(Constants.SCAN_INTERVAL_SEC), scanBlocks);
 
   system func postupgrade() {

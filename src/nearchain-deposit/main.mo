@@ -61,16 +61,13 @@ persistent actor NearDepositDetector {
 
   // last fully-read block height; advanced every scan
   var blockHeight : Nat = 0;
-  // consecutive failed scans of the current block, accumulated ACROSS cycles
-  // (not reset per cycle) so a permanently-failing block (provider keeps
-  // erroring) is eventually skipped instead of wedging the cursor forever.
+  // consecutive failed scans of the current block; skip it once it hits MAX_SCAN_FAILS
   var scanFailStreak : Nat = 0;
 
   // pending deposits, deduped by (txHash, logIndex)
   let deposits = Map.empty<Text, Types.Deposit>();
-  // permanent archive of deposits that reached CONFIRMED_BLOCKS. Keyed by
-  // dedupKey, so the key's presence IS the "already settled" membership test
-  // (replaces the old `confirmedKeys` set).
+  // permanent archive of deposits that reached CONFIRMED_BLOCKS, keyed by
+  // dedupKey; the key's presence IS the "already settled" test (no confirmedKeys set).
   // TODO: unbounded growth — at millions of users this map grows forever and
   // inflates canister memory; needs bucketing / backend-consumption-then-prune.
   var depositsConfirmed : Map.Map<Text, Types.Deposit> = Map.empty();
@@ -406,15 +403,12 @@ persistent actor NearDepositDetector {
       if (not ok) {
         scanFailStreak += 1;
         if (scanFailStreak >= Constants.MAX_SCAN_FAILS) {
-          // permanent failure → skip the block after MAX_SCAN_FAILS retries so
-          // the cursor isn't wedged forever; already-recorded deposits are
-          // idempotent (dedup)
+          // skip a permanently-broken block so the cursor doesn't wedge
           blockHeight := h;
           scanFailStreak := 0;
           h += 1;
         } else {
-          // transient failure → leave blockHeight where it is so the next cycle
-          // retries this block
+          // transient failure → retry this block next cycle
           confirmDeposits(safeTip);
           ignore Map.delete(scanning, Text.compare, "scan");
           return;
@@ -465,17 +459,13 @@ persistent actor NearDepositDetector {
     await scanBlocks();
   };
 
-  // `transient` is load-bearing: in a `persistent actor` a plain `let` is
-  // implicitly STABLE, so after an upgrade the old TimerId would be restored
-  // while the underlying timer runtime was cleared — the scan would silently
-  // stop. Transient re-runs this initializer on install AND upgrade, re-arming
-  // the timer every time.
+  // transient so the timer re-arms on upgrade (a plain `let` would be STABLE
+  // and silently stop scanning after an upgrade)
   transient let _scanTimer = Timer.recurringTimer(#seconds(Constants.SCAN_INTERVAL_SEC), scanBlocks);
 
   system func postupgrade() {
     Map.clear(scanning);
-    // no backfill needed: the confirmed map's key already serves as the
-    // "already settled" membership test (replaces the old confirmedKeys set)
+    // depositsConfirmed persists across upgrades — no backfill needed
   };
 
   system func inspect({ caller : Principal }) : Bool {

@@ -57,9 +57,8 @@ persistent actor SolDepositDetector {
 
   // pending deposits, deduped by dedupKey (tx signature + direction + index)
   let deposits = Map.empty<Text, Types.Deposit>();
-  // permanent archive of finalized deposits. Keyed by dedupKey, so the key's
-  // presence IS the "already settled" membership test (replaces the old
-  // `confirmedKeys` set).
+  // permanent archive of finalized deposits, keyed by dedupKey; the key's
+  // presence IS the "already settled" test (no confirmedKeys set).
   // TODO: unbounded growth — at millions of users this map grows forever and
   // inflates canister memory; needs bucketing / backend-consumption-then-prune.
   var depositsConfirmed : Map.Map<Text, Types.Deposit> = Map.empty();
@@ -688,8 +687,7 @@ persistent actor SolDepositDetector {
     for ((dk, d) in List.toArray(toRefresh).vals()) {
       Map.add(deposits, Text.compare, dk, d);
     };
-    // append the newly-archived deposits to the confirmed map (keyed dedupKey;
-    // idempotent because a deposit is removed from `deposits` first)
+    // append newly-archived deposits to the confirmed map (keyed dedupKey; idempotent)
     for (d in List.toArray(moved).vals()) {
       Map.add(depositsConfirmed, Text.compare, d.dedupKey, d);
     };
@@ -785,8 +783,7 @@ persistent actor SolDepositDetector {
 
   system func postupgrade() {
     Map.clear(refreshing);
-    // no backfill needed: the confirmed map's key already serves as the
-    // "already settled" membership test (replaces the old confirmedKeys set)
+    // depositsConfirmed persists across upgrades — no backfill needed
   };
 
   system func inspect({ caller : Principal }) : Bool {

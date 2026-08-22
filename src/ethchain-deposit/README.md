@@ -32,6 +32,8 @@
 - 一次 `eth_getLogs` 拉回该区块的全部 Transfer 日志（`addresses = []` 不过滤合约地址，`topics` 只留 `TRANSFER_SIG` 预过滤事件签名）。
 - 每条日志本地走 `extractLogEntry`：先校验 `topics`（Transfer 事件、topic 数量 ≥ 3），再判断**是否调用了被 watch 的合约**（`Map.get(watchedTokens, log.address)`），再判断 **to 地址是否正确**（`Map.get(watchedAddresses, 从 topic[2] 提取的收款地址)`），命中才入库。
 
+> **明确不支持内部 ETH 充值（internal transactions）。** 本模块只识别两类入金：① 原生 ETH 转账（交易 `to` 直接为 watch 地址，路径 A）；② ERC-20 `Transfer` 日志（路径 B）。合约在执行过程中通过 `CALL` 间接转出的 ETH（即 `trace_block` 才能看到的 internal transaction）**不会被检测**，也不会据此入账。这是有意为之的功能边界，不是 bug——相关 `trace_block` 解析代码已删除。若业务需要支持合约代付 / 内部转账充值，需另行评估并接入 trace 类 RPC（届时需注意 `trace_block` 并非所有 provider 都支持，且会显著增加每区块的 RPC 成本与重组复杂度）。
+
 ### 2.4 确认数与存档 `confirmDeposits(tip)`
 每次扫描推进后调用：
 - 遍历 `deposits`，刷新 `confirmations = tip - blockHeight`（不足则记 0）。
@@ -46,7 +48,7 @@
 | ETH 检测成本 | `eth_getBlockByNumber`（`getBlock`）拿区块哈希列表，再逐笔 `eth_getTransactionByHash`（`evmGetTx`）解析 to/value |
 | 地址规范化 | `registerDepositAddress` 强制归一成 `0x` + 小写，与日志 topic 派生的 key 一致，否则会**静默漏检全部 ERC-20 充值** |
 | 重复入库防护 | 去重双查 `deposits` + `depositsConfirmed`（以去重键为 key，存档本身即"已结算"成员判断）；`postupgrade` 无需回填 |
-| 幂等 / 防重组 | `DELAY_BLOCKS` 延迟、`CONFIRMED_BLOCKS` 阈值、dedup key（`txHash#native` / `txHash#internal` / `txHash#logIndex`） |
+| 幂等 / 防重组 | `DELAY_BLOCKS` 延迟、`CONFIRMED_BLOCKS` 阈值、dedup key（`txHash#native` / `txHash#logIndex`） |
 
 ## 4. 公共接口
 
