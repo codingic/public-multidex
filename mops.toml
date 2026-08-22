@@ -45,6 +45,10 @@ args = [ "--default-persistent-actors", "--implicit-package=core" ]
 main = "src/nearchain-deposit/main.mo"
 args = [ "--default-persistent-actors", "--implicit-package=core" ]
 
+[canisters.icpchain-deposit]
+main = "src/icpchain-deposit/main.mo"
+args = [ "--default-persistent-actors", "--implicit-package=core" ]
+
 [canisters.arb]
 main = "src/arb/main.mo"
 args = [ "--default-persistent-actors", "--implicit-package=core" ]
